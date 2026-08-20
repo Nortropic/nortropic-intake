@@ -1,0 +1,33 @@
+{
+ "message_count": 18,
+ "role_counts": {
+  "user": 10,
+  "assistant": 8
+ },
+ "role_sequence": "uauuauauuauauauaua",
+ "per_message_chars": [
+  275,
+  3647,
+  35,
+  169,
+  2729,
+  33,
+  4698,
+  72,
+  187,
+  4677,
+  138,
+  4015,
+  46,
+  4371,
+  60,
+  3736,
+  8,
+  188
+ ],
+ "total_chars": 29084,
+ "first_message_preview": "Mitt workflow just nu är att förbättra mitt agent system genom arbete med Claude",
+ "last_message_preview": "Låter bra. Sammanfattningen står kvar om du vill återvända till den: mallen och ",
+ "unbalanced_fence_messages": [],
+ "body_sha256": "c8a21a2ad60ec814e6e40fe23a03a91daf158cda6ea80c9a81c70928cdac45db"
+}

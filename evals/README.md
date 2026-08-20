@@ -22,10 +22,13 @@ format (`## Meddelande N — <roll>`, separators, junk-line rules) and the fail-
 invariants (contiguous numbering, balanced fences, header count = body count).
 
 ```bash
-# verify against golden (the regression test):
+# verify against the goldens (the regression test) — run BOTH:
 python3 evals/capture_signature.py \
   ~/nortropic/innovation-intake/gauntlet-wayfinder/gauntlet-wayfinder-full-chat.md \
   --check evals/golden/gauntlet-wayfinder.signature.json
+python3 evals/capture_signature.py \
+  evals/golden/agent-workflow-claudeai-full-chat.md \
+  --check evals/golden/agent-workflow-claudeai.signature.json
 
 # (re)generate a golden — ONLY from a real, verified delivery, never hand-written:
 python3 evals/capture_signature.py <path>/<slug>-full-chat.md > evals/golden/<slug>.signature.json
@@ -36,9 +39,18 @@ transcript that passed the skill's own verification, then commit the JSON here. 
 transcript format legitimately changes, re-run the capture on the same source chat and
 regenerate — a golden is only updated with a new measurement, never edited by hand.
 
-Current goldens:
+Current goldens — BOTH data-layer adapters (ChatGPT and claude.ai) now have signature
+coverage:
 - `golden/gauntlet-wayfinder.signature.json` — ChatGPT data-layer capture, 75 messages
   (29 user / 46 assistant), source: `~/nortropic/innovation-intake/gauntlet-wayfinder/`.
+- `golden/agent-workflow-claudeai.signature.json` — claude.ai data-layer capture,
+  18 messages (10 user / 8 assistent), source chat: claude.ai/chat/
+  e8403718-9c9f-453c-8ae5-1d5d53f198fc ("Automatisera agent-workflow med Claude").
+  Its transcript (`golden/agent-workflow-claudeai-full-chat.md`) is a LOCAL, gitignored
+  fixture — a private chat stays out of git; only the signature JSON is committed. If
+  the transcript is missing on this machine, regenerate it by re-running the data-layer
+  capture on that chat (adapter in `scripts/data_capture.js`, transcript format per
+  SKILL.md Phase 1) — the signature must still match, that is the regression test.
 
 ## 3. Brief rubric (`brief-rubric.md`)
 

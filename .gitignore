@@ -1,0 +1,3 @@
+# Golden-fixture transcripts are LOCAL: they are private chat content and stay out of
+# git; only the measured .signature.json files are committed (see evals/README.md).
+evals/golden/*-full-chat.md
