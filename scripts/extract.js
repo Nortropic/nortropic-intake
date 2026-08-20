@@ -20,9 +20,10 @@
   const ADAPTERS = {
     'chatgpt.com':     { turn:'[data-message-author-role]', role: el => el.getAttribute('data-message-author-role') },
     'chat.openai.com': { turn:'[data-message-author-role]', role: el => el.getAttribute('data-message-author-role') },
-    'claude.ai':       { turn:'[data-testid="user-message"], [data-testid="assistant-message"], .font-claude-message, .font-user-message',
+    // Claude.ai verified Aug 2026 — mind the virtualized transcript; see extraction.md.
+    'claude.ai':       { turn:'[data-testid="user-message"], .font-claude-response, [data-testid="assistant-message"], .font-claude-message, .font-user-message',
                          role: el => el.matches('[data-testid="user-message"], .font-user-message') ? 'user'
-                                   : el.matches('[data-testid="assistant-message"], .font-claude-message') ? 'assistant' : 'unknown' } };
+                                   : el.matches('.font-claude-response, [data-testid="assistant-message"], .font-claude-message') ? 'assistant' : 'unknown' } };
   let turnSel, roleOf;
   if (OVERRIDE_TURN) {
     turnSel = OVERRIDE_TURN;

@@ -55,11 +55,25 @@ pick a selector set:
 
 - **ChatGPT** (`chatgpt.com`, `chat.openai.com`): turns are `[data-message-author-role]`,
   role read from that attribute. **Verified.**
-- **Claude** (`claude.ai`): candidate selectors for user vs assistant turns. **Unverified
-  — confirm on first run.** The probe always returns a `discovery` report (the most
-  repeated text blocks with their selectors); if the candidate selector catches the wrong
-  count or roles, read the report, pick the real turn selector, and set `OVERRIDE_TURN`
-  (and `OVERRIDE_ROLE_ATTR` if role lives in an attribute) at the top of `extract.js`.
+- **Claude** (`claude.ai`): **verified Aug 2026** — but the DOM path is a LAST resort
+  here; the data-layer adapter (Step 0) is verified and strictly better. What the DOM
+  actually looks like: each turn is a `div[data-testid="transcript-row"]` carrying a
+  stable `data-index`; user turns hold `[data-testid="user-message"]`, assistant turns
+  `.font-claude-response` (the older `.font-claude-message` has drifted away). Traps,
+  all observed live: screen-reader prefixes ("You said:"/"Claude responded:") sit in the
+  row OUTSIDE the turn element — capture the turn element, not the row; tool-status
+  pills and thinking-toggles render INSIDE `.font-claude-response`, some with doubled
+  labels ("Thought for 16s" twice) and some variants survive button-removal;
+  "Claude's response was interrupted" notices and tool-only turns are rows with no chat
+  text. Virtualization is aggressive even in short chats (a 20-message chat mounts ~5
+  rows) and — unlike ChatGPT's trusted-wheel requirement — programmatic
+  `scrollTop` jumps do NOT remount rows on their own: the virtualizer only reacts if a
+  synthetic `scroll` event is dispatched on the scroll container after each jump. If a
+  DOM capture is unavoidable, sweep with jump+dispatch+wait and assemble rows by
+  `data-index` (never by visual order — leftover rows from other regions stay mounted).
+  The probe still returns a `discovery` report; on drift, pick the turn selector from it
+  and set `OVERRIDE_TURN` (and `OVERRIDE_ROLE_ATTR` if role lives in an attribute) at
+  the top of `extract.js`.
 
 Why candidate-not-hardcoded: guessing a selector and then declaring the empty result
 "faithful to source" is exactly the failure we already made once. So the design is

@@ -10,11 +10,15 @@
                          role: el => el.getAttribute('data-message-author-role') },
     'chat.openai.com': { turn:'[data-message-author-role]',
                          role: el => el.getAttribute('data-message-author-role') },
-    // Claude.ai — CANDIDATE, unverified. User turns and assistant turns have historically
-    // carried distinct testids / classes; verify from `discovery` below on the first real run.
-    'claude.ai':       { turn:'[data-testid="user-message"], [data-testid="assistant-message"], .font-claude-message, .font-user-message',
+    // Claude.ai — VERIFIED Aug 2026 (user: [data-testid="user-message"], assistant:
+    // .font-claude-response; older testid/class variants kept as fallback). NOTE: the
+    // transcript is hard-virtualized — expect n to be a small mounted window, not the
+    // whole chat; rows live in div[data-testid="transcript-row"] with a stable
+    // data-index. Prefer the data-layer capture; see the Claude.ai section of
+    // references/extraction.md before attempting a DOM sweep.
+    'claude.ai':       { turn:'[data-testid="user-message"], .font-claude-response, [data-testid="assistant-message"], .font-claude-message, .font-user-message',
                          role: el => el.matches('[data-testid="user-message"], .font-user-message') ? 'user'
-                                   : el.matches('[data-testid="assistant-message"], .font-claude-message') ? 'assistant'
+                                   : el.matches('.font-claude-response, [data-testid="assistant-message"], .font-claude-message') ? 'assistant'
                                    : 'unknown' } };
   const ad = ADAPTERS[host] || null;
   const turns = ad ? [...document.querySelectorAll(ad.turn)] : [];
