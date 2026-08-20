@@ -1,0 +1,23 @@
+{
+  "purpose": "Regression test for the SKILL.md trigger description: these queries must (or must not) activate nortropic-intake.",
+  "method": "Give a FRESH judge (subagent with no other context) ONLY the SKILL.md frontmatter description and the bare queries — never the expect labels. Ask for a trigger/no-trigger verdict per query, then diff verdicts against expect. Any mismatch is a failure; fix the description or the query set, never the judge.",
+  "pass_criterion": "16/16 verdicts match expect.",
+  "queries": [
+    { "id": "t01", "query": "kör intake", "expect": "trigger" },
+    { "id": "t02", "query": "arkivera vårt samtal", "expect": "trigger" },
+    { "id": "t03", "query": "harvest this URL: https://chatgpt.com/c/6a803ef0-a9dc-83eb-9386-26c0c773cf46", "expect": "trigger" },
+    { "id": "t04", "query": "skörda den här chatten och gör en brief av den", "expect": "trigger" },
+    { "id": "t05", "query": "load this brainstorm into Claude Code so we can build it", "expect": "trigger" },
+    { "id": "t06", "query": "ta in ChatGPT-fliken som underlag för det vi ska implementera", "expect": "trigger" },
+    { "id": "t07", "query": "turn our discussion into an implementation brief", "expect": "trigger" },
+    { "id": "t08", "query": "lägg den här idén i idébanken så tar vi den senare", "expect": "trigger" },
+    { "id": "t09", "query": "fånga chatten i aktiva fliken och destillera den till en idé-brief", "expect": "trigger" },
+    { "id": "t10", "query": "summarize this ChatGPT conversation for me", "expect": "no-trigger" },
+    { "id": "t11", "query": "vad bestämde vi om Gauntlet i den där chatten?", "expect": "no-trigger" },
+    { "id": "t12", "query": "uppdatera idea-gauntlet-wayfinder.md med en ny sektion om testning", "expect": "no-trigger" },
+    { "id": "t13", "query": "pusha briefen och transkriptet till GitHub", "expect": "no-trigger" },
+    { "id": "t14", "query": "skriv ett kort referat av mötet igår", "expect": "no-trigger" },
+    { "id": "t15", "query": "translate this chat transcript to English", "expect": "no-trigger" },
+    { "id": "t16", "query": "vilka öppna frågor står kvar i build-fast-path-briefen?", "expect": "no-trigger" }
+  ]
+}
