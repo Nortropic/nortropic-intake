@@ -7,7 +7,7 @@ because a naive version failed. This document explains why they look the way the
 
 **Order of attack: data layer first (Step 0), DOM scraping only as fallback.**
 
-## Step 0 — PREFERRED: data-layer capture (ChatGPT)
+## Step 0 — PREFERRED: data-layer capture (ChatGPT & Claude.ai)
 
 Capture from the DATA LAYER, not the rendered DOM. Two real runs proved the DOM paths
 fragile: a `/share/` link's embedded SSR payload decoded to a bloated 156k-char block
@@ -44,9 +44,40 @@ misses messages. `scripts/data_capture.js` bypasses all of it:
 non-text, fall back to the DOM playbook below (probe → render pass → extract). It stays
 fully supported for exactly this case.
 
-**Claude.ai analog (future adapter, unverified)**:
-`claude.ai/api/organizations/<org-id>/chat_conversations/<id>` returns the conversation
-for a claude.ai chat; the same WYSIWYG principle applies. ChatGPT first.
+### Claude.ai adapter (VERIFIED Aug 2026)
+
+`scripts/data_capture.js` branches on the host; the claude.ai branch was written
+discovery-first (every field name below read from a real API response before the parser
+existed) and verified fail-closed against the rendered DOM of the same chats — a full
+20-row chat compared end-to-end (all messages found in order, per-message content length
+within 100–103%), plus head/mid-window/tail checks on a 174-row chat.
+
+1. **Auth**: the session cookie itself — same-origin `fetch(..., {credentials:'include'})`
+   from the logged-in claude.ai page. There is NO accessToken analogue (verified).
+2. **Org**: `GET /api/organizations` — an account can hold several orgs (e.g. an
+   API-only org); the chat lives in the one whose `capabilities` include `'chat'`.
+   `orgs[0]` is NOT a safe pick.
+3. **Fetch**: `GET /api/organizations/<org_uuid>/chat_conversations/<conv_uuid>?tree=True&rendering_mode=messages`
+   — the conversation id is the last segment of `claude.ai/chat/<uuid>`. Without
+   `rendering_mode=messages` (or with `=raw`) there are NO content blocks, only a flat
+   `text` field with placeholders baked in — strictly worse; keep `=messages`.
+4. **Linear reconstruction**: `chat_messages` holds ALL branches (`tree=True`). Walk
+   `current_leaf_message_uuid -> parent_message_uuid -> …` up to the all-zeros root uuid
+   (`00000000-0000-4000-8000-000000000000`), reverse to chronological — exactly the
+   thread the user sees. Fall back to `index` order if the leaf pointer is missing.
+5. **WYSIWYG filter**: `sender` ∈ {`human`, `assistant`} → user/assistant. The flat
+   `.text` on each message is EMPTY for both roles in this mode — the text lives in the
+   `content` blocks: keep `type:'text'` joined with `"\n"`, drop `thinking` (arrives
+   empty anyway). Non-text blocks (tool cards, artifacts) are serialized server-side as
+   a fenced placeholder — ```` ```\nThis block is not supported on your current device
+   yet.\n``` ```` — the human saw a card, not that sentence: drop the block, inventory
+   it as an attachment line. Exact match only, so wording drift leaves a VISIBLE junk
+   fence instead of silently eating text. A tool-only message (all blocks placeholders)
+   drops out entirely — verified correct against the DOM, which shows cards and no chat
+   text there. Attachments are inventoried from per-message `attachments` + `files`.
+
+The evidence contract, `window.__nxExport`, slice transfer and `reassemble_verify.py`
+are IDENTICAL to the ChatGPT branch — nothing downstream changes.
 
 ## Site adapters (DOM fallback — read this first)
 

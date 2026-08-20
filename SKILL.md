@@ -85,14 +85,16 @@ First identify the source; the two paths differ completely in mechanics but prod
 same transcript format.
 
 **Source A — a ChatGPT or Claude chat tab.** Read `references/extraction.md` **before
-writing any browser JavaScript**, and **try the data layer first**: on ChatGPT, run
-`scripts/data_capture.js` (Step 0 of the playbook) — it fetches the conversation JSON
-from the backend API with the page's own session, walks `current_node → parent` into a
-linear thread, and keeps only user-visible turns. It is lossless and immune to the
-window-virtualized DOM (turns unmount offscreen; scraping a long chat stalls 15+ minutes
-and misses messages). Only when the endpoint fails or returns non-text, fall back to the
-DOM playbook in the same file (probe → render pass → extract; ChatGPT selectors verified,
-Claude's a candidate the probe verifies on first run — see Site adapters and
+writing any browser JavaScript**, and **try the data layer first**: run
+`scripts/data_capture.js` (Step 0 of the playbook — host-aware, with VERIFIED adapters
+for both chatgpt.com and claude.ai) — it fetches the conversation JSON from the site's
+own backend API with the page's own session, walks the parent chain into a linear
+thread (`current_node → parent` on ChatGPT; `current_leaf_message_uuid →
+parent_message_uuid` on claude.ai), and keeps only user-visible turns. It is lossless
+and immune to the window-virtualized DOM (turns unmount offscreen; scraping a long chat
+stalls 15+ minutes and misses messages). Only when the endpoint fails or returns
+non-text, fall back to the DOM playbook in the same file (probe → render pass →
+extract; both sites' selectors verified Aug 2026 — on drift, see Site adapters and
 `OVERRIDE_TURN`). Both paths end in the same slice transfer + fail-closed verification.
 
 **Source B — the current Claude conversation ("arkivera vårt samtal").** No browser, no
@@ -109,16 +111,16 @@ see there.
 **Source C — a chat by URL (local Claude Code + Chrome only).** When Johnny says "harvest
 this URL" / "skörda den här" with a link, open it with the Chrome integration in his
 logged-in browser, then capture exactly as Source A: **data layer first**
-(`scripts/data_capture.js` on a ChatGPT URL — the conversation id is the last URL
-segment), DOM playbook only as fallback; slice transfer and verification apply unchanged
-(the browser tools are the same `claude-in-chrome` tools the playbook targets). Never
-modify anything on the page — read only. Two notes: a `claude.ai` URL has no verified
-data-layer adapter yet (see the playbook's Claude.ai note), so it uses the DOM path with
-the Claude adapter (scroll-to-top before the probe; verify selectors on first run); and
-if the URL is the very conversation you are running in, prefer Source B (writing from
-context is higher fidelity than scraping your own transcript). The point of this source is
-that one local agent harvests the brainstorm and immediately has it as context to plan
-and build.
+(`scripts/data_capture.js` is host-aware — verified adapters for both a chatgpt.com and
+a claude.ai URL; the conversation id is the last URL segment), DOM playbook only as
+fallback; slice transfer and verification apply unchanged (the browser tools are the
+same `claude-in-chrome` tools the playbook targets). Never modify anything on the page —
+read only. Two notes: on claude.ai the DOM fallback is a LAST resort — the transcript is
+hard-virtualized (see the Claude adapter notes in the playbook's Site adapters section)
+so the data-layer adapter is strongly preferred; and if the URL is the very conversation
+you are running in, prefer Source B (writing from context is higher fidelity than
+scraping your own transcript). The point of this source is that one local agent harvests
+the brainstorm and immediately has it as context to plan and build.
 
 Non-negotiable quality gates before Phase 2 (fail closed — do not hand over silently
 incomplete understanding):
