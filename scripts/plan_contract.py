@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, SHA256_RE, body_sha256, corpus_root, expand, fails, fm_list, fm_str,
     git_commit_exists, git_evidence, git_immutability, id_kind, parse_ids, parse_slices,
-    read_frontmatter, sha256_file, sha256_text, warns, EPISODE_ID_RE,
+    read_frontmatter, sha256_file, sha256_text, EPISODE_ID_RE,
 )
 import context_contract as ctx  # noqa: E402
 

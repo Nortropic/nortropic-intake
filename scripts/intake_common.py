@@ -63,14 +63,18 @@ _TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
 
 
 def read_frontmatter(path):
-    """Flat `key: value` frontmatter reader. Returns (fields, body, errors).
+    """Flat `key: value` frontmatter reader. Returns (fields, body, errors)."""
+    return parse_frontmatter(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_frontmatter(raw):
+    """The same reader over TEXT — git hands out bytes, not paths.
 
     Deliberately not a YAML parser — intake frontmatter is flat by contract. Anything
     a YAML reader would interpret differently (nested keys, duplicate keys, a value
     that runs onto the next line) is reported as an error rather than guessed at, so
     the gate can never disagree with what a human reading the file sees.
     """
-    raw = Path(path).read_text(encoding="utf-8")
     raw = raw.lstrip("﻿")  # a BOM would otherwise defeat the leading `---` match
     m = _FM_RE.match(raw)
     if not m:

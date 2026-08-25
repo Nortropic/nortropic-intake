@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, expand, fails, fm_list, fm_str, git_blob_at,
     git_commits_for, git_evidence, git_head_blob, git_immutability, id_kind, parse_ids,
-    read_frontmatter, read_json, report, scan_credentials, sha256_file, sha256_text,
+    parse_frontmatter, read_frontmatter, read_json, report, scan_credentials,
+    sha256_file, sha256_text,
     source_set_identity, write_json, DERIVED_SOURCE_KINDS, EPISODE_ID_RE,
     EPISODE_KINDS, FIND_ID_RE, PROVENANCE_RE, REF_RE,
 )
@@ -1541,22 +1542,9 @@ def _brief_ids_at_previous_revision(pkg, manifest):
         brief_blob = git_blob_at(pkg.corpus, commit, brief_rel)
         if brief_blob is None:
             return None
-        _, body, _ = read_frontmatter_text(brief_blob)
+        _, body, _ = parse_frontmatter(brief_blob)
         return old_revision, set(parse_ids(body))
     return None
-
-
-def read_frontmatter_text(text):
-    """read_frontmatter over a string — git gives bytes, not a path."""
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
-                                     encoding="utf-8") as fh:
-        fh.write(text)
-        name = fh.name
-    try:
-        return read_frontmatter(name)
-    finally:
-        os.unlink(name)
 
 
 # ------------------------------------------------------ distillation audit --
@@ -1889,7 +1877,9 @@ def assess_coverage(pkg, target_repo_overrides=None):
     cov.counts["living"] = living
     cov.counts["context_revision"] = current_revision
     cov.counts["episodes"] = len((manifest or {}).get("episodes") or [])
-    if living and isinstance(current_revision, int):
+    # Revision 0 means nothing is sealed yet; CONTEXT_REVISION_UNSEALED already says so,
+    # and comparing derived artifacts against "no revision" would only add noise.
+    if living and isinstance(current_revision, int) and current_revision >= 1:
         # A brief written against revision 2 is not planning context for a package now
         # at revision 4. This is the whole reason the revision exists.
         for path, label, key in ((pkg.brief, "brief", "brief_context_revision"),
@@ -1965,7 +1955,8 @@ def assess_coverage(pkg, target_repo_overrides=None):
     # --- independent distillation audit ----------------------------------
     audit = validate_audit(pkg, manifest, set(ids), f, require=True)
     cov.counts["audit_findings"] = len(audit)
-    if living and isinstance(current_revision, int) and pkg.audit.exists():
+    if living and isinstance(current_revision, int) and current_revision >= 1 \
+            and pkg.audit.exists():
         rounds = parse_audit_rounds(pkg.audit)
         audited = max((r["revision"] for r in rounds), default=None)
         cov.counts["audited_context_revision"] = audited or "UNBOUND"
