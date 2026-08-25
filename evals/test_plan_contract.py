@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PLAN_CONTRACT = ROOT / "scripts" / "plan_contract.py"
 
 RESULTS = []
+MIN_CHECKS = 85   # floor on checks actually executed; see main()
 
 
 # ------------------------------------------------------------- fixtures ----
@@ -43,7 +44,15 @@ conflict; the divergence is reported. Not a runtime, not a second source of trut
 In: the three slices in §3. Out: everything else in the corpus.
 
 ## 3. Execution order
-Slice 1 — foundation. Slice 2 — the loader. Slice 3 — the pointer.
+
+### S1 — Foundation
+Build the durable artifact and its eleven sections. Covers AC1.
+
+### S2 — The loader
+Resolve the plan from the slug alone and verify its hash. Covers AC1.
+
+### S3 — The pointer
+Install the keyed reload pointer in the target repository. Covers AC1.
 
 ## 4. Decisions carried into execution
 D1. File-based binding by sha256 — because a hash is checkable by a fresh session.
@@ -92,14 +101,63 @@ def plan_text(for_slug, version=1, title="Test idea", **overrides):
         "plan_source": "claude-code-plan-mode",
         "fidelity": "full",
         "authority": "owner-approved-execution-intent",
+        "approved_candidate": ("%s-plan-candidate.md" % for_slug if version == 1
+                               else "%s-plan-candidate-v%d.md" % (for_slug, version)),
     }
+    body = overrides.pop("body", None)
     for key, value in overrides.items():
         if value is None:
             fm.pop(key, None)
         else:
             fm[key] = value
+    if body is None:
+        body = PLAN_SECTIONS.format(title=title, version=version)
+    # Content identity must be computed the way the tool computes it, or the fixture
+    # would be testing the fixture's idea of a body rather than the contract's.
+    fm.setdefault("plan_content_sha256", _content_sha(fm, body))
+    # AUTO is replaced with the real hash once the matching candidate is on disk. A
+    # test that sets this field explicitly keeps its value untouched.
+    fm.setdefault("approved_candidate_sha256", "AUTO")
     lines = ["---"] + ["%s: %s" % (k, v) for k, v in fm.items()] + ["---"]
-    return "\n".join(lines) + "\n" + PLAN_SECTIONS.format(title=title, version=version)
+    return "\n".join(lines) + "\n" + body
+
+
+def _content_sha(fm, body):
+    """The body hash as `intake_common.read_frontmatter` would compute it."""
+    lines = ["---"] + ["%s: %s" % (k, v) for k, v in fm.items()] + ["---"]
+    text = "\n".join(lines) + "\n" + body
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from intake_common import read_frontmatter, sha256_text as st
+    import tempfile as _tf
+    with _tf.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write(text)
+        name = fh.name
+    try:
+        return st(read_frontmatter(name)[1])
+    finally:
+        os.unlink(name)
+
+
+def candidate_text(for_slug, version=1, title="Test idea", body=None):
+    """The candidate whose body the approved plan must reproduce exactly."""
+    fm = {
+        "title": '"%s — plan candidate v%d"' % (title, version),
+        "type": "plan-candidate",
+        "status": "candidate",
+        "slug": for_slug,
+        "owner": "Johnny (Nortropic)",
+        "created": "2026-08-25",
+        "plan_version": str(version),
+        "source_brief": "idea-%s.md" % for_slug,
+        "source_brief_sha256": "0" * 64,
+        "canonical_execution_repo": "unknown",
+        "plan_source": "claude-code-plan-mode",
+        "fidelity": "full",
+    }
+    if body is None:
+        body = PLAN_SECTIONS.format(title=title, version=version)
+    lines = ["---"] + ["%s: %s" % (k, v) for k, v in fm.items()] + ["---"]
+    return "\n".join(lines) + "\n" + body
 
 
 def brief_text(slug, status="idea", **extra):
@@ -144,6 +202,43 @@ def add_control(corpus):
     return corpus
 
 
+def _write_matching_candidate(folder, slug, plan_text_value):
+    """Every approved plan in a fixture gets the candidate it was promoted from.
+
+    Named by the plan's own `approved_candidate` field and carrying the plan's exact
+    body, so the exact-approval proof holds for valid fixtures — and so a test that
+    breaks it on purpose breaks only that.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from intake_common import read_frontmatter
+    import tempfile as _tf
+    with _tf.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write(plan_text_value)
+        name = fh.name
+    try:
+        fm, body, _ = read_frontmatter(name)
+    finally:
+        os.unlink(name)
+    ref = str(fm.get("approved_candidate", "")).strip()
+    if not ref or "/" in ref:
+        return None
+    version = int(str(fm.get("plan_version", "1")).strip() or "1")
+    cand = folder / ref
+    cand.write_text(candidate_text(slug, version, body=body), encoding="utf-8")
+    return sha256_text(cand.read_text(encoding="utf-8"))
+
+
+def _settle_plan(folder, plan_name, slug):
+    """Write the candidate, then resolve the plan's AUTO candidate hash from disk."""
+    path = folder / plan_name
+    text = path.read_text(encoding="utf-8")
+    cand_sha = _write_matching_candidate(folder, slug, text)
+    if cand_sha and "approved_candidate_sha256: AUTO" in text:
+        path.write_text(text.replace("approved_candidate_sha256: AUTO",
+                                     "approved_candidate_sha256: %s" % cand_sha),
+                        encoding="utf-8")
+
+
 def make_corpus(tmp, slug="test-idea", status="idea", plan=None, plan_name=None,
                 bind_sha=None, brief_extra=None, extra_files=None):
     """Build a corpus on disk. `plan` is the plan file text, or None for no plan."""
@@ -155,14 +250,28 @@ def make_corpus(tmp, slug="test-idea", status="idea", plan=None, plan_name=None,
     (folder / ("%s-design-rationale.md" % slug)).write_text("# rationale\n", encoding="utf-8")
 
     extra = dict(brief_extra or {})
+    for name, text in (extra_files or {}).items():
+        (folder / name).write_text(text, encoding="utf-8")
+        if re.search(r"-approved-plan(-v\d+)?\.md$", name):
+            _settle_plan(folder, name, slug)
     if plan is not None:
         name = plan_name or ("%s-approved-plan.md" % slug)
         (folder / name).write_text(plan, encoding="utf-8")
+        _settle_plan(folder, name, slug)
         extra.setdefault("approved_plan", name)
-        extra.setdefault("approved_plan_sha256", bind_sha or sha256_text(plan))
+        extra.setdefault(
+            "approved_plan_sha256",
+            bind_sha or sha256_text((folder / name).read_text(encoding="utf-8")))
         extra.setdefault("plan_approved_at", "2026-08-25")
-    for name, text in (extra_files or {}).items():
-        (folder / name).write_text(text, encoding="utf-8")
+    # `building`/`verified` are OBSERVATIONS: the contract now requires evidence, so
+    # every fixture that claims one supplies it. Tests that attack the evidence itself
+    # override these explicitly.
+    if status in ("building", "verified"):
+        extra.setdefault("execution_repo", "~/nortropic/verkstadsgolvet")
+        extra.setdefault("execution_commit", "a1b2c3d4e5f6")
+        extra.setdefault("execution_slice", "S1")
+        if status == "verified":
+            extra.setdefault("verification_evidence", "docs/evidence/ac1.md")
 
     (folder / ("idea-%s.md" % slug)).write_text(
         brief_text(slug, status=status, **extra), encoding="utf-8")
@@ -305,7 +414,8 @@ def case_09_supersession(tmp):
 
 def case_10_loader_deterministic(tmp):
     corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea"))
-    expected = sha256_text(plan_text("test-idea"))
+    expected = sha256_text((corpus / "test-idea" / "test-idea-approved-plan.md")
+                           .read_text(encoding="utf-8"))
     rc1, out1 = run(["resume", "--slug", "test-idea"], corpus)
     rc2, out2 = run(["resume", "--slug", "test-idea"], corpus)
     identity = re.search(r"PLAN_IDENTITY=(\S+)", out1)
@@ -319,13 +429,14 @@ def case_10_loader_deterministic(tmp):
 def case_11_stale_pointer(tmp):
     corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea"))
     pointer = Path(tmp) / "CLAUDE.md"
-    rc, out = run(["pointer", "--slug", "test-idea", "--into", str(pointer),
+    rc, out = run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer),
                    "--execution-pointer", "slice 2 of 3"], corpus)
     written = pointer.read_text(encoding="utf-8") if pointer.exists() else ""
     check("11a pointer block lands in the file with the proven identity",
           rc == 0 and "NORTROPIC-ACTIVE-PLAN:BEGIN" in written
           and "NORTROPIC-ACTIVE-PLAN:END" in written
-          and sha256_text(plan_text("test-idea")) in written
+          and sha256_text((corpus / "test-idea" / "test-idea-approved-plan.md")
+                          .read_text(encoding="utf-8")) in written
           and "ACTIVE_INTAKE_SLUG: test-idea" in written
           and "CURRENT_EXECUTION_POINTER: slice 2 of 3" in written,
           "rc=%d, file=%r" % (rc, written[:300]))
@@ -338,6 +449,10 @@ def case_11_stale_pointer(tmp):
     folder = corpus / "test-idea"
     (folder / "test-idea-approved-plan.md").write_text(v1, encoding="utf-8")
     (folder / "test-idea-approved-plan-v2.md").write_text(v2, encoding="utf-8")
+    _settle_plan(folder, "test-idea-approved-plan.md", "test-idea")
+    _settle_plan(folder, "test-idea-approved-plan-v2.md", "test-idea")
+    v1 = (folder / "test-idea-approved-plan.md").read_text(encoding="utf-8")
+    v2 = (folder / "test-idea-approved-plan-v2.md").read_text(encoding="utf-8")
     brief = folder / "idea-test-idea.md"
     text = brief.read_text(encoding="utf-8")
     text = text.replace("approved_plan: test-idea-approved-plan.md",
@@ -364,7 +479,7 @@ def case_11_stale_pointer(tmp):
           and sha256_text(v1) not in out, "rc=%d\n%s" % (rc, out.strip()))
 
     # a fresh pointer, in agreement with the corpus, may pass its hint through
-    run(["pointer", "--slug", "test-idea", "--into", str(pointer),
+    run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer),
          "--execution-pointer", "slice 3 of 3"], corpus)
     rc, out = run(["resume", "--slug", "test-idea", "--pointer", str(pointer)], corpus)
     check("11e a fresh pointer's hint is passed through, still labelled unverified",
@@ -375,7 +490,7 @@ def case_11_stale_pointer(tmp):
 
 def case_12_reload_contract(tmp):
     corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea"))
-    rc, out = run(["pointer", "--slug", "test-idea", "--print-only"], corpus)
+    rc, out = run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--print-only"], corpus)
     plan_path = str((corpus / "test-idea" / "test-idea-approved-plan.md").resolve())
     check("12  reload/compaction contract points back to the plan on disk",
           rc == 0 and plan_path in out
@@ -432,7 +547,7 @@ def case_15_fail_closed_on_missing_plan(tmp):
 
     corpus3 = make_corpus(Path(tmp) / "c", status="planned", plan=plan_text("test-idea"))
     pointer = Path(tmp) / "c" / "CLAUDE.md"
-    run(["pointer", "--slug", "test-idea", "--into", str(pointer)], corpus3)
+    run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer)], corpus3)
     (corpus3 / "test-idea" / "test-idea-approved-plan.md").unlink()
     rc, out = run(["resume", "--slug", "test-idea", "--pointer", str(pointer)], corpus3)
     check("15c a pointer to a vanished plan does not rescue it",
@@ -478,7 +593,7 @@ def case_20_pointer_refuses_unproven_plan(tmp):
     corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea"),
                          bind_sha="d" * 64)
     pointer = Path(tmp) / "CLAUDE.md"
-    rc, out = run(["pointer", "--slug", "test-idea", "--into", str(pointer)], corpus)
+    rc, out = run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer)], corpus)
     check("20  pointer refuses to advertise an unproven plan",
           rc == 2 and "PLAN_IDENTITY_UNAVAILABLE" in out and not pointer.exists(),
           "rc=%d\n%s" % (rc, out.strip()))
@@ -637,11 +752,14 @@ def case_31_long_supersession_chain(tmp):
         if version > 1:
             kw["supersedes_plan"] = names[i - 1]
         (folder / name).write_text(plan_text(slug, version=version, **kw), encoding="utf-8")
+        _settle_plan(folder, name, slug)
     current = folder / names[-1]
     (folder / ("idea-%s.md" % slug)).write_text(
         brief_text(slug, status="building", approved_plan=names[-1],
                    approved_plan_sha256=sha256_text(current.read_text(encoding="utf-8")),
-                   plan_version=str(total), plan_approved_at="2026-08-25"),
+                   plan_version=str(total), plan_approved_at="2026-08-25",
+                   execution_repo="~/nortropic/verkstadsgolvet",
+                   execution_commit="a1b2c3d4e5f6", execution_slice="S1"),
         encoding="utf-8")
     add_control(corpus)
     expect_pass("31  a %d-version supersession chain stays VALID" % total, corpus,
@@ -652,13 +770,13 @@ def case_32_pointer_block_ambiguity(tmp):
     corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea"))
     pointer = Path(tmp) / "CLAUDE.md"
     pointer.write_text("# Repo\n\n<!-- NORTROPIC-ACTIVE-PLAN:END -->\n", encoding="utf-8")
-    rc, out = run(["pointer", "--slug", "test-idea", "--into", str(pointer)], corpus)
+    rc, out = run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer)], corpus)
     check("32a a stray END marker → refuse to write, not silently append",
           rc == 2 and "POINTER_BLOCK_AMBIGUOUS" in out, "rc=%d\n%s" % (rc, out.strip()))
 
     pointer.write_text("# Repo\n", encoding="utf-8")
     for _ in range(3):
-        run(["pointer", "--slug", "test-idea", "--into", str(pointer)], corpus)
+        run(["pointer", "--slug", "test-idea", "--workstream", "TESTWS", "--into", str(pointer)], corpus)
     text = pointer.read_text(encoding="utf-8")
     check("32b repeated writes are idempotent — exactly one block",
           text.count("NORTROPIC-ACTIVE-PLAN:BEGIN") == 1
@@ -716,17 +834,22 @@ def case_34_fenced_template_smuggling(tmp):
 
 def case_35_terse_but_honest_plan(tmp):
     """The placeholder check must not punish a short, complete answer."""
-    terse = plan_text("test-idea")
-    terse = re.sub(r"(## 2\. Scope boundaries\n).*?(?=\n## )",
-                   r"\1Only the intake skill. No repo changes.\n", terse, flags=re.S)
-    terse = re.sub(r"(## 9\. Acceptance criteria\n).*?(?=\n## )",
-                   r"\1`validate` exits 0 on the corpus.\n", terse, flags=re.S)
-    corpus = make_corpus(tmp, status="planned", plan=terse)
+    # Edit the BODY, then build the plan around it, so the content hash is computed
+    # over the final bytes. Editing a plan after its hash exists is tampering — which
+    # case R3 tests on purpose, and which must not be how a fixture is built.
+    body = PLAN_SECTIONS.format(title="Test idea", version=1)
+    body = re.sub(r"(## 2\. Scope boundaries\n).*?(?=\n## )",
+                  r"\1Only the intake skill. No repo changes.\n", body, flags=re.S)
+    body = re.sub(r"(## 9\. Acceptance criteria\n).*?(?=\n## )",
+                  r"\1`validate` exits 0 on the corpus.\n", body, flags=re.S)
+    corpus = make_corpus(tmp, status="planned", plan=plan_text("test-idea", body=body))
     expect_pass("35a a terse but complete §2/§9 stays VALID", corpus)
 
     for placeholder in ("TBD", "None.", "see the chat", "later", "N/A"):
-        thin = re.sub(r"(## 3\. Execution order\n).*?(?=\n## )",
-                      r"\1%s\n" % placeholder, plan_text("test-idea"), flags=re.S)
+        thin_body = re.sub(r"(## 3\. Execution order\n).*?(?=\n## )",
+                           r"\1%s\n" % placeholder,
+                           PLAN_SECTIONS.format(title="Test idea", version=1), flags=re.S)
+        thin = plan_text("test-idea", body=thin_body)
         c = make_corpus(Path(tmp) / re.sub(r"\W", "", placeholder), status="planned",
                         plan=thin)
         expect_fail("35b §3 = %r → FAIL" % placeholder,
@@ -783,15 +906,20 @@ def regression_survives_compaction(tmp):
     the plan is carried in memory.
     """
     slug = "webbforvaltningen-regression"
-    long_plan = plan_text(slug, title="Webbförvaltningen (regression fixture)")
-    long_plan += "\n" + "\n".join(
+    long_body = PLAN_SECTIONS.format(title="Webbförvaltningen (regression fixture)",
+                                     version=1)
+    long_body += "\n" + "\n".join(
         "Slice %d — detail line that a summary would have destroyed." % i
         for i in range(1, 120))
-    corpus = make_corpus(tmp, slug=slug, status="building", plan=long_plan)
+    repo_path = Path(tmp) / "target-repo"
+    corpus = make_corpus(tmp, slug=slug, status="building",
+                         plan=plan_text(slug, title="Webbförvaltningen (regression "
+                                                    "fixture)", body=long_body,
+                                        canonical_execution_repo=str(repo_path)))
     plan_file = corpus / slug / ("%s-approved-plan.md" % slug)
-    plan_sha = sha256_text(long_plan)
+    plan_sha = sha256_text(plan_file.read_text(encoding="utf-8"))
 
-    repo = Path(tmp) / "target-repo"
+    repo = repo_path
     repo.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e")
@@ -801,8 +929,8 @@ def regression_survives_compaction(tmp):
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "slice 1"], check=True, env=env)
 
-    rc, out = run(["pointer", "--slug", slug, "--into", str(repo / "CLAUDE.md"),
-                   "--workstream", "WEBBFORVALTNINGEN", "--target-repo", str(repo),
+    rc, out = run(["pointer", "--slug", slug, "--workstream", "WEBBFORVALTNINGEN",
+                   "--into", str(repo / "CLAUDE.md"),
                    "--execution-pointer", "slice 1 done"], corpus)
     claude_md = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     check("R1  pointer block is actually in the target repo's CLAUDE.md",
@@ -851,7 +979,7 @@ def regression_survives_compaction(tmp):
     check("R6  a plan summarized down to headings is REFUSED, the intact one accepted",
           rc_g == 1 and ("PLAN_SECTION_EMPTY" in out_g
                          or "PLAN_SECTION_SUMMARIZED_AWAY" in out_g)
-          and rc_i == 0 and "plan artifact well-formed" in out_i,
+          and rc_i == 0 and "well-formed" in out_i,
           "gutted rc=%d / intact rc=%d\n%s\n%s"
           % (rc_g, rc_i, out_g.strip(), out_i.strip()))
 
@@ -905,6 +1033,13 @@ def main():
         tmp = tempfile.mkdtemp(prefix="plan-contract-")
         try:
             case(tmp)
+        except KeyboardInterrupt:
+            raise
+        # BaseException, not Exception: a stubbed dependency raises SystemExit, which
+        # would otherwise unwind the suite to a green exit code having run nothing.
+        except BaseException as exc:
+            check("%s raised %s" % (case.__name__, type(exc).__name__), False,
+                  str(exc)[:300])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -912,6 +1047,10 @@ def main():
     tmp = tempfile.mkdtemp(prefix="plan-regression-")
     try:
         regression_survives_compaction(tmp)
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
+        check("regression raised %s" % type(exc).__name__, False, str(exc)[:300])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -919,6 +1058,12 @@ def main():
     print("\n%d/%d checks passed" % (len(RESULTS) - len(failed), len(RESULTS)))
     if failed:
         print("failed: %s" % ", ".join(failed))
+    # A suite that exits 0 having run nothing reports success. A stub that raises
+    # SystemExit(0) mid-run is not an Exception and would otherwise slip past.
+    if len(RESULTS) < MIN_CHECKS:
+        print("\nSUITE DID NOT RUN: only %d checks executed, expected at least %d."
+              % (len(RESULTS), MIN_CHECKS))
+        sys.exit(1)
     sys.exit(1 if failed else 0)
 
 

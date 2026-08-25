@@ -17,10 +17,17 @@ folder "Nortropic innovation-intake".
   (`<slug>-approved-plan.md`), which exists only after the owner approves a Plan Mode
   plan. Once bound, that plan carries execution order and this brief still carries intent
   — the brief points at the plan by name and hash, and never copies it in.
-- **`planned` is earned, not written.** Do not set `status: planned|building|verified`
-  unless the approved-plan binding fields are present and
-  `scripts/plan_contract.py validate --slug <slug>` passes. Without a durable approved
-  plan the brief stays at `clarified`.
+- **`planned` is earned, not written.** Do not set `status: planned` unless the
+  approved-plan binding fields are present and `scripts/plan_contract.py validate --slug
+  <slug>` passes. Without a durable approved plan the brief stays at `clarified`.
+- **`building` and `verified` are observations, not claims.** They require execution
+  evidence (repo, commit, slice, and for `verified` a verification artifact). `resume`
+  proves the commit against the real repository; if the repository disagrees with the
+  label, the repository wins and the discrepancy is reported. Intake may observe
+  implementation state — it may never author it.
+- **Every open question gets a disposition.** Answered by a clarification, explicitly
+  deferred, or explicitly accepted open. None of the above means BLOCKING, and Plan Mode
+  does not start.
 - **Right altitude.** Describe the destination and the quality bar. Do not write the
   implementation plan or pseudo-code; the agent chooses architecture. Constraints go in a
   clearly marked "suggestions, not orders" section.
@@ -78,6 +85,19 @@ intended_repo_path: <slug>/idea-<slug>.md   # idea folder sits directly in the c
 # approved_plan_sha256: <sha256 of that file>
 # plan_version: 1
 # plan_approved_at: <YYYY-MM-DD>
+# Every open question must end up with a disposition — answered by a CLAR, deferred, or
+# explicitly accepted open. A question with none of these BLOCKS Plan Mode.
+# open_questions_deferred: [Q4]
+# open_questions_owner_accepted: [Q2]
+#
+# Execution evidence — ONLY on status building/verified. Intake OBSERVES implementation
+# state; it may not author it. `resume` proves the commit against the real repository,
+# and if the repository disagrees, the repository wins.
+# execution_repo: ~/nortropic/verkstadsgolvet
+# execution_commit: <sha>
+# execution_slice: S4
+# verification_evidence: <path or PR the verification rests on>   # required for verified
+#
 # Corpus links (set by the Phase 2.8 corpus check — include only the ones that apply):
 # supersedes: [<old-slug>]
 # superseded_by: <new-slug>   # set on the OLD brief when superseded, together with status: superseded
@@ -107,8 +127,11 @@ Bulleted end-state. Close with: choose architecture/decomposition/tooling yourse
 pointing to the constraints section.
 
 ## 4. Decisions already made (do not relitigate silently)
-D1, D2, … — including explicitly REJECTED paths, each marked as rejected.
+D1, D2, … for decisions; R1, R2, … for explicitly REJECTED paths. Both get stable IDs
+because the plan is checked against them: a plan must preserve every D and may not
+quietly re-adopt an R, and the coherence report names any that slipped.
 Format: "D1. <decision> — because <one-line rationale from the chat> (← msg 18–20)."
+        "R1. <rejected path> — because <the failure it would create> (← msg 22)."
 The why lets the agent ask sharper interview questions and notice when a premise has
 changed; the `(← msg N–M)` tag cites the source message(s) in the linked transcript so
 the rationale can be pulled precisely, even long after capture.

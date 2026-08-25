@@ -1,0 +1,80 @@
+name: intake-contract
+
+# Remote checks for the skill itself, running on every push and pull request.
+#
+# Be precise about what this is and is not:
+#   * It runs server-side, so it cannot be skipped from a workstation the way the
+#     corpus's local pre-commit hook can be skipped with --no-verify.
+#   * It is NOT enforcement until it is a REQUIRED status check in branch protection.
+#     Until the owner enables that, a red run does not block a merge.
+#   * It exists on a remote only once this file is committed and pushed.
+# See OWNER_ACTION_REQUIRED in the stop report for both steps.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Contract lint (SKILL.md, templates, README state the contract)
+        run: python3 evals/contract_check.py
+
+      - name: Approved-plan falsification suite
+        run: python3 evals/test_plan_contract.py
+
+      - name: Context-continuity suite (scenarios A–L, mutations, acceptance)
+        run: python3 evals/test_context_v2.py
+
+      - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
+        run: |
+          set -e
+          # All three committed signatures are measured from transcripts that live
+          # OUTSIDE this repo: two in the corpus, one gitignored as private chat content.
+          # So this job can verify none of them, and saying so is the honest outcome —
+          # the corpus workflow is where the two corpus goldens actually run.
+          echo "goldens committed here: $(ls evals/golden/*.signature.json | wc -l)"
+          echo "goldens verifiable in THIS workflow: 0 (sources are out of repo)"
+          echo "Never regenerate a signature to make a check green; a golden is only"
+          echo "updated from a new measurement of the real source."
+
+      - name: Mutation guard — no suite may pass against a lobotomized validator
+        run: |
+          set -e
+          mkdir -p /tmp/real && cp scripts/*.py /tmp/real/
+          fail=0
+          # Every combination of (mutated module, suite). A suite must FAIL — and must
+          # not silently exit 0 having executed nothing, which the suites' own
+          # MIN_CHECKS floor turns into a non-zero exit.
+          for module in plan_contract context_contract intake_common; do
+            for suite in test_plan_contract test_context_v2; do
+              cp /tmp/real/*.py scripts/
+              printf 'import sys\nsys.exit(0)\n' > "scripts/$module.py"
+              if python3 "evals/$suite.py" > /tmp/mut.log 2>&1; then
+                echo "MUTATION GUARD FAILED: $suite passed with $module stubbed out"
+                fail=1
+              else
+                echo "ok: $suite fails with $module stubbed ($(grep -c '^PASS ' /tmp/mut.log || true) checks survived)"
+              fi
+            done
+          done
+          cp /tmp/real/*.py scripts/
+          # And the specific shape that used to slip through: a stub that still IMPORTS
+          # cleanly but answers nothing.
+          printf 'import sys\ndef main(argv=None):\n    print("PASS")\n    return 0\nif __name__ == "__main__":\n    sys.exit(main())\n' > scripts/context_contract.py
+          if python3 evals/test_context_v2.py > /tmp/mut2.log 2>&1; then
+            echo "MUTATION GUARD FAILED: test_context_v2 passed against an inert context_contract"
+            fail=1
+          fi
+          cp /tmp/real/*.py scripts/
+          git diff --quiet -- scripts/ || { echo "GUARD DID NOT RESTORE scripts/"; exit 1; }
+          exit $fail

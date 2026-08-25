@@ -64,8 +64,27 @@ inte maximal kontext.
    planen om från disk och verifieras mot sin hash; kan den inte bevisas stannar
    agenten med `PLAN_IDENTITY_UNAVAILABLE` i stället för att gissa ihop den igen.
 
-Paketmodellen: **före plan** VAD / VARFÖR / RÅ — **efter plan** VAD / VARFÖR / RÅ /
-GODKÄND PLAN.
+### Och två lager till: VAR och ÄGARDELTAN
+
+Ett samtal bär mer än sina meddelanden. Det vilar på uppladdade filer, lästa repon och
+svar ägaren gav *efteråt*. Två filer gör det varaktigt:
+
+5. **`<slug>-context-manifest.json` — källkartan.** Varje källa får ett stabilt
+   `SRC-`-id, en sha256 och en status: fångad, inte bärande, otillgänglig-och-kvitterad,
+   eller *ännu inte fångad*. En bärande källa som saknas **stoppar planeringen** — en
+   perfekt brief får inte dölja att bevisningen fattas.
+6. **`<slug>-owner-clarifications.md` — ägardeltan.** Exakt fråga, exakt ägarsvar, datum,
+   och vilka beslut det ändrar. Append-only: ett registrerat svar redigeras aldrig, och
+   transkriptet skrivs aldrig om för att matcha det.
+
+Paketmodellen:
+
+    RÅ / VARFÖR / VAD / ÄGARDELTAN / VAR      → före plan
+    + HUR (förslag) / HUR (godkänt)           → efter plan
+    + VERKLIGHETEN i målrepona                → läses färskt, varje gång
+
+**Fullständig kontext = fullständigt bevarande, inte fullständig förladdning.** Allt
+sparas och kan hittas; varje fas får bara det den behöver.
 
 **Auktoritetsordning** (högst vinner): gällande kanonisk repo-auktoritet (målrepots
 konstitution, regelverk, godkänd arkitektur) → senare ägargodkänd spec/plan → godkänd
@@ -135,7 +154,9 @@ Svenska eller engelska fungerar.
 | [references/extraction.md](references/extraction.md) | Extraktions-playbooken: API-vägen först, DOM-reserven, kända fallgropar |
 | [references/brief-template.md](references/brief-template.md) | Briefens exakta mall och reglerna bakom den |
 | [references/design-rationale-template.md](references/design-rationale-template.md) | Designrationalens mall: resonemangskedjor, förkastanden, hämtkarta |
-| [references/approved-plan-template.md](references/approved-plan-template.md) | Den godkända planens mall: elva obligatoriska avsnitt, versionering, återhämtning |
+| [references/approved-plan-template.md](references/approved-plan-template.md) | Planens mall: kandidat → exakt godkännande, elva avsnitt, skivor, flera målrepon |
+| [references/context-manifest-template.md](references/context-manifest-template.md) | Källkartans schema: SRC-id, capture_status, integritet, målrepon med roller |
+| [references/owner-clarifications-template.md](references/owner-clarifications-template.md) | Ägardeltans mall: CLAR-id, append-only, dispositioner för öppna frågor |
 | [scripts/](scripts/) | Capture- och verifieringsskripten (körs i webbläsaren respektive lokalt) samt `plan_contract.py` — validerar, återupptar och pekar ut den godkända planen |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 

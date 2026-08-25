@@ -1,9 +1,30 @@
 # Evals — run these after ANY change to this skill
 
-Six checks, all repeatable. Zero regression = all six pass. Five of them measure the
-skill's outputs and its stated contract without touching the capture/distill/verify
-pipeline; the sixth (approved-plan falsification) executes the real validator against
-real corpora built on disk.
+Seven checks, all repeatable. Zero regression = all seven pass. Five measure the skill's
+outputs and its stated contract without touching the capture/distill/verify pipeline; the
+last two execute the real validators against real corpora and real git repositories built
+on disk.
+
+```bash
+python3 evals/contract_check.py                       # 1 — contract lint
+python3 evals/test_plan_contract.py                   # 6 — approved-plan falsification
+python3 evals/test_context_v2.py                      # 7 — context continuity A–L
+python3 scripts/plan_contract.py validate             # the real corpus
+python3 scripts/context_contract.py validate          # the real corpus
+```
+
+Workflows exist for both repos — `.github/workflows/intake-contract.yml` here and
+`corpus-contract.yml` in the corpus — but be precise about their status: a workflow is
+only *running* once the file is pushed, and only *enforcing* once it is a **required
+status check** in branch protection. Neither step has been done yet (see
+OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live gate, and
+it is overridable with `--no-verify`.
+
+CI additionally runs a **mutation guard**: it stubs out each of the three modules
+(`plan_contract`, `context_contract`, `intake_common`) in turn and requires **both**
+suites to fail for every combination. This catches the failure mode where a stub raises
+`SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
+is why both suites also assert a floor (`MIN_CHECKS`) on checks actually executed.
 
 ## 1. Trigger eval (`trigger.json`)
 
@@ -145,3 +166,32 @@ The suite also guards a negative property that is easy to lose (`case 14`): noth
 the scripts, SKILL.md, README or the templates may require a private conversation or
 session path. The mechanism must work for a fresh agent that has only repository +
 intake access.
+
+## 7. Context continuity (`test_context_v2.py`)
+
+The realistic end-to-end scenarios, built as real packages and real git repositories:
+
+| | Scenario | Proves |
+|---|---|---|
+| A | long brainstorm | raw preserved, rejections keep ids, Plan Mode never preloads the transcript |
+| B | load-bearing attachment missing | planning blocked until captured **or** owner-acknowledged, and the acknowledgement itself is durable |
+| C | clarification changes the design | raw still says X, the owner's Y is durable and traceable, editing it is refused |
+| D | plan introduces new scope | new decisions, dropped ACs and reopened rejections all visible before approval |
+| E | exact approval | wrong sha refused, substituted candidate refused, promoted body provably identical, post-approval edit refused |
+| F/G | compaction, fresh agent | a new process with a scrubbed env and `cwd=/` recovers the whole package |
+| H | two workstreams, one repo | keyed pointers coexist; neither overwrites nor answers for the other |
+| I | multi-repo plan | both targets inspected, advisory-only stays read-only, invented roles fail |
+| J | stale pointer | the hint is discarded, the corpus identity wins, the discrepancy is named |
+| K | execution status lie | `verified` without evidence fails; a fabricated commit is contradicted by the repo |
+| L | bidirectional provenance | AC → source and commit → slice → AC → decision → source both resolve |
+
+It ends with the **mutation matrix** (13 planted failures, each required to fail for its
+own code while a control package passes in the same run) and the **final acceptance
+test**: brainstorm → coverage → candidate → coherence → exact approval → bind → pointer →
+destroy the session → recover from the slug alone → traverse one requirement back to its
+source.
+
+Every `expect_fail` in both suites asserts three things at once: the run fails, the
+finding is attached to the right slug, and the control package still passes. A validator
+that rejects everything cannot satisfy either suite — CI enforces that with the mutation
+guard.

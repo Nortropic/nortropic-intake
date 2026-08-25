@@ -1,14 +1,48 @@
-# Approved-plan template (`<slug>-approved-plan.md`)
+# Plan candidate & approved plan (`<slug>-plan-candidate.md` → `<slug>-approved-plan.md`)
 
-The fourth intake artifact: **HOW / execution order**. It exists only after Plan Mode has
-produced a plan and the owner has explicitly approved it. It is the durable home of
-owner-approved execution intent — the thing that used to live only in a conversation and
-disappeared at the first compaction.
+The HOW layer: **execution order**. It exists only after Plan Mode has produced a plan and
+the owner has explicitly approved it. It is the durable home of owner-approved execution
+intent — the thing that used to live only in a conversation and disappeared at the first
+compaction.
 
 The package model:
 
-    PRE-PLAN   idea-<slug>.md (WHAT) · <slug>-design-rationale.md (WHY) · <slug>-full-chat.md (RAW)
-    POST-PLAN  + <slug>-approved-plan.md (HOW / execution order)
+    PRE-PLAN   idea-<slug>.md (WHAT) · <slug>-design-rationale.md (WHY)
+               <slug>-full-chat.md (RAW) · <slug>-context-manifest.json (WHERE)
+               <slug>-owner-clarifications.md (OWNER DELTAS)
+    POST-PLAN  + <slug>-plan-candidate.md (HOW, proposed — what the owner reads)
+               + <slug>-approved-plan.md  (HOW, approved — the same body, promoted)
+
+## Two files, one document
+
+The owner approves **bytes**, not a promise. So the plan exists twice, on purpose:
+
+1. **The candidate** is written straight out of Plan Mode. The owner reads *this file*.
+2. **The approved plan** is produced by promotion — its body is copied byte for byte;
+   only frontmatter is added (who approved, when, and the hashes that prove it).
+
+A plan's **content identity** is the sha256 of its body, everything after the frontmatter.
+Candidate and approved plan therefore have the same content identity by construction, and
+the validator recomputes it:
+
+    plan_content_sha256          == sha256(approved plan body)
+                                 == sha256(candidate body)
+    approved_candidate_sha256    == sha256(the candidate FILE the owner read)
+
+The candidate is never mutated after approval. It stays in the package as the receipt for
+exactly what was on screen when the owner said yes. There is no model rewrite between
+*what the owner saw* and *what implementation uses* — and if anything drifts, the plan
+stops validating.
+
+    python3 …/plan_contract.py coherence --slug <slug>      # the delta the owner reads
+    python3 …/plan_contract.py approve   --slug <slug> \
+        --candidate-sha <the sha the owner approved> \
+        --approved-by "Johnny (Nortropic)" --approved-at 2026-08-25 \
+        --evidence "owner approved candidate <sha12> in session"
+
+`approve` refuses if the sha the owner approved is not the candidate on disk — that is the
+case where the document changed between reading and approval, and it must never be
+resolved by promoting the newer bytes.
 
 ## Rules that matter more than the section list
 
@@ -88,9 +122,13 @@ plan_version: <N>
 source_brief: idea-<slug>.md
 source_brief_sha256: <sha256 of the brief as it stood at approval time — provenance only>
 canonical_execution_repo: <repo path or remote, or `unknown`>
+execution_targets: [<repo>=<role>, <repo>=<role>]   # multi-repo plans; roles below
 plan_source: claude-code-plan-mode   # | owner-authored | recovered-from-known-source
 fidelity: full                       # full | partial (partial = recovered; owner must verify)
 authority: owner-approved-execution-intent
+plan_content_sha256: <sha256 of this file's body — the identity the owner approved>
+approved_candidate: <slug>-plan-candidate.md
+approved_candidate_sha256: <sha256 of that candidate FILE, unmutated>
 # supersedes_plan: <slug>-approved-plan.md        # on v2+
 # superseded_by_plan: <slug>-approved-plan-v2.md  # added to the OLD file when superseded
 ---
@@ -111,9 +149,18 @@ What is in scope for this plan and what is explicitly outside it — including n
 work that must not be pulled in opportunistically.
 
 ## 3. Execution order
-The plan itself, in the order the owner approved: phases/slices, their sequence, and what
-each one delivers. This is the section that must never be compressed into a summary. If
-the approved Plan Mode output was long, it is long here.
+
+### S1 — <slice heading>
+What this slice delivers, in the order the owner approved. Name the brief's stable IDs it
+rests on: `Implements D1.` / `Covers AC1, AC2.` / `CLAR-001 applies.` Slices must be
+numbered S1..Sn without gaps — they are the addresses that acceptance criteria, `resume`,
+the plan map and implementation evidence all point at.
+
+### S2 — <slice heading>
+…
+
+This is the section that must never be compressed into a summary. If the approved Plan
+Mode output was long, it is long here.
 
 ## 4. Decisions carried into execution
 Decisions the plan depends on, each with its one-line why. Includes decisions made during
@@ -157,6 +204,34 @@ Where this plan came from: the session/date, how the owner approved it, and — 
 `plan_source: recovered-from-known-source` — exactly which known source it was recovered
 from and how the owner verified it. Never "reconstructed from memory".
 ```
+
+## Multi-repo plans
+
+A Nortropic plan may legitimately span repositories that do **not** share authority. Each
+target carries a role, and the roles survive into `resume` and the plan map:
+
+| Role | Authority |
+|---|---|
+| `canonical-system` | Owner-gated system authority; Intake may never author its truth |
+| `operator-product` | Implementation target for product work |
+| `advisory-only` | **READ ONLY** — reference material, never a write target |
+| `intake-corpus` | The intake corpus itself |
+
+Each target repository remains the truth for its own implementation state. Intake does not
+become a multi-repo execution-state database; `resume` reads each repo and reports what it
+finds, and where a repo contradicts the plan or the brief's label, the repository wins.
+
+## The plan map (derived, never stored)
+
+A long approved plan should not be preloaded whole for a small slice. Ask for its
+structure instead:
+
+    python3 …/plan_contract.py map --slug <slug>
+
+It prints slice IDs, headings, line ranges, the IDs each slice covers, owner-only slices
+and the execution targets — recomputed from the approved plan on every call. Nothing is
+stored, so the map cannot drift and cannot become a second source of truth. The approved
+plan remains canonical.
 
 ## Recovery of a legacy plan (bounded, manual, owner-verified)
 

@@ -39,9 +39,9 @@ CHECKS = [
     ("SKILL.md", "C1 full authority ladder in order", [
         "current canonical repository authority",
         "> later owner-approved spec / architecture / plan > approved intake plan "
-        "> idea brief > design rationale > raw transcript"]),
-    ("SKILL.md", "C2 intra-package order approved plan > brief > rationale > transcript", [
-        "approved plan > brief > rationale > transcript"]),
+        "> owner clarifications > idea brief > design rationale > raw transcript"]),
+    ("SKILL.md", "C2 intra-package order incl. owner clarifications", [
+        "approved plan > owner clarifications > brief > rationale > transcript"]),
     ("SKILL.md", "C3 conflicts surfaced, never the old brainstorm silently", [
         "surface it during Clarify/Plan"]),
     ("references/brief-template.md", "C4 brief states canonical authority wins", [
@@ -125,7 +125,7 @@ CHECKS = [
         "Silence is not approval"]),
     ("SKILL.md", "P4 a short execution prompt never replaces the plan", [
         "A short execution prompt and an approved plan are not the same artifact",
-        "If the approved plan is long, persist the long plan"]),
+        "If the plan is long, persist the long plan"]),
     ("SKILL.md", "P5 the approved plan is not a second runtime/source of truth", [
         "not a second runtime, not a second source of truth, and\nnot an "
         "execution-state ledger",
@@ -146,7 +146,7 @@ CHECKS = [
         "do not depend on Claude Code's private session storage",
         "a different agent that has only\nrepository + intake access"]),
     ("SKILL.md", "P10 fresh-session start contract is mechanical", [
-        "resume --slug <slug> --target-repo <repo>",
+        "resume \\ --slug <slug> --workstream <NAME> --target-repo <repo>",
         "PLAN_IDENTITY=<path>@sha256:<hash>",
         "PLAN_CURRENT_REPO_RECONCILIATION=",
         "NEXT_EXECUTION_POINTER=<next slice, computed — not copied from a hint>"]),
@@ -159,7 +159,66 @@ CHECKS = [
         "a model reconstruction is never accepted as\nthe plan",
         "The\ntranscript is never scraped automatically"]),
     ("SKILL.md", "P13 INDEX stays one row per idea after the plan exists", [
-        "the plan file\n   never gets its own row"]),
+        "Still one row per IDEA; neither the plan\n   nor the manifest gets its own row"]),
+    # ---------------------------------------------------------------------
+    # V. Context continuity (v2)
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "V1 the WHERE and OWNER-DELTA layers exist", [
+        "`<slug>-context-manifest.json`", "`<slug>-owner-clarifications.md`",
+        "`<slug>-plan-candidate.md`"]),
+    ("SKILL.md", "V2 full information ≠ full preload", [
+        "full information PRESERVATION, not full preload",
+        "the raw transcript is retrieved in targeted ranges, never dumped"]),
+    ("SKILL.md", "V3 clarifications are durable, append-only, transcript untouched", [
+        "the exact question, the owner's\nexact wording",
+        "Append\nonly; never edit a recorded answer, and never rewrite the transcript"]),
+    ("SKILL.md", "V4 manifest is evidence-only and refuses credentials", [
+        "never from guesses**", "Never write a credential into a manifest"]),
+    ("SKILL.md", "V5 the coverage gate is fail-closed before Plan Mode", [
+        "PLANNING_CONTEXT_COMPLETE=YES|NO",
+        "On `PLANNING_CONTEXT_COMPLETE=NO`, Plan Mode does not begin",
+        "Never plan around a gap by inferring what the missing source\nprobably said"]),
+    ("SKILL.md", "V6 planning reads current repo reality first", [
+        "Planning is `INTENT + CURRENT REALITY → PLAN`, never `OLD BRAINSTORM → PLAN`",
+        "the\nold idea never silently wins"]),
+    ("SKILL.md", "V7 owner approves exact bytes, no rewrite in between", [
+        "Approval names a sha256, not a vibe",
+        "copies the candidate's\n   body **byte for byte**",
+        "There is no model rewrite between\n   what the owner saw and what implementation uses"]),
+    ("SKILL.md", "V8 coherence delta is visible before approval", [
+        "**Material scope changes are never buried in hundreds of plan lines.**",
+        "the owner approves with the\n   delta visible"]),
+    ("SKILL.md", "V9 multi-workstream pointers cannot collide", [
+        "keyed by\n`workstream=<NAME> slug=<slug>`",
+        "**A repository-wide \"next task\" does not\nexist**"]),
+    ("SKILL.md", "V10 execution state is observed, never authored", [
+        "**Execution state is observed, never authored.**",
+        "**A `verified` label is not made true by a valid approved plan.**",
+        "the\nrepository wins, and the brief is corrected"]),
+    ("SKILL.md", "V11 provenance is bidirectional, without a ledger", [
+        "trace --slug <slug> --commit <sha>",
+        "evidence →\nslice → acceptance criterion → decision → the original source",
+        "no ledger, no graph database"]),
+    ("SKILL.md", "V12 the plan map is derived, not stored", [
+        "`map --slug <slug>` gives slice IDs and line\nranges"]),
+    ("references/context-manifest-template.md", "V13 manifest contract stated", [
+        "capture_status", "unavailable_owner_acknowledged", "load_bearing",
+        "owner_ack", "advisory-only", "Never guess a source"]),
+    ("references/owner-clarifications-template.md", "V14 clarification contract stated", [
+        "APPROVED PLAN  >  OWNER CLARIFICATIONS  >  BRIEF",
+        "Append-only", "The transcript is never rewritten",
+        "BLOCKING"]),
+    ("references/approved-plan-template.md", "V15 candidate→approval promotion stated", [
+        "The owner approves **bytes**, not a promise",
+        "plan_content_sha256", "approved_candidate_sha256",
+        "The candidate is never mutated after approval"]),
+    ("references/approved-plan-template.md", "V16 multi-repo roles + derived map", [
+        "do **not** share authority", "advisory-only", "**READ ONLY**",
+        "Nothing is\nstored, so the map cannot drift"]),
+    ("references/brief-template.md", "V17 brief carries R ids and dispositions", [
+        "R1, R2, … for explicitly REJECTED paths",
+        "open_questions_deferred", "open_questions_owner_accepted",
+        "`building` and `verified` are observations, not claims"]),
     ("references/approved-plan-template.md", "P14 plan template: identity + approval metadata", [
         "type: approved-plan", "approval_state: approved", "approved_by",
         "approval_evidence", "plan_version", "source_brief",
