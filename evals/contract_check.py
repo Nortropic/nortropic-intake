@@ -38,9 +38,10 @@ CHECKS = [
     # C. Authority order
     ("SKILL.md", "C1 full authority ladder in order", [
         "current canonical repository authority",
-        "> later owner-approved spec / architecture / plan > idea brief > design rationale > raw transcript"]),
-    ("SKILL.md", "C2 intra-package order brief > rationale > transcript", [
-        "brief > rationale > transcript"]),
+        "> later owner-approved spec / architecture / plan > approved intake plan "
+        "> idea brief > design rationale > raw transcript"]),
+    ("SKILL.md", "C2 intra-package order approved plan > brief > rationale > transcript", [
+        "approved plan > brief > rationale > transcript"]),
     ("SKILL.md", "C3 conflicts surfaced, never the old brainstorm silently", [
         "surface it during Clarify/Plan"]),
     ("references/brief-template.md", "C4 brief states canonical authority wins", [
@@ -101,6 +102,88 @@ CHECKS = [
     # README teaches the model
     ("README.md", "R1 README names the rationale layer + authority order", [
         "<slug>-design-rationale.md", "Auktoritetsordning"]),
+    # ---------------------------------------------------------------------
+    # P. Approved-plan durability (the fourth artifact)
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "P1 the fourth artifact is named and scoped to post-approval", [
+        "`<slug>-approved-plan.md`", "PRE-PLAN", "POST-PLAN"]),
+    ("SKILL.md", "P2 `planned` is a mechanical, validated state", [
+        "`planned` is a mechanical state, not a word",
+        "**Detection is mechanical and complete over the files present.**",
+        "fails closed on every one of those conditions",
+        "ships `hooks/pre-commit`, which runs the validator and refuses the commit"]),
+    ("SKILL.md", "P2b the limits of the gate are stated, not oversold", [
+        "It is a gate, not a wall", "`--no-verify` overrides it",
+        "soft-passes if the skill is not installed",
+        "**Invocation of Phase 4 is not mechanical.**",
+        "it cannot catch a run that never reaches the gate",
+        "**Fidelity is not mechanical.**",
+        "It cannot prove the prose matches what the owner approved"]),
+    ("SKILL.md", "P3 no plan is ever generated before owner approval", [
+        "Never generate an approved plan from the brief, the rationale or the "
+        "transcript before approval",
+        "Silence is not approval"]),
+    ("SKILL.md", "P4 a short execution prompt never replaces the plan", [
+        "A short execution prompt and an approved plan are not the same artifact",
+        "If the approved plan is long, persist the long plan"]),
+    ("SKILL.md", "P5 the approved plan is not a second runtime/source of truth", [
+        "not a second runtime, not a second source of truth, and\nnot an "
+        "execution-state ledger",
+        "the repository wins and the divergence is reported"]),
+    ("SKILL.md", "P6 plan is bound to the brief by hash, never duplicated into it", [
+        "approved_plan_sha256",
+        "The brief points at the plan; it never\n   duplicates it"]),
+    ("SKILL.md", "P7 compact instructions preserve execution identity + reload from disk", [
+        "COMPACT INSTRUCTIONS",
+        "re-read the approved plan from disk before deriving any future work",
+        "Never reconstruct a missing approved plan\nfrom conversational memory",
+        "STOP with `PLAN_IDENTITY_UNAVAILABLE`"]),
+    ("SKILL.md", "P8 the pointer is a cache; repo evidence wins", [
+        "a cache, never a second truth",
+        "A stale pointer never overrides repository evidence"]),
+    ("SKILL.md", "P9 mechanism uses CLAUDE.md, not private session storage", [
+        "The supported surface is `CLAUDE.md`",
+        "do not depend on Claude Code's private session storage",
+        "a different agent that has only\nrepository + intake access"]),
+    ("SKILL.md", "P10 fresh-session start contract is mechanical", [
+        "resume --slug <slug> --target-repo <repo>",
+        "PLAN_IDENTITY=<path>@sha256:<hash>",
+        "PLAN_CURRENT_REPO_RECONCILIATION=",
+        "NEXT_EXECUTION_POINTER=<next slice, computed — not copied from a hint>"]),
+    ("SKILL.md", "P11 reopening keeps history: versioned, superseded both ways", [
+        "An approved plan is never silently rewritten",
+        "`supersedes_plan: <old file>`",
+        "`superseded_by_plan: <new file>`"]),
+    ("SKILL.md", "P12 legacy items classified, never fabricated", [
+        "LEGACY_PLAN_ARTIFACT_MISSING",
+        "a model reconstruction is never accepted as\nthe plan",
+        "The\ntranscript is never scraped automatically"]),
+    ("SKILL.md", "P13 INDEX stays one row per idea after the plan exists", [
+        "the plan file\n   never gets its own row"]),
+    ("references/approved-plan-template.md", "P14 plan template: identity + approval metadata", [
+        "type: approved-plan", "approval_state: approved", "approved_by",
+        "approval_evidence", "plan_version", "source_brief",
+        "authority: owner-approved-execution-intent"]),
+    ("references/approved-plan-template.md", "P15 plan template: nothing summarized away", [
+        "## 3. Execution order", "## 5. Deferred work",
+        "## 6. Rejected paths (must not be re-adopted)",
+        "## 7. Owner-only transitions", "## 8. Stop conditions",
+        "## 10. Current / next slice semantics",
+        "## 11. Precedence & coherence patches"]),
+    ("references/approved-plan-template.md", "P16 plan template: non-authority + immutability", [
+        "not a second runtime, not a second source of truth",
+        "An approved plan is never silently rewritten"]),
+    ("references/approved-plan-template.md", "P17 plan template: bounded manual legacy recovery", [
+        "LEGACY_PLAN_ARTIFACT_MISSING",
+        "recovered-from-known-source",
+        "Fabricating the plan is never the fallback"]),
+    ("references/brief-template.md", "P18 brief carries the binding fields, not the plan", [
+        "approved_plan_sha256: <sha256 of that file>",
+        "never copies it in"]),
+    ("references/brief-template.md", "P19 brief forbids an unearned `planned`", [
+        "`planned` is earned, not written"]),
+    ("README.md", "P20 README teaches the four-artifact model", [
+        "<slug>-approved-plan.md"]),
 ]
 
 

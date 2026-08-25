@@ -13,6 +13,14 @@ folder "Nortropic innovation-intake".
   the full chat is raw evidence, both linked as reference. Authority: current canonical
   repository authority beats all intake artifacts; within the intake package this brief
   wins over rationale and transcript — say so explicitly in the brief (§2).
+- **The brief is WHAT, never HOW.** Execution order belongs in the approved plan
+  (`<slug>-approved-plan.md`), which exists only after the owner approves a Plan Mode
+  plan. Once bound, that plan carries execution order and this brief still carries intent
+  — the brief points at the plan by name and hash, and never copies it in.
+- **`planned` is earned, not written.** Do not set `status: planned|building|verified`
+  unless the approved-plan binding fields are present and
+  `scripts/plan_contract.py validate --slug <slug>` passes. Without a durable approved
+  plan the brief stays at `clarified`.
 - **Right altitude.** Describe the destination and the quality bar. Do not write the
   implementation plan or pseudo-code; the agent chooses architecture. Constraints go in a
   clearly marked "suggestions, not orders" section.
@@ -64,6 +72,12 @@ created: <YYYY-MM-DD>
 source_conversation: <slug>-full-chat.md   # raw evidence — this brief takes precedence
 design_rationale: <slug>-design-rationale.md   # deeper design logic — read on demand, never preloaded
 intended_repo_path: <slug>/idea-<slug>.md   # idea folder sits directly in the corpus-repo root
+# Approved-plan binding — added ONLY by Phase 4, after the owner approves a Plan Mode plan.
+# Their presence is what makes status: planned|building|verified valid; absence forbids it.
+# approved_plan: <slug>-approved-plan.md
+# approved_plan_sha256: <sha256 of that file>
+# plan_version: 1
+# plan_approved_at: <YYYY-MM-DD>
 # Corpus links (set by the Phase 2.8 corpus check — include only the ones that apply):
 # supersedes: [<old-slug>]
 # superseded_by: <new-slug>   # set on the OLD brief when superseded, together with status: superseded
@@ -81,7 +95,9 @@ End with: "This brief is the primary intake artifact for execution. Deeper desig
 lives in the linked design rationale; the full chat is raw evidence — read targeted
 message ranges only if the rationale is insufficient. Current canonical repository
 authority beats all intake artifacts; within the intake package this brief wins over
-rationale and transcript." followed by the one-line invariants pointer:
+rationale and transcript. Once an owner-approved plan is bound (see the frontmatter), it
+carries execution order above this brief and below current repository authority." followed
+by the one-line invariants pointer:
 "Invariants this must not violate: Nortropic's trust layer — constitution & rulebook
 (`nortropic-system/docs/07-konstitution.md`, `03-regelverk.md`): trust contracts, frozen
 gates, §-rules. Pointer only — read them there; never copied here."
@@ -124,10 +140,19 @@ Q1, Q2, … — real decisions Johnny must make, not filler.
    both out of main context; then interview the owner on §9 (AskUserQuestion); append
    answers here.
 2. Plan in plan mode; owner reviews before any code ("address all notes, don't implement yet").
-3. Implement in a fresh session from the approved plan.
-4. Adversarial review: fresh subagent checks the diff against this brief; report only
-   gaps affecting correctness or stated requirements.
-5. Traceability: commit messages cite this brief's slug.
+3. On explicit owner approval, persist the exact approved plan as
+   `<slug>-approved-plan.md`, validate it (`scripts/plan_contract.py validate`), bind it
+   into this frontmatter (`approved_plan` + `approved_plan_sha256` + `plan_version`) and
+   only then set `status: planned`. Nothing is summarized away; a short execution prompt
+   never replaces the plan file.
+4. Implement in a fresh session, started from the approved plan:
+   `plan_contract.py resume --slug <slug> --target-repo <repo>` proves the plan identity;
+   reconcile the plan against current repository truth before continuing. After any
+   compaction, re-read the plan from disk — never reconstruct it from memory; if it
+   cannot be proven, STOP with `PLAN_IDENTITY_UNAVAILABLE`.
+5. Adversarial review: fresh subagent checks the diff against this brief and the approved
+   plan; report only gaps affecting correctness or stated requirements.
+6. Traceability: commit messages cite this brief's slug.
 
 ## References
 - Source conversation (same folder + intended repo path)

@@ -1,8 +1,9 @@
 # Evals — run these after ANY change to this skill
 
-Five checks, all repeatable. Zero regression = all five pass. None of them touches
-the capture/distill/verify pipeline itself — they measure its outputs and its stated
-contract.
+Six checks, all repeatable. Zero regression = all six pass. Five of them measure the
+skill's outputs and its stated contract without touching the capture/distill/verify
+pipeline; the sixth (approved-plan falsification) executes the real validator against
+real corpora built on disk.
 
 ## 1. Trigger eval (`trigger.json`)
 
@@ -88,12 +89,14 @@ is never a pass for new artifacts.
 
 ## 4. Contract lint (`contract_check.py`)
 
-Mechanical check that SKILL.md, the templates and the README still state the
-three-artifact behavioral contract: brief + rationale + transcript delivery, progressive
-disclosure (implement-now never preloads the raw chat), the authority ladder (current
-canonical repo authority > owner-approved spec > brief > rationale > transcript),
-rationale provenance/rejection/unresolved/metaphor requirements, transcript
-immutability, and the untouched dedup/routing semantics.
+Mechanical check that SKILL.md, the templates and the README still state the behavioral
+contract: brief + rationale + transcript delivery, the post-approval fourth artifact,
+progressive disclosure (implement-now never preloads the raw chat), the authority ladder
+(current canonical repo authority > owner-approved spec > approved intake plan > brief >
+rationale > transcript), rationale provenance/rejection/unresolved/metaphor requirements,
+transcript immutability, approved-plan durability (the P-series: mechanical `planned`,
+no plan before approval, short prompt ≠ plan, compact/reload rules, pointer-as-cache,
+versioning, legacy classification), and the untouched dedup/routing semantics.
 
 ```bash
 # from the repo root — exit 1 on any FAIL:
@@ -113,3 +116,32 @@ delivery, and on a known-good rationale after template changes. Fresh reviewer
 ≥16/20 and no zero on criteria marked (critical). Ideas captured under the two-artifact
 contract have no rationale yet — absence there flags backfill, not a regression; the
 first rationale delivered by a real run becomes the known-good example.
+
+## 6. Approved-plan falsification (`test_plan_contract.py`)
+
+Executes `scripts/plan_contract.py` against corpora built on disk — no mocks. Weighted
+towards falsification: three happy-path cases against ~20 ways a plan can be unprovable
+(missing, unbound, wrong hash, wrong slug, unapproved, superseded pointer, broken
+supersession, orphaned version, escaped path, section summarized away, plan bound at the
+wrong lifecycle state, filename/version drift, pointer to an unproven plan).
+
+```bash
+python3 evals/test_plan_contract.py     # exit 1 on any failure
+
+# and against the REAL corpus (must stay green; legacy items surface here):
+python3 scripts/plan_contract.py validate
+```
+
+It ends with the named regression scenario
+**`APPROVED_PLAN_SURVIVES_COMPACTION_AND_FRESH_SESSION`**, which reproduces the failure
+this contract exists to prevent: a long approved plan is persisted and bound, a target
+repo is advanced, the pointer is installed — then the session is destroyed (modelled
+honestly as a new process with no conversational context) and the plan must still be
+recovered by identity and hash, with reconciliation left to the agent. The counterfactual
+case (`R8`) runs the same scenario with no durable plan and asserts it fails closed with
+`LEGACY_PLAN_ARTIFACT_MISSING` rather than guessing.
+
+The suite also guards a negative property that is easy to lose (`case 14`): nothing in
+the scripts, SKILL.md, README or the templates may require a private conversation or
+session path. The mechanism must work for a fresh agent that has only repository +
+intake access.

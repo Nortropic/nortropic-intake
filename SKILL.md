@@ -24,11 +24,25 @@ Right context, not maximum context: execution needs the *what*; architecture som
 needs the *why*; raw history is retrieved only when ambiguity remains. Three different
 jobs — never three copies of the same content.
 
+**A fourth artifact appears after owner-approved planning — and only then:**
+
+4. `<slug>-approved-plan.md` — the **approved plan**: HOW, in the execution order the
+   owner approved in Plan Mode. Never generated from the brief, never written before the
+   owner approves. It is bound to the brief by sha256, and it is what turns `status:
+   planned` from a word into a provable state. See Phase 4 and
+   `references/approved-plan-template.md`.
+
+The package model, stated once:
+
+    PRE-PLAN    WHAT (brief) / WHY (rationale) / RAW (transcript)
+    POST-PLAN   WHAT / WHY / RAW / APPROVED PLAN (how + execution order)
+
 **Authority order (highest wins):**
 
     current canonical repository authority
     (the target repo's constitution, rulebook, approved architecture)
       > later owner-approved spec / architecture / plan
+      > approved intake plan
       > idea brief
       > design rationale
       > raw transcript
@@ -37,9 +51,17 @@ Intake artifacts preserve intent and provenance — they never supersede current
 repository authority. A brainstorm cannot silently override a later approved
 architecture; a rationale is not execution authority merely because it is detailed; an
 old raw message cannot resurrect a rejected or superseded design. Within one intake
-package, brief > rationale > transcript on intentional interpretation. If current
-canonical authority genuinely conflicts with the idea, surface it during Clarify/Plan —
-never silently choose the old brainstorm.
+package, approved plan > brief > rationale > transcript on intentional interpretation.
+If current canonical authority genuinely conflicts with the idea, surface it during
+Clarify/Plan — never silently choose the old brainstorm.
+
+The approved plan is the strongest intake artifact and still not execution authority. It
+preserves owner-approved execution intent and its provenance; it does not override the
+constitution, the rulebook, frozen gates, current published production truth, or a later
+owner-approved transition. It is not a second runtime, not a second source of truth, and
+not an execution-state ledger. Where the plan and current repository truth disagree, the
+repository wins and the divergence is reported to the owner — never silently reconciled
+in the plan's favour.
 
 Why distill: a coding agent works best from a decision-only brief — a raw transcript
 contains dead ends it may faithfully implement (this really happened: a plan rejected two
@@ -86,7 +108,8 @@ what he already said in the request — where this idea goes. Two routes, one qu
   plan mode.
 - **IMPLEMENTERA NU** (build this session): capture → distill → corpus check + link +
   index → Phase 2.5 interview (clarify the open questions) → `status: clarified` →
-  offer/enter plan mode.
+  offer/enter plan mode → owner approves the plan → Phase 4 persists and binds it →
+  `status: planned` → fresh implementation session (Phase 5).
 
 Unattended default: if Johnny is not at the keyboard — a scheduled/headless run, or
 AskUserQuestion cannot be answered (use the same presence signal Phase 2.5 uses to skip
@@ -108,6 +131,34 @@ from the stored brief instead of a fresh capture: corpus re-check (has anything
 superseded or joined it since?), Phase 2.5 interview, `status: clarified`, plan mode.
 The `status` frontmatter field models the whole lifecycle:
 `idea → clarified → planned → building → verified` (plus terminal `superseded`).
+
+**`planned` is a mechanical state, not a word.** `status: planned | building | verified`
+is valid only when the brief is bound to a valid approved-plan artifact: the file exists,
+its sha256 matches `approved_plan_sha256`, it carries the right slug and owner-approval
+metadata, none of its eleven required sections has been emptied out, and it is the current
+(non-superseded) version. Without that, status may not advance past `clarified`. See
+Phase 4.
+
+Be precise about what is mechanical here, because the difference is the whole point:
+
+- **Detection is mechanical and complete over the files present.**
+  `scripts/plan_contract.py validate` fails closed on every one of those conditions, over
+  the whole corpus, run by anyone with the files and nothing else. A `planned` brief with
+  no provable plan cannot hide — it fails loudly as `LEGACY_PLAN_ARTIFACT_MISSING`. The
+  corpus repo ships `hooks/pre-commit`, which runs the validator and refuses the commit on
+  failure; once installed (`chmod +x` + the symlink, see the corpus `CLAUDE.md`) it keeps
+  an unprovable state out of git history. It is a gate, not a wall: `--no-verify`
+  overrides it, and it soft-passes if the skill is not installed on that machine. Both are
+  the owner's explicit choice, never a silent default.
+- **Invocation of Phase 4 is not mechanical.** Nothing forces a session to persist a plan
+  in the first place — that is this skill's instruction, followed by a model. So the rule
+  that matters most is the simple one: **never write `planned` without running the
+  validator, and never skip Phase 4 after an approved plan.** The gate catches the state;
+  it cannot catch a run that never reaches the gate.
+- **Fidelity is not mechanical.** The validator proves a plan exists, is owner-approved by
+  its metadata, is hash-bound, and has no hollowed-out sections. It cannot prove the prose
+  matches what the owner approved. Persisting the approved output faithfully is a
+  discipline, not a check.
 
 ## Phase 1 — Capture the conversation
 
@@ -318,6 +369,137 @@ The skill writes files and the index row — it does **not** commit, push, or up
 Drive. Making the corpus state durable in git history is a separate, explicit decision
 Johnny makes himself.
 
+## Phase 4 — Persist the approved plan (the only way to reach `planned`)
+
+This phase exists because of a real failure: a large plan was brainstormed, taken through
+intake, planned in Plan Mode, shortened into an execution prompt and successfully built
+from — and then, after long-session compaction, the detailed future plan was simply gone.
+The source files still existed; the approved plan had no durable home. The lifecycle said
+`planned`; nothing on disk proved it. That must be impossible by construction.
+
+**Trigger — all three, in this order, or this phase does not run:**
+
+1. Clarification is complete (`status: clarified`).
+2. Plan Mode has produced a plan.
+3. Johnny has **explicitly approved that plan**. Silence is not approval; "looks good so
+   far" mid-review is not approval; your own confidence is never approval.
+
+Never generate an approved plan from the brief, the rationale or the transcript before
+approval. If you cannot point at the owner-approved Plan Mode output, there is no
+approved plan and the brief stays `clarified`.
+
+**Steps.**
+
+1. **Persist the exact approved plan** to `<slug>/<slug>-approved-plan.md` in the corpus,
+   following `references/approved-plan-template.md`. Preserve the approved output with
+   enough fidelity to resume execution: execution order, scope boundaries, decisions,
+   deferred work, plan-critical rejected paths, owner-only transitions, stop conditions,
+   acceptance criteria, current/next slice semantics, precedence/coherence patches. If
+   the approved plan is long, persist the long plan. **A short execution prompt and an
+   approved plan are not the same artifact** — the prompt may point at the plan, it may
+   never replace it.
+2. **Check the artifact alone, before touching the brief** (paths are absolute so the
+   command runs from anywhere):
+
+       PC=~/.claude/skills/nortropic-intake/scripts/plan_contract.py
+       CORPUS=~/nortropic/innovation-intake
+       python3 $PC validate --plan-file $CORPUS/<slug>/<slug>-approved-plan.md
+
+   Fix findings; never bypass them.
+3. **Bind** — write into the brief's frontmatter: `approved_plan`,
+   `approved_plan_sha256` (the hash the check just printed, or `python3 $PC hash <file>`),
+   `plan_version`, `plan_approved_at`, and `status: planned`. The brief points at the
+   plan; it never duplicates it. Then run the full gate — `python3 $PC validate --slug
+   <slug>` — and it must pass before the status change counts as done. If it cannot be
+   made to pass, the brief goes back to `clarified`; it never stays at an unproven
+   `planned`.
+4. **Upsert the `INDEX.md` row** — status only. Still one row per IDEA; the plan file
+   never gets its own row.
+5. **Install the reload pointer** (below) where the work will actually happen.
+
+**Reopening / versioning.** An approved plan is never silently rewritten. When Johnny
+deliberately replans: keep the old file, add `status: superseded` +
+`superseded_by_plan: <new file>` to it, write the new version as
+`<slug>-approved-plan-v<N>.md` with `supersedes_plan: <old file>`, move the brief's
+pointer and hash deliberately, and re-validate. `approval_state: approved` on the old
+file stays — it was approved, and history is not edited to look cleaner. The validator
+walks the chain in both directions and fails on a broken or orphaned link.
+
+**Reload pointer (compaction & fresh-session continuity).** The durable plan lives on
+disk; memory only needs enough to find it again. Do not store the plan in memory, and do
+not depend on Claude Code's private session storage — the mechanism must survive
+`/compact`, automatic compaction, a fresh session, and a different agent that has only
+repository + intake access.
+
+The supported surface is `CLAUDE.md` — project instructions are re-read in every session,
+including after compaction, and they travel with the repository. Write a delimited block
+into the target repo's `CLAUDE.md` (ask first; some repos forbid agent edits to it):
+
+    python3 $PC pointer --slug <slug> --into <target-repo>/CLAUDE.md \
+        --workstream <NAME> --target-repo <target-repo> --execution-pointer "<hint>"
+
+It writes `ACTIVE_WORKSTREAM`, `ACTIVE_INTAKE_SLUG`, `ACTIVE_APPROVED_PLAN_PATH`,
+`ACTIVE_APPROVED_PLAN_SHA256`, `TARGET_REPO`, `CURRENT_EXECUTION_POINTER` plus the reload
+rule. It refuses to write a pointer to a plan that does not validate. The same block may
+be mirrored into an auto-memory file or `/compact` instructions if Johnny uses them — as
+a convenience copy only, never as the mechanism the design depends on.
+
+**COMPACT INSTRUCTIONS — never summarize away active execution identity.** Preserve
+across any compaction: active workstream, active intake slug, approved-plan path,
+approved-plan sha256, target repository, and the current execution pointer if one exists.
+After compaction, **re-read the approved plan from disk before deriving any future work**;
+verify its sha256 against the recorded identity. Never reconstruct a missing approved plan
+from conversational memory, from a draft, or from the transcript. If the plan file or its
+recorded identity cannot be proven, **STOP with `PLAN_IDENTITY_UNAVAILABLE`** and say what
+could not be proven.
+
+**Pointer semantics — a cache, never a second truth.** The approved plan is durable owner
+intent; the target repository is implementation truth; any pointer is convenience. On
+resume, recompute the current position by reconciling the plan against repository state.
+A stale pointer never overrides repository evidence: where they conflict, the repository
+wins and the discrepancy is reported. `plan_contract.py resume` prints `POINTER_STALE=YES`,
+**discards the stale hint entirely** (`NEXT_EXECUTION_POINTER=UNSET (stale pointer
+discarded …)`) and reports the identity it proved from the corpus instead. A hint from a
+pointer that still agrees with the corpus is passed through, and even then it is labelled
+`HINT — unverified`: it is an input to reconciliation, never its result.
+
+## Phase 5 — Fresh implementation session (start contract)
+
+For an item at `planned` / `building`, a fresh session must be able to start from the slug
+and target-repo access alone — no old conversation, no memory of the plan:
+
+    python3 ~/.claude/skills/nortropic-intake/scripts/plan_contract.py \
+        resume --slug <slug> --target-repo <repo> [--pointer <repo>/CLAUDE.md]
+
+It proves the plan identity and prints the start block; then read the approved plan in
+full, read current repository truth, and reconcile the two. Report:
+
+    PLAN_IDENTITY=<path>@sha256:<hash>
+    PLAN_STATUS=APPROVED
+    PLAN_CURRENT_REPO_RECONCILIATION=<what the plan expects vs what the repo shows>
+    NEXT_EXECUTION_POINTER=<next slice, computed — not copied from a hint>
+
+The loader prints `PLAN_CURRENT_REPO_RECONCILIATION=PENDING_AGENT_READ` because it does
+not and must not compute that itself; the last two lines are **yours to compute** from the
+plan and the repository. Any `HINT — unverified` value the loader passes through is an
+input to that comparison, never its answer.
+
+Load order stays progressive: brief + approved plan are the working context; the design
+rationale is read when design intent is genuinely needed; the raw transcript only in
+targeted ranges. Then build, review adversarially, and move `status` to `building` /
+`verified` per the actual lifecycle. If `resume` exits with `PLAN_IDENTITY_UNAVAILABLE`,
+stop there — that is the fail-closed outcome, not a prompt to reconstruct the plan.
+
+**Legacy items (no approved plan).** `idea` / `clarified` without a plan are perfectly
+valid — nothing to backfill. An item already at `planned` / `building` with no plan
+artifact is reported as `LEGACY_PLAN_ARTIFACT_MISSING` and is a FAIL, not a warning. The
+only permitted recovery is bounded and manual: Johnny names the known source of the
+approved plan, it is persisted with `plan_source: recovered-from-known-source` and
+`fidelity: partial`, he verifies it, then it is bound and `fidelity: full` is set. The
+transcript is never scraped automatically and a model reconstruction is never accepted as
+the plan. If no known source exists, the honest outcome is `status: clarified` and a
+re-plan.
+
 ## Execution checklist
 
 Copy this into your working notes at the start of a run and tick items off — the order
@@ -362,6 +544,24 @@ matters, and skipped steps are exactly where past runs went wrong:
         IMPLEMENTERA NU: offer to take the brief into plan mode
 ```
 
+After plan mode, ONLY once Johnny has explicitly approved the plan (Phase 4):
+
+```
+[ ] 10. Owner approval is explicit and quotable — else STOP; status stays clarified
+[ ] 11. <slug>-approved-plan.md written per references/approved-plan-template.md:
+        the exact approved plan, all eleven sections, nothing summarized away
+        (execution order, scope, decisions, deferred, rejected, owner-only
+        transitions, stop conditions, acceptance, current/next slice, precedence)
+[ ] 12. plan_contract.py validate --plan-file <plan> PASSES; brief then bound with
+        approved_plan + approved_plan_sha256 + plan_version + plan_approved_at +
+        status: planned; plan_contract.py validate --slug <slug> PASSES after
+        binding; INDEX.md status updated (one row per idea, no row for the plan)
+[ ] 13. Reload pointer installed where the work happens (plan_contract.py pointer
+        --into <target-repo>/CLAUDE.md, asked first); resume verified:
+        plan_contract.py resume --slug <slug> --target-repo <repo> prints
+        PLAN_IDENTITY + PLAN_STATUS=APPROVED
+```
+
 Source B (current Claude conversation): steps 1–5 are replaced by
 `[ ] transcript written from context, verbatim, fidelity noted` and
 `[ ] live interview held on unresolved decisions before the brief`.
@@ -379,7 +579,15 @@ files to Johnny elsewhere. No commit, no push, no Drive — see Phase 3.
   convention in this system), Swedish is fine if Johnny asks.
 - Naming: `idea-<slug>.md` (brief), `<slug>-design-rationale.md` (rationale) and
   `<slug>-full-chat.md` (transcript), delivered together into the corpus repo under
-  `<slug>/` in the root.
+  `<slug>/` in the root. After owner approval, `<slug>-approved-plan.md` joins them —
+  version N≥2 is `<slug>-approved-plan-v<N>.md`, and `plan_version` must equal the
+  version in the filename.
+- The approved plan is immutable after approval: substantive change means a new version
+  with supersession recorded in both directions, never an in-place rewrite. Owner-approved
+  execution intent is never mutated without a trace.
+- Never let a pointer become state: the approved plan is durable intent, the target repo
+  is implementation truth, `CURRENT_EXECUTION_POINTER` is a hint that must be recomputed
+  on resume. Repository evidence wins on conflict, and the discrepancy is reported.
 - The raw transcript is immutable once its capture passed verification for that intake
   event: derived interpretation may evolve; the capture is never rewritten because later
   clarification changed the design. If the CAPTURE itself was incomplete or incorrect,
@@ -393,5 +601,5 @@ files to Johnny elsewhere. No commit, no push, no Drive — see Phase 3.
   wants the corpus committed or archived elsewhere, that is a separate step he asks for
   explicitly.
 - Repeatable evals live in `evals/` (trigger queries, golden capture signature,
-  brief rubric, rationale rubric, contract lint) — run them after any change to this
-  skill; see `evals/README.md`.
+  brief rubric, rationale rubric, contract lint, approved-plan falsification suite) —
+  run them after any change to this skill; see `evals/README.md`.

@@ -49,10 +49,30 @@ Det här är **progressiv exponering**: exekvering behöver *vadet*; arkitektur 
 ibland *varföret*; rå historik hämtas bara när tvetydighet kvarstår. Rätt kontext,
 inte maximal kontext.
 
+### En fjärde fil — men först efter godkänd plan
+
+4. **`<slug>-approved-plan.md` — den godkända planen = *hur* och i vilken ordning.**
+   Den skrivs bara när Plan Mode har producerat en plan *och* Johnny uttryckligen har
+   godkänt den. Den genereras aldrig ur briefen i förväg. Den binds till briefen med en
+   sha256-summa, och det är den bindningen som gör `status: planned` till ett bevisbart
+   tillstånd i stället för ett ord.
+
+   Varför den finns: en stor plan brainstormades, gick genom intake, planerades i Plan
+   Mode, kortades till en exekveringsprompt och byggdes från — och försvann sedan när
+   sessionen komprimerades. Källfilerna fanns kvar; den godkända planen hade inget
+   varaktigt hem. Nu har den ett. Efter komprimering eller i en helt ny session läses
+   planen om från disk och verifieras mot sin hash; kan den inte bevisas stannar
+   agenten med `PLAN_IDENTITY_UNAVAILABLE` i stället för att gissa ihop den igen.
+
+Paketmodellen: **före plan** VAD / VARFÖR / RÅ — **efter plan** VAD / VARFÖR / RÅ /
+GODKÄND PLAN.
+
 **Auktoritetsordning** (högst vinner): gällande kanonisk repo-auktoritet (målrepots
-konstitution, regelverk, godkänd arkitektur) → senare ägargodkänd spec/plan → brief →
-rationale → transkript. Intake-artefakter bevarar intention och proveniens — de kan
-aldrig tyst köra över en senare godkänd arkitektur. Inom paketet vinner briefen, alltid.
+konstitution, regelverk, godkänd arkitektur) → senare ägargodkänd spec/plan → godkänd
+intake-plan → brief → rationale → transkript. Intake-artefakter bevarar intention och
+proveniens — de kan aldrig tyst köra över en senare godkänd arkitektur. Den godkända
+planen är den starkaste intake-artefakten och ändå inte exekveringsauktoritet: målrepot
+är implementationssanningen, och vid konflikt vinner repot och avvikelsen rapporteras.
 
 Filerna hamnar i idébanken — ett separat repo (`innovation-intake`) med en indexrad per
 idé — så att idéer kan parkeras och plockas fram långt senare med kontexten intakt.
@@ -74,6 +94,12 @@ idé — så att idéer kan parkeras och plockas fram långt senare med kontexte
 6. **Leverans.** Alla tre filerna skrivs till idébanken plus en indexrad (en rad per
    idé, inte per fil). Skillen committar och pushar aldrig — det förblir egna,
    uttryckliga beslut.
+7. **Godkänd plan** — bara på implementera-nu-vägen, och bara efter att Johnny sagt ja
+   till planen: planen sparas i sin helhet som en fjärde fil, valideras mekaniskt,
+   binds till briefen med sin hash och först då blir statusen `planned`. En pekare
+   läggs där arbetet faktiskt sker (målrepots `CLAUDE.md`) så att en ny session hittar
+   tillbaka till planen utan att behöva minnas något. Indexet får fortfarande bara en
+   rad per idé — planfilen får ingen egen.
 
 **Idébank kontra implementera nu:** idébanksvägen sparar alla tre filerna med
 `status: idea` och öppna frågor intakta — ingen intervju förrän idén plockas fram att
@@ -109,7 +135,8 @@ Svenska eller engelska fungerar.
 | [references/extraction.md](references/extraction.md) | Extraktions-playbooken: API-vägen först, DOM-reserven, kända fallgropar |
 | [references/brief-template.md](references/brief-template.md) | Briefens exakta mall och reglerna bakom den |
 | [references/design-rationale-template.md](references/design-rationale-template.md) | Designrationalens mall: resonemangskedjor, förkastanden, hämtkarta |
-| [scripts/](scripts/) | Capture- och verifieringsskripten (körs i webbläsaren respektive lokalt) |
+| [references/approved-plan-template.md](references/approved-plan-template.md) | Den godkända planens mall: elva obligatoriska avsnitt, versionering, återhämtning |
+| [scripts/](scripts/) | Capture- och verifieringsskripten (körs i webbläsaren respektive lokalt) samt `plan_contract.py` — validerar, återupptar och pekar ut den godkända planen |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 
 ## Principerna bakom bygget
