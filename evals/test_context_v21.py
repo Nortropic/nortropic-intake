@@ -19,7 +19,6 @@ satisfy the suite.
 Usage (from the skill root):
   python3 evals/test_context_v21.py            # exit 1 on any failure
 """
-import json
 import os
 import re
 import shutil
@@ -557,6 +556,10 @@ def c14_c15_two_workstreams_and_pointer_gc(tmp):
         with_plan=True, status="planned")
     repo = targets[0][1]
     pointer = repo / "CLAUDE.md"
+    # Prose the pointer commands have no business reformatting, including a run of
+    # blank lines a naive whole-file normalization would eat.
+    prose = "# Target repo\n\nA heading with three blank lines after it.\n\n\n\nEnd of that paragraph.\n\n"
+    pointer.write_text(prose, encoding="utf-8")
     F.plan(["pointer", "--slug", SLUG, "--workstream", "ALPHA", "--into", str(pointer),
             "--execution-pointer", "S1 done"], corpus)
     F.plan(["pointer", "--slug", other, "--workstream", "BETA", "--into", str(pointer),
@@ -592,6 +595,9 @@ def c14_c15_two_workstreams_and_pointer_gc(tmp):
     check("C15c no intake artifact changed — hygiene is not history deletion",
           {p.name: F.sha256_file(p) for p in folder.iterdir() if p.is_file()}
           == package_before)
+    check("C15c2 unrelated prose in the target CLAUDE.md is byte-preserved",
+          "A heading with three blank lines after it.\n\n\n\nEnd of that paragraph."
+          in text and text.startswith("# Target repo\n"), text[:200])
     rc, out = F.plan(["pointer", "--slug", SLUG, "--workstream", "GHOST",
                       "--into", str(pointer), "--retire", "--reason", "completed"],
                      corpus)

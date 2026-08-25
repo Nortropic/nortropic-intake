@@ -866,9 +866,16 @@ def retire_pointer(into, workstream, slug):
         raise ValueError("more than one block carries that key")
     b = mine[0]
     removed = text[b["start"]:b["end"]]
-    rest = text[:b["start"]] + text[b["end"]:]
-    rest = re.sub(r"\n{3,}", "\n\n", rest)
-    p.write_text(rest, encoding="utf-8")
+    head, tail = text[:b["start"]], text[b["end"]:]
+    # Collapse blank lines ONLY at the seam the removal opened. Normalizing the whole
+    # file would silently reformat content this command has no business touching —
+    # including another workstream's block.
+    seam = re.match(r"\s*", tail).group(0)
+    if head.endswith("\n\n") and seam.startswith("\n"):
+        tail = tail[len(seam):]
+        if tail:
+            tail = "\n" + tail
+    p.write_text(head + tail, encoding="utf-8")
     return removed, len(blocks) - 1
 
 
