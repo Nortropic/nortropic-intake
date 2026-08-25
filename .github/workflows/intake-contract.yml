@@ -5,10 +5,10 @@ name: intake-contract
 # Be precise about what this is and is not:
 #   * It runs server-side, so it cannot be skipped from a workstation the way the
 #     corpus's local pre-commit hook can be skipped with --no-verify.
-#   * It is NOT enforcement until it is a REQUIRED status check in branch protection.
-#     Until the owner enables that, a red run does not block a merge.
-#   * It exists on a remote only once this file is committed and pushed.
-# See OWNER_ACTION_REQUIRED in the stop report for both steps.
+#   * It IS a required status check on main (see the repository's branch protection),
+#     so a red run blocks the merge. That is enforcement, not merely presence.
+#   * It only exists on the remote because this file is committed and pushed; a
+#     workflow that lives in a working tree enforces nothing.
 
 on:
   push:
