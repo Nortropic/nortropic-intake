@@ -51,11 +51,14 @@ finishing the manifest look like a second revision.
 the facts that mean *we now know something different*:
 
     EP  <episode_id> <kind> <origin>
-    SRC <source_id> <kind> <capture_status> <identity>     # load-bearing only
+    SRC <source_id> <kind> <capture_status> <trust> <authority> <identity>
     ODL <delta_id>                                          # context-bearing owner deltas
 
 where `identity` is the sharpest the source records: `sha256`, else `commit`, else
-`origin`.
+`origin`. Trust and instruction authority are in the identity on purpose: whether a
+source is the owner's words or a stranger's page is a fact *about the source set*, so
+relabelling one after sealing moves the revision instead of passing unnoticed — and
+"what trust did this source have at revision 3?" stays answerable from the record.
 
 | Changes the revision | Does **not** change it |
 |---|---|
@@ -86,6 +89,12 @@ an approval because Intake preserved it and a later session read it.
   `instruction_authority: none`. Claiming otherwise fails.
 - `instruction_authority: owner` is valid **only** on the owner-deltas file: the
   authority lives in the owner interaction, not in bytes asserting the owner agreed.
+- **The trust axis is disciplined too**, because it is the second door into owner-backed
+  provenance. `trust: OWNER_INPUT` means *the owner's own words* and is valid only on
+  `chat-transcript` and `owner-clarifications`; a document the owner uploaded is still a
+  document. `trust: CANONICAL_REPO_AUTHORITY` is valid only on `repository`/`commit`.
+  A source can declare `instruction_authority: none` perfectly honestly and still
+  launder itself by mislabelling whose words it holds — `SOURCE_TRUST_KIND_MISMATCH`.
 - `instruction_authority: canonical-repo` requires `target_repo:` naming a **declared
   execution target**. A foreign GitHub repo read for inspiration is reference material,
   imperatives and all; your own repo's constitution and rulebook keep their authority.

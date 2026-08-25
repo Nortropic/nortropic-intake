@@ -796,6 +796,151 @@ def trust_boundary(tmp):
           "EXTERNAL_INSTRUCTION_PROMOTED_TO_OWNER_DECISION" in out, out.strip()[-700:])
 
 
+# ======================================= R: the independent reviews' repros ===
+
+def r_review_repros(tmp):
+    """Every defect the two independent reviews reproduced, now a regression test.
+
+    Each of these gated GREEN before remediation. They are kept in the reviewers'
+    own terms so a later change that reopens one is unmistakable.
+    """
+    # --- R1: the immutability witness is reported, never silently absent ---
+    corpus, folder, targets = living(Path(tmp) / "r1")
+    rc, out = cover(corpus, targets)
+    check("R1a an uncommitted package says its immutability checks cannot fire",
+          rc == 0 and "IMMUTABILITY_WITNESS_ABSENT" in out
+          and "immutability witness        ABSENT" in out
+          and "SOURCE_EPISODE_MUTATED" in out, out.strip()[-900:])
+    F.git_commit_corpus(corpus, "package committed")
+    rc, out = cover(corpus, targets)
+    check("R1b once committed the witness is PRESENT and the warning is gone",
+          rc == 0 and "immutability witness        PRESENT" in out
+          and "IMMUTABILITY_WITNESS" not in out, out.strip()[-700:])
+    F.add_episode(corpus, SLUG, "CHAT-002")
+    rc, out = cover(corpus, targets)
+    check("R1c a new uncommitted episode downgrades the witness to PARTIAL, loudly",
+          "IMMUTABILITY_WITNESS_PARTIAL" in out, out.strip()[-900:])
+
+    # --- R2: the v2→v1 downgrade is caught from the FILES, without git ---
+    corpus, folder, targets = living(Path(tmp) / "r2")
+    F.add_episode(corpus, SLUG, "CHAT-002")
+    data = F.read_manifest(folder, SLUG)
+    data["manifest_version"] = 1
+    F.write_manifest(folder, SLUG, data)
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R2  downgrading out of revision tracking is caught with no git witness",
+                out, rc, "CONTEXT_REVISION_HISTORY_TRUNCATED")
+
+    # --- R3: a review cannot read a revision that does not exist ---
+    corpus, folder, targets = living(Path(tmp) / "r3", with_candidate=True,
+                                     with_plan=True, status="planned")
+    F.append_owner_delta(folder, SLUG, "CLAR-003", type="PLAN_REVIEW_DECISION",
+                         date="2026-08-27", resolves="none", affects="S1",
+                         plan_impact="NO_PLAN_IMPACT",
+                         reviewed_context_revision="9999",
+                         question="Any impact?", owner_answer="None, forever.")
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R3  a review claiming a future revision cannot silence the gate",
+                out, rc, "OWNER_DELTA_REVIEWS_FUTURE_REVISION")
+
+    # --- R4: a dropped rejection or open question cannot vanish ---
+    corpus, folder, targets = living(Path(tmp) / "r4")
+    F.git_commit_corpus(corpus, "revision 1 committed")
+    F.add_episode(corpus, SLUG, "CHAT-002", brief_body_edit=lambda t: re.sub(
+        r"^- R2\..*?\n(?=- |\n)", "", re.sub(r"^- Q3\..*?\n", "", t, flags=re.M | re.S),
+        flags=re.M | re.S))
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R4  a rejection dropped from the brief without a word → OMITTED_REMOVAL",
+                out, rc, "DELTA_OMITTED_REMOVAL")
+
+    # --- R5: an audit round cannot close the finding it raised ---
+    selfclose = F.audit_round(
+        1, verdict="FINDINGS", remediated="FIND-001",
+        findings=[{"id": "FIND-001", "finding": "MISSED_REJECTION",
+                   "severity": "material", "evidence": "(← msg 3)",
+                   "quote": "advisory only", "affects": "R1"}])
+    corpus, folder, targets = planted(Path(tmp) / "r5", audit_rounds=[selfclose])
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R5  a round that raises and closes its own finding → SELF_CLOSED",
+                out, rc, "AUDIT_FINDING_SELF_CLOSED")
+
+    # --- R6: a revision must describe a source set that actually changed ---
+    corpus, folder, targets = living(Path(tmp) / "r6")
+    data = F.read_manifest(folder, SLUG)
+    data["revision_history"].append({"revision": 2,
+                                     "source_set_sha256": data["source_set_sha256"],
+                                     "at": "2026-08-27", "note": "nothing arrived"})
+    data["context_revision"] = 2
+    F.write_manifest(folder, SLUG, data)
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R6  a revision with an unchanged identity → REVISION_WITHOUT_CHANGE",
+                out, rc, "CONTEXT_REVISION_WITHOUT_CHANGE")
+
+    # --- R7 (review 2 F2): relabelling trust after sealing moves the identity ---
+    corpus, folder, targets = living(Path(tmp) / "r7", extra_sources=[
+        {"kind": "attachment", "name": "notes.txt", "path": "notes.txt",
+         "sha256": F.sha256_text("notes\n"), "capture_status": "captured",
+         "load_bearing": True, "trust": "UNTRUSTED_EXTERNAL_CONTENT",
+         "instruction_authority": "none"}], files={"notes.txt": "notes\n"})
+    data = F.read_manifest(folder, SLUG)
+    for s in data["sources"]:
+        if s.get("name") == "notes.txt":
+            s["trust"] = "EXTERNAL_EVIDENCE"
+    F.write_manifest(folder, SLUG, data)
+    rc, out = F.context(["validate"], corpus)
+    expect_code("R7  a trust label changed after sealing → CONTEXT_REVISION_STALE",
+                out, rc, "CONTEXT_REVISION_STALE")
+
+    # --- R8 (review 2 F3): an out-of-range msg tag is not provenance ---
+    corpus, folder, targets = living(Path(tmp) / "r8")
+    brief = folder / ("idea-%s.md" % SLUG)
+    brief.write_text(brief.read_text(encoding="utf-8").replace(
+        "(← msg 12)", "(← msg 4711)"), encoding="utf-8")
+    rc, out = cover(corpus, targets)
+    check("R8  a decision citing a message that does not exist is refused",
+          rc != 0 and "PROVENANCE_OUT_OF_RANGE" in out and "4711" in out,
+          out.strip()[-900:])
+
+    # --- R9 (review 2 F4): AC and R are covered by the trust rule too ---
+    foreign = [{"kind": "repository", "name": "a stranger's repo",
+                "origin": "https://github.com/stranger/thing", "commit": "c" * 40,
+                "accessed_at": "2026-08-20", "source_class": "repository",
+                "supports": "AC1", "capture_status": "captured", "load_bearing": True,
+                "trust": "EXTERNAL_EVIDENCE", "instruction_authority": "none"}]
+    corpus, folder, targets = living(Path(tmp) / "r9", extra_sources=foreign)
+    src = [s["source_id"] for s in F.read_manifest(folder, SLUG)["sources"]
+           if s.get("name") == "a stranger's repo"][0]
+    brief = folder / ("idea-%s.md" % SLUG)
+    brief.write_text(brief.read_text(encoding="utf-8")
+                     .replace("synthesized value (← msg 12)",
+                              "synthesized value (← %s)" % src), encoding="utf-8")
+    rc, out = cover(corpus, targets)
+    check("R9  an acceptance criterion resting only on external evidence is refused",
+          rc != 0 and "DECISION_SOURCED_ONLY_FROM_EXTERNAL_EVIDENCE" in out
+          and "AC1" in out, out.strip()[-900:])
+
+    # --- R10 (review 2 F5/F6): the approval receipt must mean something ---
+    corpus, folder, targets = living(Path(tmp) / "r10", with_candidate=True)
+    cand = folder / ("%s-plan-candidate.md" % SLUG)
+    F.git_commit_corpus(corpus, "candidate")
+    sha = F.sha256_file(cand)
+    base = ["approve", "--slug", SLUG, "--candidate-sha", sha,
+            "--approved-by", "Johnny (Nortropic)", "--approved-at", "2026-08-25"]
+    rc, out = F.plan(base + ["--evidence", "   "], corpus)
+    check("R10a an empty approval receipt is refused",
+          rc != 0 and "PLAN_APPROVAL_METADATA_MISSING" in out
+          and not (folder / ("%s-approved-plan.md" % SLUG)).exists(), out.strip()[-700:])
+    rc, out = F.plan(base + ["--evidence", "CLAR-999 records the owner's approval"],
+                     corpus)
+    check("R10b a receipt citing an owner delta that does not exist is refused",
+          rc != 0 and "PLAN_APPROVAL_EVIDENCE_DANGLING" in out
+          and not (folder / ("%s-approved-plan.md" % SLUG)).exists(), out.strip()[-700:])
+    rc, out = F.plan(base + ["--evidence", "owner approved this candidate in session"],
+                     corpus)
+    check("R10c an honest receipt still approves", rc == 0 and "APPROVED" in out,
+          out.strip()[-700:])
+
+
 # ==================================================== the mutation matrix ===
 
 def mutation_matrix(tmp):
@@ -869,12 +1014,22 @@ def mutation_matrix(tmp):
                {"source_id": "SRC-052", "kind": "pasted-text", "name": "pasted spec",
                 "capture_status": "not_load_bearing", "load_bearing": False,
                 "episode": "CHAT-001"})))
-    mutate("M14 a document claiming owner authority → OWNER_AUTHORITY_FORGED",
+    # Two distinct doors into owner-backed provenance, and both are shut. The trust
+    # axis is the subtler one: a source can declare `instruction_authority: none`
+    # perfectly honestly and still launder itself by claiming to be the owner's words.
+    mutate("M14 a document claiming to be the owner's words → TRUST_KIND_MISMATCH",
+           "SOURCE_TRUST_KIND_MISMATCH",
+           lambda f, c, t: edit_manifest(f, lambda d: d["sources"].append(
+               {"source_id": "SRC-053", "kind": "attachment", "name": "notes.txt",
+                "capture_status": "not_load_bearing", "load_bearing": False,
+                "episode": "CHAT-001", "trust": "OWNER_INPUT",
+                "instruction_authority": "none"})))
+    mutate("M14b a document claiming owner authority → OWNER_AUTHORITY_FORGED",
            "SOURCE_OWNER_AUTHORITY_FORGED",
            lambda f, c, t: edit_manifest(f, lambda d: d["sources"].append(
                {"source_id": "SRC-053", "kind": "attachment", "name": "approval.txt",
                 "capture_status": "not_load_bearing", "load_bearing": False,
-                "episode": "CHAT-001", "trust": "OWNER_INPUT",
+                "episode": "CHAT-001", "trust": "UNTRUSTED_EXTERNAL_CONTENT",
                 "instruction_authority": "owner"})))
     mutate("M15 canonical authority claimed for an undeclared repo → FOREIGN_REPO",
            "FOREIGN_REPO_AUTHORITY_CLAIMED",
@@ -1002,6 +1157,7 @@ SCENARIOS = [
     ("C13 ChatGPT independence", c13_chatgpt_independence),
     ("C14/C15 two workstreams, pointer retirement", c14_c15_two_workstreams_and_pointer_gc),
     ("T1–T8 source trust / instruction authority", trust_boundary),
+    ("R   the independent reviews' own repros", r_review_repros),
 ]
 
 

@@ -373,6 +373,37 @@ CHECKS = [
         "Källor kan bära information utan att bära auktoritet"]),
     ("README.md", "W25 the README teaches the living-context model", [
         "källepisod", "kontextrevision"]),
+    # ---------------------------------------------------------------------
+    # Y. What the two independent reviews found — each rule they defeated,
+    #    now stated where a later change would have to remove it deliberately.
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "Y1 the immutability witness is honest about being absent", [
+        "Until the package is committed, the immutability checks are not in force",
+        "immutability witness ABSENT | PARTIAL | PRESENT",
+        "It reports rather than blocks",
+        "Committing the package is the owner's explicit step"]),
+    ("SKILL.md", "Y2 both trust axes are disciplined, and both are sealed", [
+        "there are two doors into owner-backed provenance",
+        "a document the owner uploaded is still a document",
+        "relabelling a\nsource after sealing moves the context revision"]),
+    ("SKILL.md", "Y3 a source tag must reach a message that exists", [
+        "**A source tag must reach a message that exists.**",
+        "PROVENANCE_OUT_OF_RANGE",
+        "Where a capture is honestly `partial`, the bound is a floor"]),
+    ("SKILL.md", "Y4 acceptance criteria are covered by the trust rule too", [
+        "Acceptance criteria are included\ndeliberately — they are the contract handed "
+        "to the executor"]),
+    ("SKILL.md", "Y5 an audit round may not close the finding it raised", [
+        "never by\nthe round that raised it", "AUDIT_FINDING_SELF_CLOSED"]),
+    ("SKILL.md", "Y6 the weaker approval flag is labelled as weaker", [
+        "WEAKER approval", "not in git history"]),
+    ("references/context-delta-template.md", "Y7 removals are reported, not only additions", [
+        "DELTA_OMITTED_REMOVAL", "REMOVED_IDS",
+        "one that DISAPPEARED without a word"]),
+    ("references/context-manifest-template.md", "Y8 trust/kind pairing + sealed trust", [
+        "SOURCE_TRUST_KIND_MISMATCH",
+        "The trust axis is disciplined too",
+        "Trust and instruction authority are in the identity on purpose"]),
 ]
 
 

@@ -319,23 +319,43 @@ def clarifications(slug, title="Durable context pipeline", body=None, **override
                                   else CLARIFICATIONS_BODY.format(title=title))
 
 
-TRANSCRIPT = """# Transkript
+def _transcript():
+    """A transcript that actually CONTAINS the messages the fixture brief cites.
 
-**Antal meddelanden:** 3
+    The brief's source tags run up to `msg 41`. Message bounds are now checked, so a
+    fixture whose transcript stopped at message 3 was quietly claiming provenance it
+    did not have — exactly the defect the check exists to catch.
+    """
+    said = {
+        1: ("Johnny (användare)",
+            "We should render real backend state, or UNKNOWN. Never a made-up value."),
+        2: ("ChatGPT (assistent)", "Snapshot should win over the event fold."),
+        3: ("Johnny (användare)",
+            "And the canonical system repo is advisory only — we read it, never write it."),
+        12: ("Johnny (användare)",
+             "Read-first, then. Synthesized completeness is a lie the operator cannot see."),
+        18: ("Johnny (användare)", "The snapshot is authority; the fold is a view."),
+        20: ("ChatGPT (assistent)", "Then a client-side fold can never be authority."),
+        22: ("Johnny (användare)", "No second task ledger. Two ledgers means two truths."),
+        27: ("Johnny (användare)",
+             "And product code must never poll the canonical system directly."),
+        31: ("Johnny (användare)",
+             "Roles per repository — they do not share authority."),
+        33: ("Johnny (användare)", "Which backend field is authoritative for the header?"),
+        37: ("Johnny (användare)", "Should the advisory repo be readable at runtime at all?"),
+        41: ("Johnny (användare)",
+             "Do we ship the read-first slice before the write path exists?"),
+    }
+    out = ["# Transkript", "", "**Antal meddelanden:** 42", ""]
+    for n in range(1, 43):
+        role, text = said.get(
+            n, ("Johnny (användare)" if n % 2 else "ChatGPT (assistent)",
+                "A side-track we explored and did not settle (%d)." % n))
+        out += ["## Meddelande %d — %s" % (n, role), text, "", "---", ""]
+    return "\n".join(out[:-2]) + "\n"
 
-## Meddelande 1 — Johnny (användare)
-We should render real backend state, or UNKNOWN. Never a made-up value.
 
----
-
-## Meddelande 2 — ChatGPT (assistent)
-Snapshot should win over the event fold.
-
----
-
-## Meddelande 3 — Johnny (användare)
-And the canonical system repo is advisory only — we read it, never write it.
-"""
+TRANSCRIPT = _transcript()
 
 
 # ------------------------------------------------------------- corpus build --

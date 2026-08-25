@@ -39,9 +39,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, expand, fails, fm_list, fm_str, git_blob_at,
-    git_commits_for, git_evidence, git_head_blob, git_immutability, id_kind, parse_ids,
-    parse_frontmatter, read_frontmatter, read_json, report, scan_credentials,
-    sha256_file, sha256_text,
+    git, git_commits_for, git_evidence, git_head_blob, git_immutability, git_is_tracked,
+    id_kind, parse_ids, parse_frontmatter, read_frontmatter, read_json, report,
+    scan_credentials, sha256_file, sha256_text,
     source_set_identity, write_json, DERIVED_SOURCE_KINDS, EPISODE_ID_RE,
     EPISODE_KINDS, FIND_ID_RE, PROVENANCE_RE, REF_RE,
 )
@@ -162,6 +162,13 @@ INSTRUCTION_AUTHORITY = {
 }
 # Trust levels that may never carry instruction authority, whatever they contain.
 EVIDENCE_ONLY_TRUST = {"EXTERNAL_EVIDENCE", "UNTRUSTED_EXTERNAL_CONTENT"}
+# `OWNER_INPUT` means "these are the owner's own words". Only two kinds can be that:
+# the conversation the owner took part in, and the owner-deltas file. Without this
+# pairing rule, an attachment could be labelled OWNER_INPUT and launder itself into
+# owner-backed provenance while still honestly declaring instruction_authority: none.
+OWNER_INPUT_KINDS = {"chat-transcript", "owner-clarifications"}
+# `CANONICAL_REPO_AUTHORITY` describes a repository's own authority surface.
+CANONICAL_TRUST_KINDS = {"repository", "commit"}
 # Kinds whose bytes were authored outside this package, by someone other than the owner.
 EXTERNALLY_AUTHORED_KINDS = {
     "external-url", "repository", "commit", "attachment", "pasted-text", "image",
@@ -274,10 +281,29 @@ def _check_no_silent_downgrade(pkg, data, findings):
 
     Without this, every revision-aware check has a one-line bypass: set
     manifest_version back to 1 and the whole living-context contract goes quiet.
-    Git holds the committed version, which the editing agent does not control.
+
+    Two independent witnesses, because a git-only check is inert on an uncommitted
+    corpus — which is the normal state of a fresh intake run:
+      * the FILES: artifacts that only a living package produces are on disk;
+      * GIT: the committed manifest tracked revisions.
     """
     if is_living(data):
         return
+
+    living_artifacts = [p.name for p in
+                        ([pkg.delta] if pkg.delta.exists() else [])
+                        + ([pkg.audit] if pkg.audit.exists() else [])
+                        + sorted(pkg.folder.glob("%s-full-chat-*.md" % pkg.slug))]
+    if living_artifacts or data.get("episodes") or data.get("revision_history"):
+        findings.append(Finding(
+            pkg.slug, "CONTEXT_REVISION_HISTORY_TRUNCATED",
+            "%s is manifest_version=%r, but this package carries living-context "
+            "material: %s. A package does not stop being a living one because its "
+            "manifest says so — restore the revision tracking, or supersede the package."
+            % (pkg.manifest.name, data.get("manifest_version"),
+               ", ".join(living_artifacts or ["episodes/revision_history in the manifest"]))))
+        return
+
     rel = "%s/%s" % (pkg.slug, pkg.manifest.name)
     committed = git_head_blob(pkg.corpus, rel)
     if committed is None:
@@ -435,6 +461,20 @@ def _validate_revision(pkg, data, findings):
             "revision_history runs %s — revisions must run 1..N with no gaps, "
             "duplicates or reordering" % numbers))
         return
+    # `revise` refuses to seal an unchanged source set. The validator has to
+    # re-establish that invariant, or a hand-edited history can mint revisions that
+    # describe nothing — and each fake one marks a valid approved plan stale and
+    # forces a spurious owner review.
+    for i in range(1, len(history)):
+        previous = str(history[i - 1].get("source_set_sha256", "")).strip().lower()
+        this = str(history[i].get("source_set_sha256", "")).strip().lower()
+        if previous and this and previous == this:
+            findings.append(Finding(
+                pkg.slug, "CONTEXT_REVISION_WITHOUT_CHANGE",
+                "revision %s records the same source-set identity as revision %s — a "
+                "revision marks that the material changed. Nothing arrived here, so "
+                "there is no revision to record."
+                % (history[i].get("revision"), history[i - 1].get("revision"))))
     if numbers[-1] != revision:
         findings.append(Finding(
             pkg.slug, "CONTEXT_REVISION_HISTORY_INVALID",
@@ -749,6 +789,25 @@ def _check_source_trust(pkg, data, s, label, kind, living, findings):
             % (label, authority, sorted(INSTRUCTION_AUTHORITY))))
         return
 
+    # The trust axis needs the same discipline as the authority axis. Declaring the
+    # right instruction_authority while mislabelling WHOSE words these are launders
+    # evidence into owner-backed provenance by a different door.
+    if trust == "OWNER_INPUT" and kind not in OWNER_INPUT_KINDS:
+        findings.append(Finding(
+            pkg.slug, "SOURCE_TRUST_KIND_MISMATCH",
+            "%s is a %s but claims trust=OWNER_INPUT — that means \"the owner's own "
+            "words\", which only %s can be. A document the owner uploaded is still a "
+            "document: it is EXTERNAL_EVIDENCE or UNTRUSTED_EXTERNAL_CONTENT, whatever "
+            "it says about itself." % (label, kind, " or ".join(sorted(OWNER_INPUT_KINDS)))))
+        return
+    if trust == "CANONICAL_REPO_AUTHORITY" and kind not in CANONICAL_TRUST_KINDS:
+        findings.append(Finding(
+            pkg.slug, "SOURCE_TRUST_KIND_MISMATCH",
+            "%s is a %s but claims trust=CANONICAL_REPO_AUTHORITY — a repository's own "
+            "authority surface is a %s source, not an arbitrary artifact"
+            % (label, kind, " or ".join(sorted(CANONICAL_TRUST_KINDS)))))
+        return
+
     if kind in AMBIGUOUS_AUTHORITY_KINDS and s.get("load_bearing") is True \
             and not authority:
         findings.append(Finding(
@@ -802,9 +861,13 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
 
     This is the mechanical form of the distillation rule: a source sentence saying
     "you must switch to framework X" may support a decision, but it may not BE the
-    decision. A D whose provenance resolves only to evidence-only sources — no
+    decision. An entry whose provenance resolves only to evidence-only sources — no
     message in the conversation, no owner delta — is an external recommendation
     wearing the owner's voice.
+
+    It applies to decisions, rejections AND acceptance criteria. The acceptance
+    criteria are the contract handed to the executor and the rejections are the
+    must-not-re-adopt list; an external page may support either, and may be neither.
     """
     if not isinstance(manifest, dict):
         return
@@ -822,8 +885,12 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
     cov.counts["sources_with_authority"] = len(trusted)
     if not evidence_only:
         return
-    for did in sorted(i for i in ids if i.startswith("D") and not i.startswith("AC")):
-        tags = ids[did]["provenance"]
+    labels = {"D": "decision", "R": "rejection", "AC": "acceptance criterion"}
+    for key in sorted(ids):
+        prefix = "AC" if key.startswith("AC") else key[0]
+        if prefix not in labels:
+            continue
+        tags = ids[key]["provenance"]
         if not tags:
             continue                       # PROVENANCE_MISSING already covers this
         cited = set()
@@ -839,13 +906,71 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
             continue
         cov.findings.append(Finding(
             pkg.slug, "DECISION_SOURCED_ONLY_FROM_EXTERNAL_EVIDENCE",
-            "%s cites only evidence-only source(s) %s — an external source can support "
-            "a decision, never be one. Either cite where the owner adopted it (a message "
-            "range or an owner delta), or record it honestly as what it is: an external "
-            "recommendation, a rationale input, or an unresolved candidate."
-            % (did, ", ".join(sorted(cited)))))
+            "%s (%s) cites only evidence-only source(s) %s — an external source can "
+            "support one, never be one. Either cite where the owner adopted it (a "
+            "message range or an owner delta), or record it honestly as what it is: an "
+            "external recommendation, a rationale input, or an unresolved candidate."
+            % (key, labels[prefix], ", ".join(sorted(cited)))))
         cov.block("owner adoption for %s, which currently rests only on external evidence"
-                  % did)
+                  % key)
+
+
+def transcript_message_bound(pkg):
+    """(highest message number across the episode transcripts, capture was complete).
+
+    `(← msg 44)` is the headline traceability claim of this whole contract, and until
+    now nothing checked that message 44 exists. A number nobody can reach is not
+    provenance — it is a citation shaped like one, and it is exactly what a
+    distillation would produce if it invented a decision.
+
+    The second value matters: a transcript captured at `fidelity: partial` legitimately
+    holds fewer messages than the conversation had, so its bound is a floor, not a
+    ceiling. Citing past it is then reported, not blocked.
+    """
+    highest, complete = None, True
+    for path in [pkg.transcript] + sorted(
+            pkg.folder.glob("%s-full-chat-*.md" % pkg.slug)):
+        if not path.exists():
+            continue
+        fm, body, _ = read_frontmatter(path)
+        text = path.read_text(encoding="utf-8")
+        if fm_str(fm, "fidelity") not in ("", "full") \
+                or re.search(r"komprimerat av systemet|fidelity:\s*partial", text, re.I):
+            complete = False
+        numbers = [int(m.group(1)) for m in
+                   re.finditer(r"^##\s*(?:Meddelande|Message)\s+(\d+)\b", text, re.M)]
+        if numbers:
+            highest = max(numbers) if highest is None else max(highest, max(numbers))
+    return highest, complete
+
+
+def _check_message_bounds(pkg, ids, cov, manifest=None):
+    """Every `(← msg N)` must address a message that exists in some episode."""
+    bound, complete = transcript_message_bound(pkg)
+    cov.counts["transcript_message_bound"] = bound
+    if not bound:
+        return                       # no parseable transcript: nothing to bound against
+    for ep in (manifest or {}).get("episodes") or []:
+        if isinstance(ep, dict) and str(ep.get("capture", "")).strip() != "full":
+            complete = False
+    unreachable = {}
+    for key in sorted(ids):
+        for tag in ids[key]["provenance"]:
+            for m in re.finditer(r"\bmsg\.?\s*(\d+)", tag, re.I):
+                if int(m.group(1)) > bound or int(m.group(1)) < 1:
+                    unreachable.setdefault(key, set()).add(m.group(1))
+    for key in sorted(unreachable):
+        cov.findings.append(Finding(
+            pkg.slug, "PROVENANCE_OUT_OF_RANGE",
+            "%s cites msg %s, but this package's episode transcripts contain messages "
+            "1–%d%s. A source tag that addresses nothing is not provenance, and an "
+            "out-of-range one is how an invented decision passes as a traced one."
+            % (key, ", ".join(sorted(unreachable[key], key=int)), bound,
+               " (and at least one capture is partial, so this bound is a floor)"
+               if not complete else ""),
+            level="FAIL" if complete else "WARN"))
+    if unreachable and complete:
+        cov.block("reachable message provenance for %s" % ", ".join(sorted(unreachable)))
 
 
 def addressable_ids(manifest, pkg=None):
@@ -1178,7 +1303,7 @@ def validate_clarifications(pkg, findings, brief_ids=None, extra_ids=None):
             findings.append(Finding(pkg.slug, "CLARIFICATION_ID_DUPLICATE",
                                     "%s appears more than once" % e["id"]))
         seen.add(e["id"])
-        _check_delta_type(pkg, e, findings)
+        _check_delta_type(pkg, e, findings, current_revision=_package_revision(pkg))
         if e.get("buried_fields"):
             findings.append(Finding(
                 pkg.slug, "OWNER_DELTA_FIELD_AFTER_ANSWER",
@@ -1222,7 +1347,7 @@ def validate_clarifications(pkg, findings, brief_ids=None, extra_ids=None):
     return entries
 
 
-def _check_delta_type(pkg, e, findings):
+def _check_delta_type(pkg, e, findings, current_revision=None):
     """Type-specific obligations. An untyped entry is a pre-plan clarification."""
     dtype = str(e.get("type", "")).strip() or DEFAULT_OWNER_DELTA_TYPE
     if dtype not in OWNER_DELTA_TYPES:
@@ -1247,6 +1372,27 @@ def _check_delta_type(pkg, e, findings):
             "%s is a PLAN_REVIEW_DECISION with reviewed_context_revision=%r — a review "
             "is only meaningful against the exact context revision it read"
             % (e["id"], rev or None)))
+    elif isinstance(current_revision, int) and int(rev) > current_revision:
+        # The staleness gate asks `reviewed >= current`. An unbounded field therefore
+        # lets one typo — or one pasted year — silence it permanently, for every future
+        # revision. A review cannot have read a revision that does not exist.
+        findings.append(Finding(
+            pkg.slug, "OWNER_DELTA_REVIEWS_FUTURE_REVISION",
+            "%s claims to have reviewed context revision %s, but this package has only "
+            "reached %d. A review of a revision that does not exist would silence the "
+            "staleness gate for every revision still to come."
+            % (e["id"], rev, current_revision)))
+
+
+def _package_revision(pkg):
+    """The package's sealed context revision, or None. Cheap, no validation."""
+    if not pkg.manifest.exists():
+        return None
+    data, err = read_json(pkg.manifest)
+    if err or not is_living(data):
+        return None
+    revision = data.get("context_revision")
+    return revision if isinstance(revision, int) else None
 
 
 def context_bearing_delta_ids(entries):
@@ -1299,11 +1445,72 @@ def _append_only(pkg, path, code, findings, rule):
         return
     committed = git_head_blob(pkg.corpus, "%s/%s" % (pkg.slug, path.name))
     if committed is None:
-        return  # untracked or brand new: nothing to violate yet
+        return  # untracked or brand new: nothing to violate yet — see witness_state()
     if not path.read_text(encoding="utf-8").startswith(committed):
         findings.append(Finding(
             pkg.slug, code,
             "%s no longer starts with its committed content — %s" % (path.name, rule)))
+
+
+# ------------------------------------------------- the immutability witness --
+
+# Every immutability and append-only guarantee in this contract is enforced by
+# comparing against git. Hashes recorded inside these files prove only internal
+# consistency: an agent that rewrites a past brainstorm can rewrite the hash beside it.
+# Git history is the one witness outside that control — which means that until the
+# package is committed, those guarantees are NOT IN FORCE.
+#
+# That is a legitimate working state: this skill writes files and never commits, so a
+# fresh intake run is uncommitted by design. What is not legitimate is being quiet
+# about it. `approve` already has the right polarity (it refuses an unanchored
+# candidate and names it); the context side reports the absence rather than blocking,
+# because blocking would make the normal first run impossible.
+WITNESSED_GUARANTEES = (
+    "SOURCE_EPISODE_MUTATED (a past brainstorm rewritten in place)",
+    "CLARIFICATIONS_NOT_APPEND_ONLY (an owner's recorded words edited)",
+    "CONTEXT_DELTA_NOT_APPEND_ONLY (a recorded delta rewritten)",
+    "DISTILLATION_AUDIT_NOT_APPEND_ONLY (an audit finding deleted)",
+    "CONTEXT_REVISION_HISTORY_REWRITTEN / _TRUNCATED (history edited or dropped)",
+    "DELTA_UNDERSTATED / removals (needs a committed baseline to diff against)",
+)
+
+
+def witness_state(pkg):
+    """('PRESENT'|'PARTIAL'|'ABSENT', [untracked artifact names]).
+
+    PARTIAL is the dangerous one and is reported as such: some artifacts are frozen
+    and some are not, which reads as "protected" if nobody looks.
+    """
+    artifacts = [p for p in (pkg.brief, pkg.rationale, pkg.transcript, pkg.manifest,
+                             pkg.clarifications, pkg.delta, pkg.audit) if p.exists()]
+    artifacts += sorted(pkg.folder.glob("%s-full-chat-*.md" % pkg.slug))
+    if not artifacts:
+        return "ABSENT", []
+    if git(pkg.corpus, "rev-parse", "HEAD") is None:
+        return "ABSENT", [p.name for p in artifacts]
+    untracked = [p.name for p in artifacts
+                 if not git_is_tracked(pkg.corpus, "%s/%s" % (pkg.slug, p.name))]
+    if not untracked:
+        return "PRESENT", []
+    return ("ABSENT" if len(untracked) == len(artifacts) else "PARTIAL"), untracked
+
+
+def check_witness(pkg, findings):
+    """Report the witness state. Never blocks — a first run is legitimately uncommitted."""
+    state, untracked = witness_state(pkg)
+    if state == "PRESENT":
+        return state
+    findings.append(Finding(
+        pkg.slug, "IMMUTABILITY_WITNESS_%s" % state,
+        "%s not in git: %s. Until they are committed, these checks cannot fire: %s. "
+        "This skill does not commit — making the package durable in git history is the "
+        "owner's explicit step, and it is what turns these from intentions into checks."
+        % ("no artifact of this package is" if state == "ABSENT"
+           else "%d of this package's artifacts are" % len(untracked),
+           ", ".join(untracked[:6]) + ("…" if len(untracked) > 6 else ""),
+           "; ".join(WITNESSED_GUARANTEES)),
+        level="WARN"))
+    return state
 
 
 # ------------------------------------------------------------ context delta --
@@ -1516,6 +1723,28 @@ def _cross_check_delta(pkg, manifest, blocks, findings):
             "report is a change the owner and the planner never see"
             % (", ".join(undeclared), previous)))
 
+    # The other direction, which matters more: rejected paths are the most dangerous
+    # omissions in the whole package, and an unanswered question that simply vanishes
+    # is the failure the disposition rule exists to prevent. A redistillation may drop
+    # an entry — but never silently.
+    declared_gone = set()
+    for revision, block in blocks.items():
+        if revision <= previous:
+            continue
+        for field in ("REVERSED_DECISIONS", "REMOVED_IDS"):
+            declared_gone |= set(delta_ids(block["fields"].get(field)))
+    removed = sorted(i for i in old_ids - current_ids
+                     if (i.startswith("AC") or i[0] in "DRQ")
+                     and i not in declared_gone)
+    if removed:
+        findings.append(Finding(
+            pkg.slug, "DELTA_OMITTED_REMOVAL",
+            "the brief LOST %s since context revision %d, and no delta block accounts "
+            "for them. A rejected path or an open question that disappears without a "
+            "word is exactly the omission the delta exists to make impossible — name "
+            "them under REVERSED_DECISIONS or REMOVED_IDS, with the reason."
+            % (", ".join(removed), previous)))
+
 
 def _brief_ids_at_previous_revision(pkg, manifest):
     """(previous revision, brief IDs then) from git, or None when git cannot say.
@@ -1585,22 +1814,27 @@ def parse_audit_rounds(path):
 
 
 def audit_finding_states(rounds):
-    """FIND id -> (state, closing round, closing owner delta).
+    """FIND id -> (state, closing round index, closing owner delta).
 
-    A finding is `open` until a later round remediates or dismisses it by name.
+    A finding is `open` until a LATER round remediates or dismisses it by name. Later
+    is enforced by position, not by revision number: a round may legitimately re-audit
+    the same revision after remediation, but a round may never close a finding it
+    raised itself — that would remove the only structural cost of raising one.
     """
-    states = {}
-    for r in rounds:
+    states, raised_at = {}, {}
+    for i, r in enumerate(rounds):
         for f in r["findings"]:
-            states.setdefault(f["id"], ["open", None, None])
-    for r in rounds:
+            if f["id"] not in states:
+                states[f["id"]] = ["open", None, None]
+                raised_at[f["id"]] = i
+    for i, r in enumerate(rounds):
         for key, state in (("remediated", "remediated"), ("dismissed", "dismissed")):
             line = str(r.get(key, "")).strip()
             if not line:
                 continue
             clars = re.findall(r"\bCLAR-\d+\b", line)
             for fid in re.findall(r"\bFIND-\d+\b", line):
-                if fid in states:
+                if fid in states and raised_at.get(fid, i) < i:
                     states[fid] = [state, r["revision"], clars[0] if clars else None]
     return states
 
@@ -1697,6 +1931,13 @@ def validate_audit(pkg, manifest, brief_ids, findings, require=True):
                         pkg.slug, "AUDIT_FINDING_ORPHANED",
                         "AUDIT-%d %s: %s was never raised by any round"
                         % (r["revision"], key, fid)))
+                elif any(f["id"] == fid for f in r["findings"]):
+                    findings.append(Finding(
+                        pkg.slug, "AUDIT_FINDING_SELF_CLOSED",
+                        "AUDIT-%d raises %s and closes it in the same round — a finding "
+                        "is closed by a LATER round, after the distillation was actually "
+                        "changed. Closing it here would make raising one free."
+                        % (r["revision"], fid)))
         for fid in re.findall(r"\bFIND-\d+\b", str(r.get("dismissed", ""))):
             if not re.search(r"\bCLAR-\d+\b", str(r.get("dismissed", ""))):
                 findings.append(Finding(
@@ -1975,6 +2216,10 @@ def assess_coverage(pkg, target_repo_overrides=None):
 
     # --- source trust: information without authority ---------------------
     _check_source_trust_coverage(pkg, manifest, ids, cov)
+    _check_message_bounds(pkg, ids, cov, manifest)
+
+    # --- the immutability witness ----------------------------------------
+    cov.counts["witness"] = check_witness(pkg, f)
 
     # --- traceability ----------------------------------------------------
     manifest_ids = set()
@@ -2143,6 +2388,13 @@ def print_coverage(cov, pkg):
              c.get("sources_not_load_bearing", 0), c.get("sources_pending", 0)))
     print("source trust                %s evidence-only, %s carrying authority"
           % (c.get("sources_evidence_only", 0), c.get("sources_with_authority", 0)))
+    print("immutability witness        %s%s"
+          % (c.get("witness", "?"),
+             "" if c.get("witness") == "PRESENT"
+             else "  <- append-only/immutability checks cannot fire until committed"))
+    if c.get("transcript_message_bound"):
+        print("transcript messages         1–%s (source tags bounded against this)"
+              % c["transcript_message_bound"])
     print("distillation audit          %s finding(s)" % c.get("audit_findings", 0))
     print("context delta blocks        %s" % c.get("delta_blocks", 0))
     print("execution targets inspected %s/%s"

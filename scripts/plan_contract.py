@@ -1338,13 +1338,40 @@ def _check_approval_evidence(corpus, slug, evidence):
     """
     out = []
     pkg = ctx.Package(corpus, slug)
+    evidence = (evidence or "").strip()
+    if not evidence:
+        out.append(Finding(
+            slug, "PLAN_APPROVAL_METADATA_MISSING",
+            "--evidence is empty. This string is the ONLY record of how a human "
+            "approved these bytes — no tool can prove a person read them, so an empty "
+            "receipt is an approval with nothing behind it."))
+    # Read the manifest's authority labels only if the manifest actually validates.
+    # Trusting a label from a file nobody checked is how a forged `owner` authority
+    # would let a document stand as the owner's approval.
+    manifest_findings = []
+    data = ctx.validate_manifest(pkg, manifest_findings, require=False)
+    if fails(manifest_findings):
+        out.append(Finding(
+            slug, "PLAN_APPROVAL_FROM_UNTRUSTED_SOURCE",
+            "the context manifest does not validate, so its trust labels cannot be "
+            "relied on while judging approval evidence: %s"
+            % "; ".join(f.code for f in fails(manifest_findings))))
+        data = None
     sources = {}
-    if pkg.manifest.exists():
-        data, err = ctx.read_json(pkg.manifest)
-        if not err and isinstance(data, dict):
-            for s in data.get("sources") or []:
-                if isinstance(s, dict) and str(s.get("source_id", "")).strip():
-                    sources[str(s["source_id"]).strip()] = s
+    if isinstance(data, dict):
+        for s in data.get("sources") or []:
+            if isinstance(s, dict) and str(s.get("source_id", "")).strip():
+                sources[str(s["source_id"]).strip()] = s
+    # An owner delta cited as the approval must exist. "CLAR-999 records the owner's
+    # approval" is otherwise a sentence, not a receipt.
+    known_deltas = {e["id"] for e in ctx.parse_clarifications(pkg.clarifications)} \
+        if pkg.clarifications.exists() else set()
+    for cid in sorted(set(re.findall(r"\bCLAR-\d+\b", evidence))):
+        if cid not in known_deltas:
+            out.append(Finding(
+                slug, "PLAN_APPROVAL_EVIDENCE_DANGLING",
+                "--evidence cites %s, which is not an owner delta in %s"
+                % (cid, pkg.clarifications.name)))
     cited_sources = sorted(set(re.findall(r"\bSRC-\d+\b", evidence or "")))
     cited_episodes = sorted({m for m in re.findall(r"\b[A-Z]+-\d+\b", evidence or "")
                              if EPISODE_ID_RE.match(m)})

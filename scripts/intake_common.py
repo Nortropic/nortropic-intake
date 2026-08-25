@@ -291,7 +291,9 @@ def git(repo, *args, **kw):
                              capture_output=True, text=True, timeout=kw.get("timeout", 20))
     except Exception:
         return None
-    return out.stdout.strip() if out.returncode == 0 else None
+    if out.returncode != 0:
+        return None
+    return out.stdout if kw.get("raw") else out.stdout.strip()
 
 
 def git_evidence(repo):
@@ -312,13 +314,22 @@ def git_commit_exists(repo, commit):
 
 
 def git_head_blob(repo, relpath):
-    """The committed version of a file, or None if untracked/absent."""
-    return git(repo, "show", "HEAD:%s" % relpath)
+    """The committed version of a file, or None if untracked/absent.
+
+    Raw, deliberately: the append-only checks compare bytes with `startswith`, and a
+    stripped blob would make that comparison right only by accident.
+    """
+    return git(repo, "show", "HEAD:%s" % relpath, raw=True)
 
 
 def git_blob_at(repo, commit, relpath):
     """A file's bytes at one commit, or None. The only baseline a delta can trust."""
-    return git(repo, "show", "%s:%s" % (commit, relpath))
+    return git(repo, "show", "%s:%s" % (commit, relpath), raw=True)
+
+
+def git_is_tracked(repo, relpath):
+    """Is this path in the index/HEAD at all? The question `git show` cannot answer."""
+    return git(repo, "ls-files", "--error-unmatch", "--", relpath) is not None
 
 
 def git_commits_for(repo, relpath, limit=200):
@@ -369,7 +380,7 @@ def source_set_identity(manifest, owner_delta_ids=()):
     Hashes exactly the facts that mean "we now know something different":
 
         EP  <episode_id> <kind> <origin>            one line per source episode
-        SRC <source_id> <kind> <capture_status> <identity>
+        SRC <source_id> <kind> <capture_status> <trust> <authority> <identity>
                                                     load-bearing, non-derived sources
         ODL <delta_id>                              one line per owner delta
 
@@ -377,6 +388,11 @@ def source_set_identity(manifest, owner_delta_ids=()):
     commit it was consumed at, else its origin. Lines are sorted, so file order,
     formatting and unrelated corpus churn cannot move the hash — only new material,
     changed material identity, a new episode or a new owner delta can.
+
+    Trust and instruction authority are part of the identity on purpose. Whether a
+    source is the owner's words or a stranger's page is a fact ABOUT the source set,
+    so silently relabelling one after sealing must move the revision — otherwise the
+    record could not answer "what trust did this source have at revision 3?".
 
     Returns (hex digest, [canonical lines]) so a mismatch can be explained rather
     than merely reported.
@@ -406,9 +422,12 @@ def source_set_identity(manifest, owner_delta_ids=()):
                 if value:
                     identity = value.lower() if field == "sha256" else value
                     break
-            lines.append("SRC %s %s %s %s"
+            lines.append("SRC %s %s %s %s %s %s"
                          % (sid, kind or "-",
-                            str(s.get("capture_status", "")).strip() or "-", identity))
+                            str(s.get("capture_status", "")).strip() or "-",
+                            str(s.get("trust", "")).strip() or "-",
+                            str(s.get("instruction_authority", "")).strip().lower() or "-",
+                            identity))
     for did in owner_delta_ids:
         did = str(did).strip()
         if did:

@@ -22,9 +22,14 @@ capture — there is nothing before it to differ from, so it has no block.
   rewritten. A correction is the next revision, not an edit to the last one.
 - **It is checked against evidence, not believed.** Two independent witnesses:
   the manifest says which sources arrived with which episode (`DELTA_SOURCE_OMITTED`
-  if one is missing here), and git says which brief IDs did not exist at the previous
-  revision (`DELTA_UNDERSTATED` if a new decision, rejection or open question is not
-  reported). Understating a change is a failure, not a style choice.
+  if one is missing here), and git says which brief IDs the revision changed — in
+  **both** directions. A new decision, rejection or open question that is not reported
+  is `DELTA_UNDERSTATED`; one that DISAPPEARED without a word is
+  `DELTA_OMITTED_REMOVAL`. The second matters more: a rejected path is the most
+  dangerous omission in the package, and an unanswered question that simply vanishes is
+  the failure the disposition rule exists to prevent. Name removals under
+  `REVERSED_DECISIONS` or `REMOVED_IDS`, with the reason. Understating a change is a
+  failure, not a style choice.
 - **A reversal needs an owner.** If `REVERSED_DECISIONS` is non-empty, `authorized_by:`
   must name an owner delta of type `ARCHITECTURE_DECISION`, `SCOPE_DECISION` or
   `PLAN_REOPEN_DECISION`. A new brainstorm that reverses settled decisions with no
@@ -84,6 +89,7 @@ append_only: true
 | `NEW_CONSTRAINTS` | ids of constraints the new material imposes. |
 | `NEW_EXTERNAL_EVIDENCE` | `SRC` ids of material external research added. |
 | `POTENTIAL_PLAN_IMPACT` | Classification + reason. A signal for the owner's review. |
+| `REMOVED_IDS` | ids dropped from the brief at this revision, with the reason in prose. |
 | `authorized_by` | The owner delta that authorized a reversal or a reopening. |
 
 ## What this is not
