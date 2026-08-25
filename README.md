@@ -1,6 +1,6 @@
 # nortropic-intake
 
-**A Claude Code skill that turns a brainstorm chat (in ChatGPT or Claude) into ready-to-build implementation context: a distilled idea brief plus the verbatim transcript kept as evidence.**
+**A Claude Code skill that turns a brainstorm chat (in ChatGPT or Claude) into ready-to-build implementation context: a distilled idea brief, a design rationale preserving why the design took its shape, and the verbatim transcript kept as evidence.**
 
 Resten av den här filen är på svenska. README:n förklarar *vad* skillen gör och *varför* —
 det exakta *hur* står i [SKILL.md](SKILL.md).
@@ -25,19 +25,34 @@ meddelanden senare. Det har hänt på riktigt: en plan som förkastades strax ef
 formulerats var på väg att byggas ändå, eftersom ett transkript inte skiljer på "beslut"
 och "tanke vi släppte".
 
-## Lösningen: två filer
+## Lösningen: tre filer — en kontextpyramid
 
-Varje körning levererar två Markdown-filer:
+Varje körning levererar tre Markdown-filer, från minst till råast:
 
-1. **`idea-<slug>.md` — briefen.** En "brief" är här en destillerad
-   implementationsbeskrivning på 2–3 sidor: besluten med en rads motivering vardera,
-   de **förkastade** vägarna (de farligaste att tappa bort), acceptanskriterier och
-   öppna frågor. Kriterierna skrivs i **EARS**-form — "WHEN &lt;händelse&gt;, THE
-   &lt;system&gt; SHALL &lt;beteende&gt;" — så att varje krav går att omsätta i ett test.
-2. **`<slug>-full-chat.md` — transkriptet.** Hela chatten ordagrant, som bevismaterial
-   att slå upp *varför* ett beslut togs — inte att bygga ifrån.
+1. **`idea-<slug>.md` — briefen = *vad* som ska byggas.** En "brief" är här en
+   destillerad implementationsbeskrivning på 2–3 sidor: besluten med en rads motivering
+   vardera, de **förkastade** vägarna (de farligaste att tappa bort),
+   acceptanskriterier och öppna frågor. Kriterierna skrivs i **EARS**-form — "WHEN
+   &lt;händelse&gt;, THE &lt;system&gt; SHALL &lt;beteende&gt;" — så att varje krav går
+   att omsätta i ett test. Det här är den enda intake-fil en byggsession laddar som
+   standard.
+2. **`<slug>-design-rationale.md` — designrationalen = *varför* designen ser ut som den
+   gör.** Resonemangskedjorna, besluten med fylligare motivering, de förkastade vägarna
+   med vilket haveri de skulle skapa, avvägningar, och en hämtkarta (ämne →
+   meddelandeintervall) in i transkriptet. Läses **vid behov** — när arkitekturval är
+   tvetydiga eller en granskare behöver designintentionen — aldrig förladdad.
+3. **`<slug>-full-chat.md` — transkriptet = rå bevisning.** Hela chatten ordagrant.
+   Läses aldrig bara för att den finns; en subagent hämtar riktade
+   meddelandeintervall när rationalen inte räcker eller exakt formulering spelar roll.
 
-Vid konflikt vinner briefen, alltid.
+Det här är **progressiv exponering**: exekvering behöver *vadet*; arkitektur behöver
+ibland *varföret*; rå historik hämtas bara när tvetydighet kvarstår. Rätt kontext,
+inte maximal kontext.
+
+**Auktoritetsordning** (högst vinner): gällande kanonisk repo-auktoritet (målrepots
+konstitution, regelverk, godkänd arkitektur) → senare ägargodkänd spec/plan → brief →
+rationale → transkript. Intake-artefakter bevarar intention och proveniens — de kan
+aldrig tyst köra över en senare godkänd arkitektur. Inom paketet vinner briefen, alltid.
 
 Filerna hamnar i idébanken — ett separat repo (`innovation-intake`) med en indexrad per
 idé — så att idéer kan parkeras och plockas fram långt senare med kontexten intakt.
@@ -48,14 +63,24 @@ idé — så att idéer kan parkeras och plockas fram långt senare med kontexte
    *implementeras nu*? (Körs skillen obemannat defaultar den till idébanken.)
 2. **Capture.** Chatten hämtas — i första hand via sajtens eget API, vilket är exakt och
    förlustfritt; att skrapa den renderade sidan (DOM:en) finns kvar som reserv.
-3. **Destillering.** Briefen skrivs. Varje sidospår i chatten sorteras som beslutat,
-   förkastat eller olöst (olösta blir öppna frågor).
+3. **Destillering.** Briefen och designrationalen skrivs — var för sig ur transkriptet,
+   aldrig den ena som kopia av den andra. Varje sidospår i chatten sorteras som
+   beslutat, förkastat eller olöst (olösta blir öppna frågor); varje väsentligt
+   rationale-påstående får en meddelandehänvisning `(← msg N–M)`.
 4. **Intervju** — bara på implementera-nu-vägen: skillen visar besluten, frågar om de
    stämmer och får svar på de öppna frågorna innan något byggs.
 5. **Dubblettkontroll.** Den nya idén jämförs mot idébanken: ersätter den en äldre
    brief, är de släkt, eller distinkta? Aldrig en tyst dubblett.
-6. **Leverans.** Båda filerna skrivs till idébanken plus en indexrad. Skillen committar
-   och pushar aldrig — det förblir egna, uttryckliga beslut.
+6. **Leverans.** Alla tre filerna skrivs till idébanken plus en indexrad (en rad per
+   idé, inte per fil). Skillen committar och pushar aldrig — det förblir egna,
+   uttryckliga beslut.
+
+**Idébank kontra implementera nu:** idébanksvägen sparar alla tre filerna med
+`status: idea` och öppna frågor intakta — ingen intervju förrän idén plockas fram att
+bygga. Implementera-nu-vägen kör intervjun direkt och lämnar över **enbart briefen**
+som kontext till byggsessionen; rationalen läses vid behov och transkriptet förblir
+bevisning, aldrig arbetsminne. Transkriptet är dessutom orörligt: senare
+klargöranden uppdaterar brief och rationale — historiken skrivs aldrig om.
 
 **Exempel:** du har brainstormat en kvalitetskontroll-idé i ChatGPT i en timme. I Claude
 Code skriver du "kör intake". Skillen frågar "idébank eller bygga nu?" — du svarar
@@ -83,6 +108,7 @@ Svenska eller engelska fungerar.
 | [SKILL.md](SKILL.md) | Själva instruktionen: faserna, exekveringschecklistan, leveransreglerna |
 | [references/extraction.md](references/extraction.md) | Extraktions-playbooken: API-vägen först, DOM-reserven, kända fallgropar |
 | [references/brief-template.md](references/brief-template.md) | Briefens exakta mall och reglerna bakom den |
+| [references/design-rationale-template.md](references/design-rationale-template.md) | Designrationalens mall: resonemangskedjor, förkastanden, hämtkarta |
 | [scripts/](scripts/) | Capture- och verifieringsskripten (körs i webbläsaren respektive lokalt) |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 
