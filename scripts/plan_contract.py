@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, SHA256_RE, body_sha256, corpus_root, expand, fails, fm_list, fm_str,
     git_commit_exists, git_evidence, git_immutability, id_kind, parse_ids, parse_slices,
-    read_frontmatter, sha256_file, sha256_text,
+    read_frontmatter, sha256_file, sha256_text, warns, EPISODE_ID_RE,
 )
 import context_contract as ctx  # noqa: E402
 
@@ -290,7 +290,114 @@ def validate_slug(corpus, slug):
     findings.extend(_check_chain(corpus, slug, plan_ref))
     _check_orphan_plans(corpus, slug, plan_ref, findings)
     findings.extend(_check_execution_state(slug, folder, fm, facts))
+    findings.extend(_check_context_binding(corpus, slug, pfm, facts))
     return findings, facts
+
+
+# ------------------------------------------------- context-revision binding --
+
+def package_context(corpus, slug):
+    """(manifest, current revision, source-set sha) for one package. None when v1."""
+    pkg = ctx.Package(corpus, slug)
+    if not pkg.manifest.exists():
+        return None, None, None
+    data, err = ctx.read_json(pkg.manifest)
+    if err or not ctx.is_living(data):
+        return data, None, None
+    return (data, data.get("context_revision"),
+            str(data.get("source_set_sha256", "")).strip().lower())
+
+
+def _check_context_binding(corpus, slug, pfm, facts):
+    """An approved plan records the understanding it was approved against.
+
+    Deliberately NOT execution authority: the context package does not tell the plan
+    what to do. It answers one question a fresh session must be able to ask —
+    "which source set was this approved from?" — so that a later revision is
+    detectable instead of silently ignored. Stale and invalid are different: a stale
+    plan is reported, never discarded.
+    """
+    out = []
+    manifest, current, current_sha = package_context(corpus, slug)
+    plan_revision = fm_str(pfm, "context_revision")
+    plan_sha = fm_str(pfm, "source_set_sha256").lower()
+    facts["context_revision"] = current
+    facts["plan_context_revision"] = plan_revision or None
+
+    if current is None:
+        # v1 package: nothing to bind against. A plan that claims a revision anyway is
+        # asserting provenance that does not exist.
+        if plan_revision:
+            out.append(Finding(
+                slug, "PLAN_CONTEXT_BINDING_FALSE",
+                "the plan records context_revision=%s but %s-context-manifest.json "
+                "tracks no revisions — a plan may not claim a context state the "
+                "package never had" % (plan_revision, slug)))
+        return out
+
+    if not plan_revision:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_UNBOUND",
+            "the package tracks context revisions (now at %s) but the approved plan "
+            "records no context_revision — without it, nobody can tell whether this "
+            "plan was approved against what we know today" % current))
+        return out
+    if not re.match(r"^\d+$", plan_revision):
+        out.append(Finding(slug, "PLAN_CONTEXT_BINDING_FALSE",
+                           "context_revision=%r is not an integer" % plan_revision))
+        return out
+
+    plan_revision = int(plan_revision)
+    if plan_revision > (current or 0):
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_BINDING_FALSE",
+            "the plan claims context revision %d but the package has only reached %s"
+            % (plan_revision, current)))
+        return out
+
+    history = {e.get("revision"): str(e.get("source_set_sha256", "")).strip().lower()
+               for e in (manifest or {}).get("revision_history", [])
+               if isinstance(e, dict)}
+    expected = history.get(plan_revision)
+    if plan_sha and expected and plan_sha != expected:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_BINDING_FALSE",
+            "the plan is bound to context revision %d but records source_set_sha256=%s…, "
+            "which is not that revision's identity (%s…) — a plan cannot claim one "
+            "context state while carrying another's fingerprint"
+            % (plan_revision, plan_sha[:16], expected[:16])))
+    elif not plan_sha:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_UNBOUND",
+            "the plan records context_revision=%d but no source_set_sha256 — the "
+            "revision number alone is a label; the identity is what makes it checkable"
+            % plan_revision))
+
+    facts["plan_context_stale"] = plan_revision < (current or 0)
+    if facts["plan_context_stale"]:
+        reviewed = _reviewed_revision(corpus, slug)
+        facts["plan_context_reviewed_revision"] = reviewed[0] if reviewed else None
+        facts["plan_impact"] = reviewed[1] if reviewed else None
+        # WARN, always. A plan approved against an older understanding is not thereby
+        # wrong — throwing away a valid plan because new material arrived would be its
+        # own failure. It is reported here and gated at `resume`, where execution would
+        # otherwise continue as though nothing had happened.
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_STALE",
+            "the approved plan was approved against context revision %d; the package is "
+            "now at %s. STALE IS NOT INVALID — the plan stands until the owner reviews "
+            "the delta. Run `impact --slug %s`."
+            % (plan_revision, current, slug), level="WARN"))
+    return out
+
+
+def _reviewed_revision(corpus, slug):
+    """The newest owner PLAN_REVIEW_DECISION: (revision reviewed, verdict, delta id)."""
+    pkg = ctx.Package(corpus, slug)
+    if not pkg.clarifications.exists():
+        return None
+    decisions = ctx.plan_review_decisions(ctx.parse_clarifications(pkg.clarifications))
+    return decisions[-1] if decisions else None
 
 
 def _check_plan_artifact(slug, plan_path, pfm, pbody, expect_current, candidate=False):
@@ -733,6 +840,38 @@ def render_pointer(workstream, slug, plan_path, plan_sha, targets, execution_poi
     return "\n".join(lines)
 
 
+RETIRE_REASONS = ("completed", "superseded", "abandoned", "replanned")
+
+
+def retire_pointer(into, workstream, slug):
+    """Remove exactly one keyed block. Returns (removed text, blocks left).
+
+    Context hygiene, not history deletion: this touches a reload CACHE in a target
+    repository and nothing else. Every intake artifact — brief, rationale, transcript,
+    manifest, owner deltas, candidate, approved plan — stays exactly where it is.
+    """
+    p = Path(into)
+    if not p.exists():
+        raise ValueError("%s does not exist" % into)
+    text = p.read_text(encoding="utf-8")
+    blocks = parse_pointer_blocks(text)          # raises on ambiguity
+    mine = [b for b in blocks if b["key"] == (workstream, slug)]
+    if not mine:
+        keys = ", ".join("%s/%s" % (k or "?", s or "?") for k, s in
+                         [b["key"] for b in blocks]) or "none"
+        raise ValueError("no pointer block for workstream=%s slug=%s (present: %s) — "
+                         "refusing to guess which block was meant"
+                         % (workstream, slug, keys))
+    if len(mine) > 1:                            # parse_pointer_blocks already refuses
+        raise ValueError("more than one block carries that key")
+    b = mine[0]
+    removed = text[b["start"]:b["end"]]
+    rest = text[:b["start"]] + text[b["end"]:]
+    rest = re.sub(r"\n{3,}", "\n\n", rest)
+    p.write_text(rest, encoding="utf-8")
+    return removed, len(blocks) - 1
+
+
 def write_pointer(into, rendered, workstream, slug):
     p = Path(into)
     text = p.read_text(encoding="utf-8") if p.exists() else ""
@@ -858,8 +997,11 @@ def cmd_coherence(args):
     ac_covered = [i for i in acs if i in slice_cited]
     ac_dropped = [i for i in acs if i not in slice_cited]
 
+    known_context = ctx.addressable_ids(package_context(corpus, slug)[0] or {})
     unknown_refs = sorted(r for r in cited
-                          if r not in ids and r not in clar_ids and not r.startswith(("S", "SRC-")))
+                          if r not in ids and r not in clar_ids
+                          and r not in known_context
+                          and not r.startswith(("S", "SRC-", "FIND-")))
     reopened = [r for r in rejections if r in cited and _reopens(pbody, r)]
     new_decisions = _plan_only_decisions(pbody, slices)
     owner_only = sorted(s for s, v in slices.items() if v["owner_only"])
@@ -871,6 +1013,7 @@ def cmd_coherence(args):
     print("file_sha256:    %s" % sha256_file(plan_path))
     print("content_sha256: %s" % sha256_text(pbody))
     print("")
+    _print_context_coherence(corpus, slug, pfm)
     print("DECISIONS_PRESERVED=%d/%d %s" % (len(covered(decisions)), len(decisions),
                                             _fmt(dropped(decisions), "missing")))
     print("REJECTIONS_PRESERVED=%d/%d %s" % (len(covered(rejections)), len(rejections),
@@ -919,6 +1062,55 @@ def cmd_coherence(args):
     print("      --evidence \"<how they approved>\"%s"
           % ("  --accept-delta" if material else ""))
     return 0
+
+
+def _print_context_coherence(corpus, slug, pfm):
+    """CURRENT CONTEXT REVISION ↔ PLAN, above the usual BRIEF ↔ PLAN delta.
+
+    The owner is approving a plan against an understanding. Both halves are shown:
+    which source set we are at, what changed since the previous revision, and how much
+    of it is actually available rather than pending.
+    """
+    manifest, current, _ = package_context(corpus, slug)
+    pkg = ctx.Package(corpus, slug)
+    if current is None:
+        print("CONTEXT_REVISION=UNVERSIONED (single source set; no revisions to compare)")
+        print("")
+        return
+    sources = [s for s in (manifest or {}).get("sources") or [] if isinstance(s, dict)]
+    load_bearing = [s for s in sources if s.get("load_bearing") is True]
+    available = [s for s in load_bearing
+                 if str(s.get("capture_status", "")).strip()
+                 in ("captured", "unavailable_owner_acknowledged")]
+    print("CONTEXT_REVISION=%s" % current)
+    print("SOURCES=%d/%d load-bearing available" % (len(available), len(load_bearing)))
+    print("SOURCE_EPISODES=%d" % len((manifest or {}).get("episodes") or []))
+    blocks = ctx.parse_delta_blocks(pkg.delta) if pkg.delta.exists() else {}
+    latest = blocks.get(current)
+    if latest:
+        fields = latest["fields"]
+        counted = [(label, len(ctx.delta_ids(fields.get(key))))
+                   for label, key in (("decisions changed", "CHANGED_DECISIONS"),
+                                      ("decisions reversed", "REVERSED_DECISIONS"),
+                                      ("questions resolved", "RESOLVED_QUESTIONS"),
+                                      ("rejections added", "NEW_REJECTIONS"),
+                                      ("external premises added",
+                                       "NEW_EXTERNAL_EVIDENCE"))]
+        print("CHANGES_SINCE_PREVIOUS_REVISION:")
+        for label, n in counted:
+            print("    %-26s %d" % (label, n))
+        print("    %-26s %s" % ("potential plan impact",
+                                fields.get("POTENTIAL_PLAN_IMPACT", "(not recorded)")))
+    else:
+        print("CHANGES_SINCE_PREVIOUS_REVISION=%s"
+              % ("none — this is the first revision" if current == 1
+                 else "NOT RECORDED (no REV-%d block in %s)" % (current, pkg.delta.name)))
+    declared = fm_str(pfm, "context_revision")
+    print("CANDIDATE_CONTEXT_REVISION=%s" % (declared or "UNBOUND"))
+    if declared and declared.isdigit() and int(declared) != current:
+        print("CANDIDATE_CONTEXT_MISMATCH=YES — this candidate was written against "
+              "revision %s" % declared)
+    print("")
 
 
 def REF_ALL(text):
@@ -1036,6 +1228,9 @@ def cmd_approve(args):
         findings.append(Finding(slug, "PLAN_NOT_APPROVED",
                                 "--approved-by=%r names the agent; this must name the "
                                 "owner who approved the plan" % args.approved_by))
+    findings.extend(_check_approval_evidence(corpus, slug, args.evidence))
+    findings.extend(_check_candidate_context(corpus, slug, pfm))
+    findings.extend(_check_plan_owner_deltas(corpus, slug, pbody))
     if fails(findings):
         print("APPROVAL_REFUSED — the candidate does not satisfy the plan contract:")
         for f in findings:
@@ -1077,6 +1272,12 @@ def cmd_approve(args):
     targets = fm_list(pfm, "execution_targets")
     if targets:
         fmlines.append("execution_targets: [%s]" % ", ".join(targets))
+    # Provenance, not authority: which understanding this plan was approved against.
+    # It never makes the context package execution authority — it makes a later
+    # revision detectable instead of silent.
+    for field in ("context_revision", "source_set_sha256"):
+        if fm_str(pfm, field):
+            fmlines.append("%s: %s" % (field, fm_str(pfm, field)))
     if prev:
         fmlines.append("supersedes_plan: %s" % prev)
     fmlines.append("---")
@@ -1119,6 +1320,103 @@ def cmd_approve(args):
     print("    status: planned")
     print("  then: plan_contract.py validate --slug %s" % slug)
     return 0
+
+
+def _check_approval_evidence(corpus, slug, evidence):
+    """Owner approval comes from the owner. A source that SAYS so is still a source.
+
+    A document, a page or a README asserting "Johnny approves this" is content — it
+    cannot satisfy an approval requirement, whatever it says about itself. The only
+    ids that may stand as approval evidence are owner deltas.
+    """
+    out = []
+    pkg = ctx.Package(corpus, slug)
+    sources = {}
+    if pkg.manifest.exists():
+        data, err = ctx.read_json(pkg.manifest)
+        if not err and isinstance(data, dict):
+            for s in data.get("sources") or []:
+                if isinstance(s, dict) and str(s.get("source_id", "")).strip():
+                    sources[str(s["source_id"]).strip()] = s
+    cited_sources = sorted(set(re.findall(r"\bSRC-\d+\b", evidence or "")))
+    cited_episodes = sorted({m for m in re.findall(r"\b[A-Z]+-\d+\b", evidence or "")
+                             if EPISODE_ID_RE.match(m)})
+    for sid in cited_sources:
+        source = sources.get(sid)
+        _, authority = ctx.source_instruction_authority(source or {})
+        if source is None or authority != "owner":
+            out.append(Finding(
+                slug, "PLAN_APPROVAL_FROM_UNTRUSTED_SOURCE",
+                "--evidence names %s as the approval. A source is evidence, never an "
+                "approval: no attachment, page or repository can grant owner authority "
+                "by containing a sentence that claims it. Record the owner's actual "
+                "approval (their words, in %s) and cite that."
+                % (sid, pkg.clarifications.name)))
+    for eid in cited_episodes:
+        out.append(Finding(
+            slug, "PLAN_APPROVAL_FROM_UNTRUSTED_SOURCE",
+            "--evidence names source episode %s as the approval — an episode is "
+            "captured material, not an owner decision" % eid))
+    return out
+
+
+def _check_candidate_context(corpus, slug, pfm):
+    """A candidate must be honest about which understanding it was written against."""
+    out = []
+    manifest, current, current_sha = package_context(corpus, slug)
+    if current is None:
+        return out
+    declared = fm_str(pfm, "context_revision")
+    if not declared:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_UNBOUND",
+            "the package is at context revision %s but the candidate records no "
+            "context_revision — approval binds a plan to the understanding it was "
+            "approved from, and that binding must be in the candidate the owner read"
+            % current))
+        return out
+    if not re.match(r"^\d+$", declared) or int(declared) != current:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_BINDING_FALSE",
+            "the candidate records context_revision=%s but the package is at %s — "
+            "approve the plan against what we know now, or redistill first. A plan may "
+            "not be approved into a context it never saw." % (declared, current)))
+    declared_sha = fm_str(pfm, "source_set_sha256").lower()
+    if declared_sha and current_sha and declared_sha != current_sha:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_BINDING_FALSE",
+            "the candidate claims context revision %s but carries source_set_sha256=%s…, "
+            "which is not that revision's identity (%s…)"
+            % (declared, declared_sha[:16], current_sha[:16])))
+    elif not declared_sha:
+        out.append(Finding(
+            slug, "PLAN_CONTEXT_UNBOUND",
+            "the candidate records a context_revision but no source_set_sha256"))
+    return out
+
+
+def _check_plan_owner_deltas(corpus, slug, pbody):
+    """A decision the owner made while planning must not live only in the chat.
+
+    Plan Mode asks "A or B?" and the owner answers. If that answer survives only as
+    conversation, the next session cannot know why the plan says what it says — which
+    is the same failure the approved plan itself exists to prevent, one layer up.
+    """
+    out = []
+    pkg = ctx.Package(corpus, slug)
+    if not pkg.clarifications.exists():
+        return out
+    entries = ctx.parse_clarifications(pkg.clarifications)
+    cited = set(re.findall(r"\bCLAR-\d+\b", pbody))
+    for e in ctx.plan_phase_deltas(entries):
+        if e["id"] not in cited:
+            out.append(Finding(
+                slug, "PLAN_OWNER_DELTA_UNCITED",
+                "%s is a %s the owner took during planning, and the plan never cites it "
+                "— the plan must reference the owner deltas it rests on, or the decision "
+                "survives only in a conversation that will not"
+                % (e["id"], str(e.get("type", "")).strip())))
+    return out
 
 
 def _material_delta(corpus, slug, plan_path):
@@ -1170,6 +1468,180 @@ def _current_approved(folder, slug):
         if fm_str(pfm, "status") == "approved":
             live.append(p.name)
     return sorted(live)[-1] if live else None
+
+
+def cmd_impact(args):
+    """Did the new understanding actually change what we are building?
+
+    Prints the mismatch, the delta that caused it, and the owner's recorded verdict —
+    or the absence of one. The classification itself needs judgement and belongs to
+    the owner; what is mechanical is that the mismatch is detected, that the exact
+    delta behind it is shown, and that an unreviewed mismatch is never silent.
+    """
+    corpus = corpus_root(args.corpus)
+    slug = args.slug
+    findings, facts = validate_slug(corpus, slug)
+    if fails(findings) or "plan_path" not in facts:
+        print("PLAN_IDENTITY_UNAVAILABLE")
+        for f in findings:
+            print(f)
+        return 2
+    manifest, current, _ = package_context(corpus, slug)
+    plan_revision = facts.get("plan_context_revision")
+    print("PLAN_IMPACT — %s" % slug)
+    print("APPROVED_PLAN=%s" % Path(facts["plan_path"]).name)
+    print("APPROVED_PLAN_CONTEXT_REVISION=%s" % (plan_revision or "UNBOUND"))
+    print("CURRENT_CONTEXT_REVISION=%s" % (current if current else "UNVERSIONED"))
+    if current is None:
+        print("PLAN_CONTEXT_STALE=NOT_APPLICABLE (package tracks no revisions)")
+        return 0
+    stale = bool(facts.get("plan_context_stale"))
+    print("PLAN_CONTEXT_STALE=%s" % ("YES" if stale else "NO"))
+    if not stale:
+        print("PLAN_INVALID=NO")
+        print("The plan was approved against the current source set. Nothing to review.")
+        return 0
+
+    print("PLAN_INVALID=NO   <- stale and invalid are different things")
+    print("")
+    print("CONTEXT_DELTA_SINCE_APPROVAL:")
+    pkg = ctx.Package(corpus, slug)
+    blocks = ctx.parse_delta_blocks(pkg.delta) if pkg.delta.exists() else {}
+    since = int(plan_revision) if plan_revision and plan_revision.isdigit() else 0
+    slice_refs = set()
+    for s in (facts.get("plan_slices") or {}).values():
+        slice_refs.update(s["refs"])
+    touched = set()
+    for n in sorted(blocks):
+        if n <= since:
+            continue
+        fields = blocks[n]["fields"]
+        print("  REV-%d  %s" % (n, fields.get("at", "")))
+        for field in ctx.DELTA_REQUIRED_FIELDS:
+            value = fields.get(field, "(not recorded)")
+            print("      %-24s %s" % (field + "=", value))
+            if field in ctx.DELTA_ID_FIELDS:
+                touched.update(ctx.delta_ids(value))
+    if not blocks:
+        print("  (no %s — the delta artifact is missing; the impact cannot be read "
+              "from the revision number alone)" % pkg.delta.name)
+    print("")
+    collides = sorted(touched & slice_refs)
+    print("PLAN_SLICES_CITING_CHANGED_IDS=%s" % (", ".join(collides) or "NONE"))
+    for sid in sorted(facts.get("plan_slices") or {}, key=lambda x: int(x[1:])):
+        hit = sorted(set((facts["plan_slices"][sid]["refs"])) & touched)
+        if hit:
+            print("    %-4s %-46s touches %s"
+                  % (sid, facts["plan_slices"][sid]["heading"][:46], ", ".join(hit)))
+
+    reviewed = _reviewed_revision(corpus, slug)
+    if reviewed and reviewed[0] >= current:
+        print("")
+        print("PLAN_IMPACT_CLASSIFICATION=%s" % reviewed[1])
+        print("PLAN_IMPACT_REVIEWED_AT_REVISION=%d" % reviewed[0])
+        print("PLAN_IMPACT_OWNER_DELTA=%s" % reviewed[2])
+        if reviewed[1] == "NO_PLAN_IMPACT":
+            print("The owner reviewed the delta and kept this plan active. Execution "
+                  "continues.")
+        elif reviewed[1] == "PLAN_REVIEW_REQUIRED":
+            print("The owner has flagged this for review. Do not start new slices until "
+                  "the review is closed with a further owner delta.")
+        else:
+            print("The owner has reopened this plan. Follow the normal versioning path: "
+                  "the old plan is preserved, a new candidate is approved.")
+        return 0
+
+    print("")
+    print("PLAN_IMPACT_CLASSIFICATION=UNRECORDED")
+    print("PLAN_IMPACT_REVIEW_REQUIRED=YES")
+    print("")
+    print("STOP. Show the owner the delta above and record their verdict as an owner")
+    print("delta in %s:" % pkg.clarifications.name)
+    print("")
+    print("    ## CLAR-<next>")
+    print("    - type: PLAN_REVIEW_DECISION")
+    print("    - date: <YYYY-MM-DD>")
+    print("    - reviewed_context_revision: %s" % current)
+    print("    - plan_impact: NO_PLAN_IMPACT | PLAN_REVIEW_REQUIRED | PLAN_REOPEN_REQUIRED")
+    print("    - resolves: none")
+    print("    - affects: <the D/R/AC/S ids the new material touches>")
+    print("    - question: <what you asked the owner>")
+    print("    - owner_answer: <their exact words>")
+    print("")
+    print("Ambiguous impact is PLAN_REVIEW_REQUIRED, never an automatic reopen — only")
+    print("the owner reopens an approved plan.")
+    return 3
+
+
+def cmd_handoff(args):
+    """The whole handoff to an execution session: identities and pointers, no summary.
+
+    Deliberately tiny. A second 'master prompt' that restates the plan is a second
+    source of truth that drifts from the first; this points at the files and lets
+    them explain themselves.
+    """
+    corpus = corpus_root(args.corpus)
+    slug = args.slug
+    findings, facts = validate_slug(corpus, slug)
+    if fails(findings) or "plan_path" not in facts:
+        print("HANDOFF_UNAVAILABLE=PLAN_IDENTITY_UNAVAILABLE")
+        for f in findings:
+            print(f)
+        print("\nNo handoff is produced for an unproven plan. Fix the findings above.")
+        return 2
+    if not args.workstream:
+        print("HANDOFF_UNAVAILABLE=WORKSTREAM_REQUIRED")
+        print("A handoff without a named workstream becomes a repository-wide \"next")
+        print("task\", which does not exist. Pass --workstream.")
+        return 2
+
+    pfm = facts["plan_fm"]
+    _, current, _ = package_context(corpus, slug)
+    targets = parse_execution_targets(pfm)
+    if not targets:
+        canonical = fm_str(pfm, "canonical_execution_repo")
+        targets = [(canonical, "operator-product")] if canonical and canonical != "unknown" else []
+    slices = facts.get("plan_slices") or {}
+    start = args.start_slice or _first_unstarted_slice(corpus, slug, slices)
+
+    print("ACTIVE_WORKSTREAM=%s" % args.workstream)
+    print("INTAKE_SLUG=%s" % slug)
+    print("CONTEXT_REVISION=%s" % (current if current else "UNVERSIONED"))
+    print("APPROVED_PLAN_PATH=%s" % Path(facts["plan_path"]).resolve())
+    print("APPROVED_PLAN_SHA=%s" % facts["plan_sha256"])
+    print("APPROVED_PLAN_CONTEXT_REVISION=%s"
+          % (facts.get("plan_context_revision") or "UNBOUND"))
+    print("PLAN_CONTEXT_STALE=%s" % ("YES" if facts.get("plan_context_stale") else "NO"))
+    print("TARGET_REPOS=%s" % (", ".join("%s=%s" % (r, role) for r, role in targets)
+                               or "none declared"))
+    print("START_FROM_PLAN_SLICE=%s" % start)
+    print("INTAKE_CORPUS=%s" % Path(corpus).resolve())
+    print("")
+    print("RESUME=python3 %s resume --slug %s --workstream %s%s"
+          % (Path(__file__).resolve(), slug, args.workstream,
+             "".join(" --target-repo %s" % r for r, _ in targets)))
+    print("")
+    print("These are pointers, not a plan. The execution session runs RESUME, reads the")
+    print("authoritative files itself, reconciles them against current repository truth,")
+    print("and derives its own next step. Nothing above is a summary of the plan, and")
+    print("nothing above may substitute for reading it.")
+    print(ctx.TRUST_RULE)
+    return 0
+
+
+def _first_unstarted_slice(corpus, slug, slices):
+    """A hint, computed from recorded execution evidence — never authoritative."""
+    if not slices:
+        return "UNSET (the plan declares no slices)"
+    brief = Path(corpus) / slug / ("idea-%s.md" % slug)
+    fm, _, _ = read_frontmatter(brief)
+    done = fm_str(fm, "execution_slice")
+    order = sorted(slices, key=lambda x: int(x[1:]))
+    if not done or done not in order:
+        return "%s (HINT — recompute from repository state)" % order[0]
+    nxt = order.index(done) + 1
+    return ("%s (HINT — recompute from repository state)" % order[nxt]) if nxt < len(order) \
+        else "ALL_SLICES_HAVE_RECORDED_EVIDENCE (verify against the repository)"
 
 
 def cmd_map(args):
@@ -1247,9 +1719,10 @@ def cmd_resume(args):
     # The context package is VALIDATED here, not assumed. Printing identity hashes for
     # artifacts nobody checked would make an unearned YES look earned.
     ctx_findings = []
-    ctx.validate_manifest(pkg, ctx_findings, require=True)
+    ctx_manifest = ctx.validate_manifest(pkg, ctx_findings, require=True)
     ctx.validate_clarifications(pkg, ctx_findings,
-                                brief_ids=set(facts.get("brief_ids") or {}))
+                                brief_ids=set(facts.get("brief_ids") or {}),
+                                extra_ids=ctx.addressable_ids(ctx_manifest, pkg))
     ctx_fails = fails(ctx_findings)
     if ctx_fails:
         print("CONTEXT_PACKAGE_VALID=NO")
@@ -1285,6 +1758,26 @@ def cmd_resume(args):
     print("DESIGN_RATIONALE=on-demand (not preloaded)")
     print("RAW_TRANSCRIPT=on-demand (not preloaded)")
     print("RAW_LOOKUP_AVAILABLE=%s" % ("YES" if pkg.transcript.exists() else "NO"))
+
+    # ---- living context --------------------------------------------------
+    manifest, current_revision, _ = package_context(corpus, slug)
+    episodes = (manifest or {}).get("episodes") or []
+    # NB: `stale` further down belongs to the POINTER. Context staleness is a
+    # different question about a different artifact and keeps its own name.
+    context_stale = bool(facts.get("plan_context_stale"))
+    print("CURRENT_CONTEXT_REVISION=%s"
+          % (current_revision if current_revision else "UNVERSIONED"))
+    print("PLAN_CONTEXT_REVISION=%s" % (facts.get("plan_context_revision") or "UNBOUND"))
+    print("PLAN_CONTEXT_STALE=%s" % ("YES" if context_stale else "NO"))
+    if episodes:
+        print("SOURCE_EPISODES=%s" % ", ".join(
+            "%s@%s" % (e.get("episode_id"), e.get("captured_at", "?"))
+            for e in episodes if isinstance(e, dict)))
+    reviewed = _reviewed_revision(corpus, slug) if context_stale else None
+    if context_stale:
+        print("PLAN_IMPACT_CLASSIFICATION=%s"
+              % (reviewed[1] if reviewed and reviewed[0] >= (current_revision or 0)
+                 else "UNRECORDED"))
 
     # ---- target repositories -------------------------------------------
     targets = parse_execution_targets(pfm)
@@ -1345,6 +1838,20 @@ def cmd_resume(args):
     print("repository, and recompute PLAN_CURRENT_REPO_RECONCILIATION and")
     print("NEXT_EXECUTION_POINTER from that comparison. Any hint above is a cache: where")
     print("it disagrees with repository evidence, the repository wins — report it.")
+    print("")
+    print(ctx.TRUST_RULE)
+
+    # The plan is proven and still valid; what is NOT settled is whether the newer
+    # understanding changes it. Continuing here would be the exact silence the living
+    # context exists to prevent — so the loader stops, without discarding anything.
+    if context_stale and not (reviewed and reviewed[0] >= (current_revision or 0)):
+        print("")
+        print("PLAN_CONTEXT_STALE=YES and PLAN_IMPACT_CLASSIFICATION=UNRECORDED.")
+        print("STOP before deriving further work. The plan is intact and still proven —")
+        print("it is not discarded and not rewritten. What is missing is the owner's")
+        print("verdict on whether the new source material changes it:")
+        print("    plan_contract.py impact --slug %s" % slug)
+        return 3
     return 0
 
 
@@ -1422,6 +1929,8 @@ def _resolve_pointer(path, workstream, slug, plan_sha, plan_path):
 
 def cmd_pointer(args):
     corpus = corpus_root(args.corpus)
+    if args.retire:
+        return _cmd_pointer_retire(args)
     findings, facts = validate_slug(corpus, args.slug)
     if fails(findings) or "plan_path" not in facts:
         print("PLAN_IDENTITY_UNAVAILABLE — refusing to write a pointer to an unproven plan")
@@ -1467,6 +1976,49 @@ def cmd_pointer(args):
     print("BLOCKS_IN_FILE=%d (other workstreams left untouched)" % total)
     print("PLAN_IDENTITY=%s@sha256:%s" % (Path(facts["plan_path"]).resolve(),
                                           facts["plan_sha256"]))
+    return 0
+
+
+def _cmd_pointer_retire(args):
+    """`pointer --retire`: one workstream's cache block, out of one file, on purpose."""
+    if not args.workstream or not args.into:
+        print("REFUSED: --retire needs both --workstream and --into. There is no bulk")
+        print("cleanup: a sweep over 'stale-looking' blocks is how another workstream's")
+        print("live pointer gets deleted.")
+        return 2
+    if args.reason not in RETIRE_REASONS:
+        print("REFUSED: --reason must be one of %s. A pointer is retired because "
+              "something happened, and the record says what." % list(RETIRE_REASONS))
+        return 2
+    try:
+        if args.print_only:
+            text = Path(args.into).read_text(encoding="utf-8") \
+                if Path(args.into).exists() else ""
+            blocks = parse_pointer_blocks(text)
+            mine = [b for b in blocks if b["key"] == (args.workstream, args.slug)]
+            if not mine:
+                print("POINTER_RETIRE=NO_MATCH workstream=%s slug=%s"
+                      % (args.workstream, args.slug))
+                return 2
+            print("WOULD_RETIRE (%d line(s)):" % len(mine[0]["fields"]))
+            print(text[mine[0]["start"]:mine[0]["end"]])
+            print("BLOCKS_REMAINING=%d" % (len(blocks) - 1))
+            return 0
+        removed, remaining = retire_pointer(args.into, args.workstream, args.slug)
+    except (ValueError, OSError) as exc:
+        print("POINTER_RETIRE_REFUSED — %s: %s" % (args.into, exc))
+        print("Fail closed on ambiguous workstream identity: no block is removed.")
+        return 2
+    print("POINTER_RETIRED=%s/%s" % (args.workstream, args.slug))
+    print("REASON=%s" % args.reason)
+    print("FROM=%s" % Path(args.into).resolve())
+    print("BLOCKS_REMAINING=%d (other workstreams untouched)" % remaining)
+    print("REMOVED_BYTES=%d" % len(removed))
+    print("")
+    print("This removed a reload CACHE only. Nothing in the intake corpus changed: the")
+    print("brief, rationale, transcript, manifest, owner deltas, plan candidate and")
+    print("approved plan are all exactly as they were. Retiring a pointer is context")
+    print("hygiene; it is never history deletion.")
     return 0
 
 
@@ -1527,13 +2079,29 @@ def main(argv=None):
     r.add_argument("--pointer", help="a CLAUDE.md carrying reload-pointer blocks")
     r.set_defaults(func=cmd_resume)
 
+    im = sub.add_parser("impact", parents=[common],
+                        help="does a newer context revision change this plan?")
+    im.add_argument("--slug", required=True)
+    im.set_defaults(func=cmd_impact)
+
+    ho = sub.add_parser("handoff", parents=[common],
+                        help="pointers for an execution session — never a plan summary")
+    ho.add_argument("--slug", required=True)
+    ho.add_argument("--workstream")
+    ho.add_argument("--start-slice")
+    ho.set_defaults(func=cmd_handoff)
+
     p = sub.add_parser("pointer", parents=[common],
-                       help="write/update this workstream's pointer block")
+                       help="write/update/retire this workstream's pointer block")
     p.add_argument("--slug", required=True)
     p.add_argument("--workstream")
     p.add_argument("--into")
     p.add_argument("--execution-pointer")
     p.add_argument("--print-only", action="store_true")
+    p.add_argument("--retire", action="store_true",
+                   help="remove this workstream's reload cache block (never history)")
+    p.add_argument("--reason", choices=RETIRE_REASONS,
+                   help="why the pointer is retired (required with --retire)")
     p.set_defaults(func=cmd_pointer)
 
     h = sub.add_parser("hash", parents=[common], help="sha256 of a file")
@@ -1548,6 +2116,8 @@ def main(argv=None):
         return 2
     if args.cmd == "pointer" and not args.into and not args.print_only:
         ap.error("pointer: --into or --print-only is required")
+    if args.cmd == "pointer" and args.retire and not args.reason:
+        ap.error("pointer --retire: --reason is required (%s)" % ", ".join(RETIRE_REASONS))
     return args.func(args)
 
 

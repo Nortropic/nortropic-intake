@@ -201,15 +201,26 @@ ID_LINE_RE = re.compile(
 SLICE_RE = re.compile(r"^\s*#{2,4}\s*(?P<id>S\d+)\s*[—:.-]\s*(?P<text>.+?)\s*$", re.M)
 PROVENANCE_RE = re.compile(r"\(←\s*([^)]+)\)")
 CLAR_RE = re.compile(r"^##\s*(CLAR-\d+)\s*$", re.M)
-REF_RE = re.compile(r"\b(D\d+|R\d+|Q\d+|AC\d+|S\d+|SRC-\d+|CLAR-\d+)\b")
+# One idea, many source episodes: each brainstorm/research event that fed the package
+# gets a stable address of its own, so a later revision can name exactly what arrived.
+EPISODE_KINDS = ("CHAT", "WEB", "GITHUB", "FILE", "RESEARCH", "OWNER")
+EPISODE_ID_RE = re.compile(r"^(?:%s)-\d{3,}$" % "|".join(EPISODE_KINDS))
+EPISODE_REF = r"(?:%s)-\d+" % "|".join(EPISODE_KINDS)
+FIND_ID_RE = re.compile(r"^FIND-\d{3,}$")
+REF_RE = re.compile(r"\b(D\d+|R\d+|Q\d+|AC\d+|S\d+|SRC-\d+|CLAR-\d+|FIND-\d+|%s)\b"
+                    % EPISODE_REF)
 
 ID_KINDS = {"D": "decision", "R": "rejection", "Q": "open-question",
             "AC": "acceptance-criterion", "S": "plan-slice",
-            "SRC": "source", "CLAR": "owner-clarification"}
+            "SRC": "source", "CLAR": "owner-delta", "FIND": "audit-finding",
+            "CHAT": "source-episode", "WEB": "source-episode",
+            "GITHUB": "source-episode", "FILE": "source-episode",
+            "RESEARCH": "source-episode", "OWNER": "source-episode"}
 
 
 def id_kind(identifier):
-    m = re.match(r"^(SRC|CLAR|AC|D|R|Q|S)", identifier)
+    m = re.match(r"^(SRC|CLAR|FIND|CHAT|WEB|GITHUB|FILE|RESEARCH|OWNER|AC|D|R|Q|S)",
+                 identifier)
     return ID_KINDS.get(m.group(1)) if m else None
 
 
@@ -301,6 +312,17 @@ def git_head_blob(repo, relpath):
     return git(repo, "show", "HEAD:%s" % relpath)
 
 
+def git_blob_at(repo, commit, relpath):
+    """A file's bytes at one commit, or None. The only baseline a delta can trust."""
+    return git(repo, "show", "%s:%s" % (commit, relpath))
+
+
+def git_commits_for(repo, relpath, limit=200):
+    """Commits touching one path, newest first. Plain git — no index, no cache."""
+    out = git(repo, "log", "--format=%H", "-n", str(limit), "--", relpath)
+    return out.splitlines() if out else []
+
+
 def git_immutability(repo, relpath, path):
     """Anchor a file's bytes against git history — the only witness an agent cannot edit.
 
@@ -327,6 +349,68 @@ def git_immutability(repo, relpath, path):
 
 def expand(path):
     return Path(os.path.expanduser(str(path)))
+
+
+# ------------------------------------------------------ source-set identity --
+
+# Artifacts DERIVED from the source set are not part of its identity. Including them
+# would make the identity circular: writing the brief that records revision N would
+# itself produce revision N+1, and the package could never come to rest.
+DERIVED_SOURCE_KINDS = {"brief", "design-rationale", "owner-clarifications"}
+
+
+def source_set_identity(manifest, owner_delta_ids=()):
+    """The deterministic identity of one idea's intellectual source set.
+
+    Hashes exactly the facts that mean "we now know something different":
+
+        EP  <episode_id> <kind> <origin>            one line per source episode
+        SRC <source_id> <kind> <capture_status> <identity>
+                                                    load-bearing, non-derived sources
+        ODL <delta_id>                              one line per owner delta
+
+    `identity` is the sharpest one the source records: its content hash, else the
+    commit it was consumed at, else its origin. Lines are sorted, so file order,
+    formatting and unrelated corpus churn cannot move the hash — only new material,
+    changed material identity, a new episode or a new owner delta can.
+
+    Returns (hex digest, [canonical lines]) so a mismatch can be explained rather
+    than merely reported.
+    """
+    lines = []
+    if isinstance(manifest, dict):
+        for ep in manifest.get("episodes") or []:
+            if not isinstance(ep, dict):
+                continue
+            eid = str(ep.get("episode_id", "")).strip()
+            if not eid:
+                continue
+            lines.append("EP %s %s %s" % (eid, str(ep.get("kind", "")).strip() or "-",
+                                          str(ep.get("origin", "")).strip() or "-"))
+        for s in manifest.get("sources") or []:
+            if not isinstance(s, dict) or s.get("load_bearing") is not True:
+                continue
+            kind = str(s.get("kind", "")).strip()
+            if kind in DERIVED_SOURCE_KINDS:
+                continue
+            sid = str(s.get("source_id", "")).strip()
+            if not sid:
+                continue
+            identity = "-"
+            for field in ("sha256", "commit", "origin"):
+                value = str(s.get(field, "")).strip()
+                if value:
+                    identity = value.lower() if field == "sha256" else value
+                    break
+            lines.append("SRC %s %s %s %s"
+                         % (sid, kind or "-",
+                            str(s.get("capture_status", "")).strip() or "-", identity))
+    for did in owner_delta_ids:
+        did = str(did).strip()
+        if did:
+            lines.append("ODL %s" % did)
+    lines.sort()
+    return sha256_text("\n".join(lines) + "\n"), lines
 
 
 # --------------------------------------------------------- secret hygiene --

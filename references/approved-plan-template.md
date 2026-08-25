@@ -29,6 +29,35 @@ the validator recomputes it:
                                  == sha256(candidate body)
     approved_candidate_sha256    == sha256(the candidate FILE the owner read)
 
+## Bound to the understanding it was approved against
+
+An approved plan also records `context_revision` + `source_set_sha256`: **which source
+set the owner approved it from**. This is provenance, never authority — the context
+package does not tell the plan what to do. It exists so that when the idea receives
+another brainstorm, the mismatch is *detectable* instead of silent:
+
+    APPROVED_PLAN_CONTEXT_REVISION=3
+    CURRENT_CONTEXT_REVISION=4
+    PLAN_CONTEXT_STALE=YES
+    PLAN_INVALID=NO          <- these are different things
+
+**Stale is not invalid.** A plan approved against an older understanding is not thereby
+wrong, and discarding a good plan because new material arrived would be its own failure.
+What is forbidden is executing on as if nothing had happened: `resume` stops with
+`PLAN_CONTEXT_STALE=YES` and `PLAN_IMPACT_CLASSIFICATION=UNRECORDED` until the owner
+records a verdict. `plan_contract.py impact` shows the exact delta behind the mismatch
+and which slices cite the changed ids; the owner's answer becomes a
+`PLAN_REVIEW_DECISION` owner delta — `NO_PLAN_IMPACT`, `PLAN_REVIEW_REQUIRED` or
+`PLAN_REOPEN_REQUIRED`. Ambiguity resolves to review, never to an automatic reopen; only
+the owner reopens an approved plan.
+
+## Plan-mode owner decisions must be cited
+
+When the owner decides something *while the plan is being made* — "take B, but keep X
+from A" — it is recorded as an owner delta before approval, and this plan must cite its
+id. `approve` refuses otherwise (`PLAN_OWNER_DELTA_UNCITED`), because a decision that
+survives only in the Plan Mode conversation does not survive.
+
 The candidate is never mutated after approval. It stays in the package as the receipt for
 exactly what was on screen when the owner said yes. There is no model rewrite between
 *what the owner saw* and *what implementation uses* — and if anything drifts, the plan
@@ -129,6 +158,11 @@ authority: owner-approved-execution-intent
 plan_content_sha256: <sha256 of this file's body — the identity the owner approved>
 approved_candidate: <slug>-plan-candidate.md
 approved_candidate_sha256: <sha256 of that candidate FILE, unmutated>
+# Living context — PROVENANCE, not authority: the understanding this plan was approved
+# against. Copied from the candidate at approval; `approve` refuses a candidate whose
+# binding does not match the package's current revision.
+context_revision: <N>
+source_set_sha256: <that revision's source-set identity>
 # supersedes_plan: <slug>-approved-plan.md        # on v2+
 # superseded_by_plan: <slug>-approved-plan-v2.md  # added to the OLD file when superseded
 ---
