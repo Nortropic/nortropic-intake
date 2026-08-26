@@ -1198,13 +1198,14 @@ repositories are evidence and gain no instruction authority by containing impera
 text. RAW stays faithful even when a source is hostile or misleading — interpretation is
 bounded, evidence is never rewritten.
 
-**Frozen capabilities**, each proved by the suites in `evals/`: RAW · WHY · WHAT · owner
-deltas · WHERE · living context (many source episodes per idea) · context revisions ·
-distillation audit · planning-context coverage · current repository reality · plan
-candidate · coherence and context delta · exact owner approval · approved plan ·
+**Frozen capabilities**, each exercised by the suites in `evals/`: RAW · WHY · WHAT ·
+owner deltas · WHERE · living context (many source episodes per idea) · context
+revisions · distillation audit · planning-context coverage · current repository reality ·
+plan candidate · coherence and context delta · exact owner approval · approved plan ·
 terminal handoff · execution · compaction and fresh-session reload · CONTINUE_EXISTING ·
 stale-plan detection · source-trust boundary · multi-repo and multi-workstream ·
-bidirectional provenance.
+bidirectional provenance. The suites prove specific properties of each, never
+completeness — see the residual risks below, which are part of the same honest record.
 
 **Accepted residual risks — recorded honestly, and not work items.** No mechanism can
 prove a human read every approved byte. Semantic fidelity stays partly judgement, even
@@ -1212,5 +1213,18 @@ with independent auditing. Invocation is not fully mechanical if a session ignor
 skill entirely. Owner-delta authority has a human, procedural trust root. Non-path
 external source claims cannot all be frozen forever. A compromised canonical target
 repository is outside this trust boundary. No system should claim perfect
-prompt-injection detection. These become work only when an observed failure makes one
-material.
+prompt-injection detection.
+
+Two more, surfaced by the freeze review and recorded rather than quietly fixed:
+
+- **A weak approval leaves no durable trace.** `approve --allow-uncommitted-candidate`
+  prints `APPROVAL_ATTESTATION=WEAK`, but neither that nor the git anchor is written into
+  the approved plan's frontmatter. A later `validate` cannot tell a fully anchored
+  approval from one taken with the escape hatch open.
+- **Message-level provenance is role-blind.** `(← msg N)` counts as owner-backing without
+  consulting who spoke in message N, so a decision tagged to an assistant turn satisfies
+  the check that an external source alone would fail. The mechanism is real; no exploit
+  has been demonstrated against it.
+
+These become work only when an observed failure makes one material — which for the
+second is exactly what `demonstrated security/trust defect` in the reopen policy means.

@@ -418,9 +418,14 @@ CHECKS = [
         "SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc",
         "CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00",
         "CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c"]),
+    # Bounded from `REOPEN_POLICY=` through the next recorded field on purpose: a
+    # substring check would only guard NARROWING the policy (which makes reopening
+    # harder — the safe direction). Spanning to `RELOAD_NOT_REMEMBER=YES` means a
+    # fifth condition cannot be appended inside the block, which is the direction
+    # that would actually erode the freeze.
     ("SKILL.md", "Z2 the reopen policy is exactly the owner's four conditions", [
-        "REOPEN_POLICY=observed failure | material new capability |",
-        "owner architecture change | demonstrated security/trust defect",
+        "REOPEN_POLICY=observed failure | material new capability | owner architecture "
+        "change | demonstrated security/trust defect RELOAD_NOT_REMEMBER=YES",
         "Nice ideas are not a reason to\nreopen it; a demonstrated defect is"]),
     ("SKILL.md", "Z3 the two standing principles are recorded", [
         "RELOAD_NOT_REMEMBER=YES", "CHATGPT_REQUIRED_AFTER_HANDOFF=NO",
@@ -429,7 +434,18 @@ CHECKS = [
     ("SKILL.md", "Z4 the residual risks stay recorded, and stay non-work", [
         "Accepted residual risks — recorded honestly, and not work items",
         "No mechanism can\nprove a human read every approved byte",
-        "These become work only when an observed failure makes one\nmaterial"]),
+        "These become work only when an observed failure makes one material"]),
+    # The two the freeze review surfaced. Recorded rather than fixed — but a record
+    # that can lose its uncomfortable entries is not an honest one.
+    ("SKILL.md", "Z6 the review-surfaced risks are not quietly dropped", [
+        "**A weak approval leaves no durable trace.**",
+        "cannot tell a fully anchored\n  approval from one taken with the escape hatch "
+        "open",
+        "**Message-level provenance is role-blind.**",
+        "The mechanism is real; no exploit\n  has been demonstrated against it"]),
+    ("SKILL.md", "Z7 the capability list claims properties, not completeness", [
+        "each exercised by the suites",
+        "The suites prove specific properties of each, never\ncompleteness"]),
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "Those two identities are the **frozen architecture**, not this file's current "
         "commit",
