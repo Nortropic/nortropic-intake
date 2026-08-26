@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, expand, fails, fm_list, fm_str, git_blob_at,
-    git, git_commits_for, git_evidence, git_head_blob, git_immutability, git_is_tracked,
+    git, git_commits_for, git_evidence, git_head_blob, git_immutability, git_is_committed,
     id_kind, parse_ids, parse_frontmatter, read_frontmatter, read_json, report,
     scan_credentials, sha256_file, sha256_text,
     source_set_identity, write_json, DERIVED_SOURCE_KINDS, EPISODE_ID_RE,
@@ -290,18 +290,28 @@ def _check_no_silent_downgrade(pkg, data, findings):
     if is_living(data):
         return
 
+    # Only artifacts that a LIVING package alone produces count as the file witness.
+    # The distillation audit is not one of them: `validate_audit` invites a legacy v1
+    # package to run the audit when the idea is next activated, so counting it here
+    # would break the very workflow the validator recommends. What is unambiguous: an
+    # episode-suffixed transcript, a context delta, the manifest's own living fields,
+    # and a derived artifact that declares a context revision.
     living_artifacts = [p.name for p in
                         ([pkg.delta] if pkg.delta.exists() else [])
-                        + ([pkg.audit] if pkg.audit.exists() else [])
                         + sorted(pkg.folder.glob("%s-full-chat-*.md" % pkg.slug))]
-    if living_artifacts or data.get("episodes") or data.get("revision_history"):
+    for derived in (pkg.brief, pkg.rationale):
+        if derived.exists() and fm_str(read_frontmatter(derived)[0], "context_revision"):
+            living_artifacts.append("%s (declares a context_revision)" % derived.name)
+    if living_artifacts or data.get("episodes") or data.get("revision_history") \
+            or data.get("source_set_sha256"):
         findings.append(Finding(
             pkg.slug, "CONTEXT_REVISION_HISTORY_TRUNCATED",
             "%s is manifest_version=%r, but this package carries living-context "
             "material: %s. A package does not stop being a living one because its "
             "manifest says so — restore the revision tracking, or supersede the package."
             % (pkg.manifest.name, data.get("manifest_version"),
-               ", ".join(living_artifacts or ["episodes/revision_history in the manifest"]))))
+               ", ".join(living_artifacts
+                         or ["episodes/revision_history/source_set_sha256 in the manifest"]))))
         return
 
     rel = "%s/%s" % (pkg.slug, pkg.manifest.name)
@@ -932,10 +942,12 @@ def transcript_message_bound(pkg):
             pkg.folder.glob("%s-full-chat-*.md" % pkg.slug)):
         if not path.exists():
             continue
-        fm, body, _ = read_frontmatter(path)
+        fm, _, _ = read_frontmatter(path)
         text = path.read_text(encoding="utf-8")
-        if fm_str(fm, "fidelity") not in ("", "full") \
-                or re.search(r"komprimerat av systemet|fidelity:\s*partial", text, re.I):
+        # Frontmatter only. A body-substring test would fire on any captured
+        # conversation that happens to DISCUSS partial fidelity — including every
+        # brainstorm about this skill — and quietly downgrade a real finding.
+        if fm_str(fm, "fidelity") not in ("", "full"):
             complete = False
         numbers = [int(m.group(1)) for m in
                    re.finditer(r"^##\s*(?:Meddelande|Message)\s+(\d+)\b", text, re.M)]
@@ -944,21 +956,40 @@ def transcript_message_bound(pkg):
     return highest, complete
 
 
+def cited_message_numbers(tag):
+    """Every message number a `(← …)` tag addresses, ranges and lists included.
+
+    The documented idiom is `(← msg 18–20)`, and the corpus uses ranges everywhere.
+    Binding only the number that follows the literal `msg` would leave the far end of
+    every range unchecked — which is most of the citations in practice.
+    """
+    out = set()
+    for m in re.finditer(r"\bmsgs?\.?\s*([\d\s,–—-]*\d)", tag, re.I):
+        for part in re.split(r"\s*,\s*", m.group(1)):
+            ends = re.findall(r"\d+", part)
+            out.update(int(e) for e in ends)
+    return out
+
+
 def _check_message_bounds(pkg, ids, cov, manifest=None):
     """Every `(← msg N)` must address a message that exists in some episode."""
     bound, complete = transcript_message_bound(pkg)
     cov.counts["transcript_message_bound"] = bound
     if not bound:
         return                       # no parseable transcript: nothing to bound against
+    for source in (manifest or {}).get("sources") or []:
+        if isinstance(source, dict) and source.get("kind") == "chat-transcript" \
+                and str(source.get("fidelity", "")).strip() not in ("", "full"):
+            complete = False
     for ep in (manifest or {}).get("episodes") or []:
         if isinstance(ep, dict) and str(ep.get("capture", "")).strip() != "full":
             complete = False
     unreachable = {}
     for key in sorted(ids):
         for tag in ids[key]["provenance"]:
-            for m in re.finditer(r"\bmsg\.?\s*(\d+)", tag, re.I):
-                if int(m.group(1)) > bound or int(m.group(1)) < 1:
-                    unreachable.setdefault(key, set()).add(m.group(1))
+            for n in cited_message_numbers(tag):
+                if n > bound or n < 1:
+                    unreachable.setdefault(key, set()).add(str(n))
     for key in sorted(unreachable):
         cov.findings.append(Finding(
             pkg.slug, "PROVENANCE_OUT_OF_RANGE",
@@ -1488,26 +1519,27 @@ def witness_state(pkg):
         return "ABSENT", []
     if git(pkg.corpus, "rev-parse", "HEAD") is None:
         return "ABSENT", [p.name for p in artifacts]
-    untracked = [p.name for p in artifacts
-                 if not git_is_tracked(pkg.corpus, "%s/%s" % (pkg.slug, p.name))]
-    if not untracked:
+    uncommitted = [p.name for p in artifacts
+                   if not git_is_committed(pkg.corpus, "%s/%s" % (pkg.slug, p.name))]
+    if not uncommitted:
         return "PRESENT", []
-    return ("ABSENT" if len(untracked) == len(artifacts) else "PARTIAL"), untracked
+    return ("ABSENT" if len(uncommitted) == len(artifacts) else "PARTIAL"), uncommitted
 
 
 def check_witness(pkg, findings):
     """Report the witness state. Never blocks — a first run is legitimately uncommitted."""
-    state, untracked = witness_state(pkg)
+    state, uncommitted = witness_state(pkg)
     if state == "PRESENT":
         return state
     findings.append(Finding(
         pkg.slug, "IMMUTABILITY_WITNESS_%s" % state,
-        "%s not in git: %s. Until they are committed, these checks cannot fire: %s. "
-        "This skill does not commit — making the package durable in git history is the "
-        "owner's explicit step, and it is what turns these from intentions into checks."
-        % ("no artifact of this package is" if state == "ABSENT"
-           else "%d of this package's artifacts are" % len(untracked),
-           ", ".join(untracked[:6]) + ("…" if len(untracked) > 6 else ""),
+        "%s: %s. Until they are committed, these checks cannot fire: %s. This skill "
+        "does not commit — making the package durable in git history is the owner's "
+        "explicit step, and it is what turns these from intentions into checks. "
+        "(Staged is not committed: every check here reads HEAD.)"
+        % ("no artifact of this package is committed" if state == "ABSENT"
+           else "%d of this package's artifacts are not committed" % len(uncommitted),
+           ", ".join(uncommitted[:6]) + ("…" if len(uncommitted) > 6 else ""),
            "; ".join(WITNESSED_GUARANTEES)),
         level="WARN"))
     return state
@@ -1742,7 +1774,9 @@ def _cross_check_delta(pkg, manifest, blocks, findings):
             "the brief LOST %s since context revision %d, and no delta block accounts "
             "for them. A rejected path or an open question that disappears without a "
             "word is exactly the omission the delta exists to make impossible — name "
-            "them under REVERSED_DECISIONS or REMOVED_IDS, with the reason."
+            "them under REMOVED_IDS, with the reason. (REVERSED_DECISIONS is for a "
+            "decision the owner turned around, which is still IN the brief; an id that "
+            "is gone cannot be validated as one that exists.)"
             % (", ".join(removed), previous)))
 
 

@@ -870,7 +870,10 @@ def retire_pointer(into, workstream, slug):
     # Collapse blank lines ONLY at the seam the removal opened. Normalizing the whole
     # file would silently reformat content this command has no business touching —
     # including another workstream's block.
-    seam = re.match(r"\s*", tail).group(0)
+    # `\n*`, never `\s*`: swallowing horizontal whitespace would eat the indentation of
+    # the first line after the seam, turning an indented code block or a nested bullet
+    # into something else. Only blank LINES belong to the seam.
+    seam = re.match(r"\n*", tail).group(0)
     if head.endswith("\n\n") and seam.startswith("\n"):
         tail = tail[len(seam):]
         if tail:
@@ -1366,7 +1369,9 @@ def _check_approval_evidence(corpus, slug, evidence):
     # approval" is otherwise a sentence, not a receipt.
     known_deltas = {e["id"] for e in ctx.parse_clarifications(pkg.clarifications)} \
         if pkg.clarifications.exists() else set()
-    for cid in sorted(set(re.findall(r"\bCLAR-\d+\b", evidence))):
+    # Case-insensitively: a receipt reading "per clar-999" is read by a human as citing
+    # CLAR-999, so it has to be held to the same standard.
+    for cid in sorted({c.upper() for c in re.findall(r"\bCLAR-\d+\b", evidence, re.I)}):
         if cid not in known_deltas:
             out.append(Finding(
                 slug, "PLAN_APPROVAL_EVIDENCE_DANGLING",

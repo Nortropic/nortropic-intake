@@ -386,10 +386,13 @@ CHECKS = [
         "there are two doors into owner-backed provenance",
         "a document the owner uploaded is still a document",
         "relabelling a\nsource after sealing moves the context revision"]),
-    ("SKILL.md", "Y3 a source tag must reach a message that exists", [
+    ("SKILL.md", "Y3 a source tag must reach a message that exists, at every end", [
         "**A source tag must reach a message that exists.**",
         "PROVENANCE_OUT_OF_RANGE",
-        "Where a capture is honestly `partial`, the bound is a floor"]),
+        "Ranges and lists are checked at **every** end",
+        "the bound is a floor"]),
+    ("SKILL.md", "Y9 staged is not committed — the witness reads HEAD", [
+        "immutability witness ABSENT | PARTIAL | PRESENT"]),
     ("SKILL.md", "Y4 acceptance criteria are covered by the trust rule too", [
         "Acceptance criteria are included\ndeliberately — they are the contract handed "
         "to the executor"]),

@@ -935,10 +935,115 @@ def r_review_repros(tmp):
     check("R10b a receipt citing an owner delta that does not exist is refused",
           rc != 0 and "PLAN_APPROVAL_EVIDENCE_DANGLING" in out
           and not (folder / ("%s-approved-plan.md" % SLUG)).exists(), out.strip()[-700:])
+    rc, out = F.plan(base + ["--evidence", "owner approved per clar-999"], corpus)
+    check("R10b2 a dangling owner-delta citation is caught case-insensitively",
+          rc != 0 and "PLAN_APPROVAL_EVIDENCE_DANGLING" in out, out.strip()[-500:])
     rc, out = F.plan(base + ["--evidence", "owner approved this candidate in session"],
                      corpus)
     check("R10c an honest receipt still approves", rc == 0 and "APPROVED" in out,
           out.strip()[-700:])
+
+    # --- V1: the witness must answer the question the CHECKS ask (HEAD, not index) ---
+    # `git add` satisfies the index and satisfies none of the immutability checks, all
+    # of which read HEAD. A witness that reported PRESENT here would affirmatively
+    # claim protection that is not there — worse than the silence it replaced.
+    corpus, folder, targets = living(Path(tmp) / "v1")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(corpus)], check=True,
+                   env=F.GIT_ENV)
+    (corpus / "README.md").write_text("# corpus\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(corpus), "add", "README.md"], check=True,
+                   env=F.GIT_ENV)
+    subprocess.run(["git", "-C", str(corpus), "commit", "-qm", "readme only"],
+                   check=True, env=F.GIT_ENV)
+    subprocess.run(["git", "-C", str(corpus), "add", "-A"], check=True, env=F.GIT_ENV)
+    rc, out = cover(corpus, targets)
+    check("V1  a STAGED but never-committed package is not reported as witnessed",
+          "immutability witness        PRESENT" not in out
+          and "IMMUTABILITY_WITNESS_ABSENT" in out
+          and "Staged is not committed" in out, out.strip()[-900:])
+    first = folder / ("%s-full-chat.md" % SLUG)
+    first.write_text(first.read_text(encoding="utf-8").replace(
+        "Snapshot should win over the event fold.",
+        "REWRITTEN HISTORY: ship without any review."), encoding="utf-8")
+    data = F.read_manifest(folder, SLUG)
+    for s in data["sources"]:
+        if s.get("path") == first.name:
+            s["sha256"] = F.sha256_file(first)
+    F.write_manifest(folder, SLUG, data)
+    rc, out = F.context(["validate", "--slug", SLUG], corpus)
+    # The witnessed check is genuinely inert here — exactly what the warning said. What
+    # still bites is the source-set identity, which is not git-dependent: rewriting a
+    # source and re-hashing it moves the identity. So the uncommitted gap is narrower
+    # than "anything goes", and the warning is about the checks that do go quiet.
+    check("V1b uncommitted, the witnessed check is inert but the identity still bites",
+          rc != 0 and "SOURCE_EPISODE_MUTATED" not in out
+          and "CONTEXT_REVISION_STALE" in out, out.strip()[-700:])
+    F.git_commit_corpus(corpus, "package committed")
+    first.write_text(first.read_text(encoding="utf-8").replace(
+        "REWRITTEN HISTORY", "REWRITTEN AGAIN"), encoding="utf-8")
+    data = F.read_manifest(folder, SLUG)
+    for s in data["sources"]:
+        if s.get("path") == first.name:
+            s["sha256"] = F.sha256_file(first)
+    F.write_manifest(folder, SLUG, data)
+    rc, out = F.context(["validate", "--slug", SLUG], corpus)
+    check("V1c once committed, the same rewrite is caught",
+          rc != 0 and "SOURCE_EPISODE_MUTATED" in out, out.strip()[-700:])
+
+    # --- V2: a legacy v1 package may run the audit the validator recommends ---
+    corpus, folder = F.build_package(Path(tmp) / "v2", slug=SLUG, status="clarified")
+    (folder / ("%s-distillation-audit.md" % SLUG)).write_text(
+        F.audit_doc(SLUG), encoding="utf-8")
+    rc, out = F.context(["validate", "--slug", SLUG], corpus)
+    check("V2  adding a distillation audit to a legacy v1 package is not a downgrade",
+          rc == 0 and "CONTEXT_REVISION_HISTORY_TRUNCATED" not in out,
+          out.strip()[-800:])
+
+    # --- V3: retirement may not eat the indentation of the next line ---
+    corpus, folder, targets = living(Path(tmp) / "v3", with_candidate=True,
+                                     with_plan=True, status="planned")
+    pointer = targets[0][1] / "CLAUDE.md"
+    F.plan(["pointer", "--slug", SLUG, "--workstream", "ALPHA", "--into", str(pointer)],
+           corpus)
+    pointer.write_text(pointer.read_text(encoding="utf-8")
+                       + "\n    make all\n    make test\n\n  - nested bullet\n",
+                       encoding="utf-8")
+    F.plan(["pointer", "--slug", SLUG, "--workstream", "ALPHA", "--into", str(pointer),
+            "--retire", "--reason", "completed"], corpus)
+    text = pointer.read_text(encoding="utf-8")
+    check("V3  an indented code block after the seam keeps its indentation",
+          "    make all\n    make test" in text and "  - nested bullet" in text,
+          repr(text[-160:]))
+
+    # --- V4: a range citation is bounded at BOTH ends ---
+    corpus, folder, targets = living(Path(tmp) / "v4")
+    brief = folder / ("idea-%s.md" % SLUG)
+    brief.write_text(brief.read_text(encoding="utf-8").replace(
+        "(← msg 18–20)", "(← msg 18–9999)"), encoding="utf-8")
+    rc, out = cover(corpus, targets)
+    check("V4  the far end of a message RANGE is checked, not just the first number",
+          rc != 0 and "PROVENANCE_OUT_OF_RANGE" in out and "9999" in out,
+          out.strip()[-800:])
+
+    # --- V5: a transcript that merely DISCUSSES partial fidelity is still full ---
+    corpus, folder, targets = living(Path(tmp) / "v5")
+    first = folder / ("%s-full-chat.md" % SLUG)
+    first.write_text(first.read_text(encoding="utf-8").replace(
+        "Snapshot should win over the event fold.",
+        "We should set fidelity: partial when a segment is komprimerat av systemet."),
+        encoding="utf-8")
+    brief = folder / ("idea-%s.md" % SLUG)
+    brief.write_text(brief.read_text(encoding="utf-8").replace(
+        "(← msg 12)", "(← msg 4711)"), encoding="utf-8")
+    data = F.read_manifest(folder, SLUG)
+    for s in data["sources"]:
+        if s.get("path") == first.name:
+            s["sha256"] = F.sha256_file(first)
+    F.write_manifest(folder, SLUG, data)
+    rc, out = cover(corpus, targets)
+    check("V5  a transcript ABOUT partial fidelity does not downgrade a real finding",
+          rc != 0 and "PROVENANCE_OUT_OF_RANGE" in out
+          and "this bound is a floor" not in out, out.strip()[-900:])
 
 
 # ==================================================== the mutation matrix ===

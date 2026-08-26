@@ -327,9 +327,15 @@ def git_blob_at(repo, commit, relpath):
     return git(repo, "show", "%s:%s" % (commit, relpath), raw=True)
 
 
-def git_is_tracked(repo, relpath):
-    """Is this path in the index/HEAD at all? The question `git show` cannot answer."""
-    return git(repo, "ls-files", "--error-unmatch", "--", relpath) is not None
+def git_is_committed(repo, relpath):
+    """Does this path exist in HEAD?
+
+    Deliberately HEAD and not the index. Every immutability check in this contract
+    compares against `git show HEAD:<path>`, so `git add` without a commit satisfies
+    the index and satisfies none of them. Asking a different question here would make
+    the witness report protection that is not there — worse than saying nothing.
+    """
+    return git(repo, "cat-file", "-e", "HEAD:%s" % relpath) is not None
 
 
 def git_commits_for(repo, relpath, limit=200):

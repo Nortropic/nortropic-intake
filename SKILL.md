@@ -350,8 +350,11 @@ deliberately — they are the contract handed to the executor.
 **A source tag must reach a message that exists.** `(← msg 44)` is checked against the
 episode transcripts: citing message 4711 of a 42-message capture is
 `PROVENANCE_OUT_OF_RANGE` and blocks, because an unreachable citation is exactly what an
-invented decision produces. Where a capture is honestly `partial`, the bound is a floor
-and the finding is reported rather than blocking.
+invented decision produces. Ranges and lists are checked at **every** end — `(← msg
+18–9999)` fails on the 9999, since the far end of a range is where an invented citation
+would hide. Where a capture is honestly `partial` (its frontmatter, its manifest source,
+or its episode says so), the bound is a floor and the finding is reported rather than
+blocking.
 
 ## Phase 2.6 — Independent distillation audit (the builder is not its own judge)
 
