@@ -407,6 +407,33 @@ CHECKS = [
         "SOURCE_TRUST_KIND_MISMATCH",
         "The trust axis is disciplined too",
         "Trust and instruction authority are in the identity on purpose"]),
+    # ---------------------------------------------------------------------
+    # Z. The architecture freeze. Reopening v2.1 has to remove this
+    #    deliberately — it cannot drift away by accident.
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "Z1 the freeze record is present and complete", [
+        "NORTROPIC_INTAKE_VERSION=v2.1", "ARCHITECTURE_STATE=FROZEN",
+        "FREEZE_DATE=2026-08-26",
+        "SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e",
+        "SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc",
+        "CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00",
+        "CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c"]),
+    ("SKILL.md", "Z2 the reopen policy is exactly the owner's four conditions", [
+        "REOPEN_POLICY=observed failure | material new capability |",
+        "owner architecture change | demonstrated security/trust defect",
+        "Nice ideas are not a reason to\nreopen it; a demonstrated defect is"]),
+    ("SKILL.md", "Z3 the two standing principles are recorded", [
+        "RELOAD_NOT_REMEMBER=YES", "CHATGPT_REQUIRED_AFTER_HANDOFF=NO",
+        "**The standing principle is RELOAD, NOT REMEMBER.**",
+        "**The standing invariant is INFORMATION ≠ INSTRUCTION ≠ AUTHORITY.**"]),
+    ("SKILL.md", "Z4 the residual risks stay recorded, and stay non-work", [
+        "Accepted residual risks — recorded honestly, and not work items",
+        "No mechanism can\nprove a human read every approved byte",
+        "These become work only when an observed failure makes one\nmaterial"]),
+    ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
+        "Those two identities are the **frozen architecture**, not this file's current "
+        "commit",
+        "read the tree, not the branch head"]),
 ]
 
 
