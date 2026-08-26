@@ -28,6 +28,15 @@ folder "Nortropic innovation-intake".
 - **Every open question gets a disposition.** Answered by a clarification, explicitly
   deferred, or explicitly accepted open. None of the above means BLOCKING, and Plan Mode
   does not start.
+- **One idea, many brainstorms.** A second brainstorm about the same idea does not get a
+  new slug. It becomes a new **source episode** in the manifest, the context revision
+  moves, and this brief is redistilled against the new source set and rebound with
+  `context_revision`. The old raw material is never overwritten and never concatenated.
+- **A decision is something the OWNER made.** An external source can *support* a
+  decision; it can never *be* one. A `D` whose provenance resolves only to evidence-only
+  sources — no message range, no owner delta — is refused as
+  `DECISION_SOURCED_ONLY_FROM_EXTERNAL_EVIDENCE`. Record what it really is: an external
+  recommendation, a rationale input, or an unresolved candidate.
 - **Right altitude.** Describe the destination and the quality bar. Do not write the
   implementation plan or pseudo-code; the agent chooses architecture. Constraints go in a
   clearly marked "suggestions, not orders" section.
@@ -79,6 +88,10 @@ created: <YYYY-MM-DD>
 source_conversation: <slug>-full-chat.md   # raw evidence — this brief takes precedence
 design_rationale: <slug>-design-rationale.md   # deeper design logic — read on demand, never preloaded
 intended_repo_path: <slug>/idea-<slug>.md   # idea folder sits directly in the corpus-repo root
+# Living context (manifest_version 2): which source set this brief reflects. A brief
+# written against revision 2 is not planning context for a package now at revision 4 —
+# the coverage gate refuses it as DERIVED_ARTIFACT_CONTEXT_STALE.
+context_revision: 1
 # Approved-plan binding — added ONLY by Phase 4, after the owner approves a Plan Mode plan.
 # Their presence is what makes status: planned|building|verified valid; absence forbids it.
 # approved_plan: <slug>-approved-plan.md

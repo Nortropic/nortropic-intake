@@ -1,14 +1,15 @@
 # Evals — run these after ANY change to this skill
 
-Seven checks, all repeatable. Zero regression = all seven pass. Five measure the skill's
+Eight checks, all repeatable. Zero regression = all eight pass. Five measure the skill's
 outputs and its stated contract without touching the capture/distill/verify pipeline; the
-last two execute the real validators against real corpora and real git repositories built
-on disk.
+last three execute the real validators against real corpora and real git repositories
+built on disk.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
 python3 evals/test_plan_contract.py                   # 6 — approved-plan falsification
 python3 evals/test_context_v2.py                      # 7 — context continuity A–L
+python3 evals/test_context_v21.py                     # 8 — living context C1–C15, T1–T8
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
 ```
@@ -21,10 +22,10 @@ OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live g
 it is overridable with `--no-verify`.
 
 CI additionally runs a **mutation guard**: it stubs out each of the three modules
-(`plan_contract`, `context_contract`, `intake_common`) in turn and requires **both**
+(`plan_contract`, `context_contract`, `intake_common`) in turn and requires **all three**
 suites to fail for every combination. This catches the failure mode where a stub raises
 `SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
-is why both suites also assert a floor (`MIN_CHECKS`) on checks actually executed.
+is why every suite also asserts a floor (`MIN_CHECKS`) on checks actually executed.
 
 ## 1. Trigger eval (`trigger.json`)
 
@@ -191,7 +192,38 @@ test**: brainstorm → coverage → candidate → coherence → exact approval �
 destroy the session → recover from the slug alone → traverse one requirement back to its
 source.
 
-Every `expect_fail` in both suites asserts three things at once: the run fails, the
+Every `expect_fail` in these suites asserts three things at once: the run fails, the
 finding is attached to the right slug, and the control package still passes. A validator
-that rejects everything cannot satisfy either suite — CI enforces that with the mutation
+that rejects everything cannot satisfy any of them — CI enforces that with the mutation
 guard.
+
+## 8. Living context (`test_context_v21.py`)
+
+One idea across many brainstorms, plus the source-trust boundary. Same construction: real
+packages, real git repositories, the real validators, no mocks.
+
+| | Scenario | Proves |
+|---|---|---|
+| C1 | same idea, second brainstorm | old RAW byte-identical, new RAW its own episode, revision increments, delta generated, no new slug, no silent overwrite |
+| C2 | second brainstorm reverses a decision | history still says A, current WHAT says B, the delta reports the reversal, and a reversal with no owner delta is refused |
+| C3 | new brainstorm resolves an old question | Q moves deferred → ANSWERED with owner-delta provenance |
+| C4 | approved plan becomes stale | `PLAN_CONTEXT_STALE=YES`, `resume` stops (rc 3), never silently ignored |
+| C5 | no plan impact | the owner's `NO_PLAN_IMPACT` verdict resumes execution; the plan file is untouched; the verdict does not itself bump the revision |
+| C6 | plan reopen | old plan preserved byte for byte, v2 approved through the normal path, chain validates both ways |
+| C7 | owner decision during Plan Mode | approval is REFUSED until the plan cites the owner delta |
+| C8/C9 | web and GitHub provenance | URL/title/access time/class/supports and repo+commit+path retrievable; incomplete premises refused |
+| C10/C11 | distillation auditor | a material finding blocks; remediation closes it by appending; an unevidenced finding and a PASS-over-findings verdict both fail; a clean package passes in the same run |
+| C12 | fresh planner context | mandatory set present, raw transcripts on-demand and never dumped, one standing trust rule |
+| C13 | ChatGPT independence | a scrubbed process at `cwd=/` recovers everything; the handoff is pointers, not a restated plan |
+| C14 | two active workstreams | continuing one touches neither the other's pointer nor its package |
+| C15 | pointer retirement | the named block goes, the other stays byte-identical, no intake artifact changes, wrong/ambiguous retirement removes nothing |
+| T1–T8 | source trust | injection-shaped page stays evidence; foreign README gains no authority; an attachment cannot forge owner approval; source text cannot switch the workstream; owner adoption is the legitimate path; a declared target keeps canonical authority; ambiguity fails closed; the auditor has a code for source→decision escalation |
+
+It ends with an **18-case mutation matrix** covering both families: altered source-set
+identity, a source appended without a revision, duplicate episode ids, an overwritten raw
+episode, rewritten/truncated revision history, a manifest downgraded out of revision
+tracking, a fabricated owner delta, stripped external provenance, a suppressed audit
+finding, an understated delta, an omitted new source, evidence promoted to instruction
+authority, missing trust classification, forged owner authority, foreign-repo authority,
+a plan claiming the latest revision while bound to an older identity, a plan with its
+context binding removed, and retiring the wrong workstream's pointer.

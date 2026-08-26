@@ -63,14 +63,18 @@ _TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
 
 
 def read_frontmatter(path):
-    """Flat `key: value` frontmatter reader. Returns (fields, body, errors).
+    """Flat `key: value` frontmatter reader. Returns (fields, body, errors)."""
+    return parse_frontmatter(Path(path).read_text(encoding="utf-8"))
+
+
+def parse_frontmatter(raw):
+    """The same reader over TEXT — git hands out bytes, not paths.
 
     Deliberately not a YAML parser — intake frontmatter is flat by contract. Anything
     a YAML reader would interpret differently (nested keys, duplicate keys, a value
     that runs onto the next line) is reported as an error rather than guessed at, so
     the gate can never disagree with what a human reading the file sees.
     """
-    raw = Path(path).read_text(encoding="utf-8")
     raw = raw.lstrip("﻿")  # a BOM would otherwise defeat the leading `---` match
     m = _FM_RE.match(raw)
     if not m:
@@ -201,15 +205,26 @@ ID_LINE_RE = re.compile(
 SLICE_RE = re.compile(r"^\s*#{2,4}\s*(?P<id>S\d+)\s*[—:.-]\s*(?P<text>.+?)\s*$", re.M)
 PROVENANCE_RE = re.compile(r"\(←\s*([^)]+)\)")
 CLAR_RE = re.compile(r"^##\s*(CLAR-\d+)\s*$", re.M)
-REF_RE = re.compile(r"\b(D\d+|R\d+|Q\d+|AC\d+|S\d+|SRC-\d+|CLAR-\d+)\b")
+# One idea, many source episodes: each brainstorm/research event that fed the package
+# gets a stable address of its own, so a later revision can name exactly what arrived.
+EPISODE_KINDS = ("CHAT", "WEB", "GITHUB", "FILE", "RESEARCH", "OWNER")
+EPISODE_ID_RE = re.compile(r"^(?:%s)-\d{3,}$" % "|".join(EPISODE_KINDS))
+EPISODE_REF = r"(?:%s)-\d+" % "|".join(EPISODE_KINDS)
+FIND_ID_RE = re.compile(r"^FIND-\d{3,}$")
+REF_RE = re.compile(r"\b(D\d+|R\d+|Q\d+|AC\d+|S\d+|SRC-\d+|CLAR-\d+|FIND-\d+|%s)\b"
+                    % EPISODE_REF)
 
 ID_KINDS = {"D": "decision", "R": "rejection", "Q": "open-question",
             "AC": "acceptance-criterion", "S": "plan-slice",
-            "SRC": "source", "CLAR": "owner-clarification"}
+            "SRC": "source", "CLAR": "owner-delta", "FIND": "audit-finding",
+            "CHAT": "source-episode", "WEB": "source-episode",
+            "GITHUB": "source-episode", "FILE": "source-episode",
+            "RESEARCH": "source-episode", "OWNER": "source-episode"}
 
 
 def id_kind(identifier):
-    m = re.match(r"^(SRC|CLAR|AC|D|R|Q|S)", identifier)
+    m = re.match(r"^(SRC|CLAR|FIND|CHAT|WEB|GITHUB|FILE|RESEARCH|OWNER|AC|D|R|Q|S)",
+                 identifier)
     return ID_KINDS.get(m.group(1)) if m else None
 
 
@@ -276,7 +291,9 @@ def git(repo, *args, **kw):
                              capture_output=True, text=True, timeout=kw.get("timeout", 20))
     except Exception:
         return None
-    return out.stdout.strip() if out.returncode == 0 else None
+    if out.returncode != 0:
+        return None
+    return out.stdout if kw.get("raw") else out.stdout.strip()
 
 
 def git_evidence(repo):
@@ -297,8 +314,34 @@ def git_commit_exists(repo, commit):
 
 
 def git_head_blob(repo, relpath):
-    """The committed version of a file, or None if untracked/absent."""
-    return git(repo, "show", "HEAD:%s" % relpath)
+    """The committed version of a file, or None if untracked/absent.
+
+    Raw, deliberately: the append-only checks compare bytes with `startswith`, and a
+    stripped blob would make that comparison right only by accident.
+    """
+    return git(repo, "show", "HEAD:%s" % relpath, raw=True)
+
+
+def git_blob_at(repo, commit, relpath):
+    """A file's bytes at one commit, or None. The only baseline a delta can trust."""
+    return git(repo, "show", "%s:%s" % (commit, relpath), raw=True)
+
+
+def git_is_committed(repo, relpath):
+    """Does this path exist in HEAD?
+
+    Deliberately HEAD and not the index. Every immutability check in this contract
+    compares against `git show HEAD:<path>`, so `git add` without a commit satisfies
+    the index and satisfies none of them. Asking a different question here would make
+    the witness report protection that is not there — worse than saying nothing.
+    """
+    return git(repo, "cat-file", "-e", "HEAD:%s" % relpath) is not None
+
+
+def git_commits_for(repo, relpath, limit=200):
+    """Commits touching one path, newest first. Plain git — no index, no cache."""
+    out = git(repo, "log", "--format=%H", "-n", str(limit), "--", relpath)
+    return out.splitlines() if out else []
 
 
 def git_immutability(repo, relpath, path):
@@ -327,6 +370,76 @@ def git_immutability(repo, relpath, path):
 
 def expand(path):
     return Path(os.path.expanduser(str(path)))
+
+
+# ------------------------------------------------------ source-set identity --
+
+# Artifacts DERIVED from the source set are not part of its identity. Including them
+# would make the identity circular: writing the brief that records revision N would
+# itself produce revision N+1, and the package could never come to rest.
+DERIVED_SOURCE_KINDS = {"brief", "design-rationale", "owner-clarifications"}
+
+
+def source_set_identity(manifest, owner_delta_ids=()):
+    """The deterministic identity of one idea's intellectual source set.
+
+    Hashes exactly the facts that mean "we now know something different":
+
+        EP  <episode_id> <kind> <origin>            one line per source episode
+        SRC <source_id> <kind> <capture_status> <trust> <authority> <identity>
+                                                    load-bearing, non-derived sources
+        ODL <delta_id>                              one line per owner delta
+
+    `identity` is the sharpest one the source records: its content hash, else the
+    commit it was consumed at, else its origin. Lines are sorted, so file order,
+    formatting and unrelated corpus churn cannot move the hash — only new material,
+    changed material identity, a new episode or a new owner delta can.
+
+    Trust and instruction authority are part of the identity on purpose. Whether a
+    source is the owner's words or a stranger's page is a fact ABOUT the source set,
+    so silently relabelling one after sealing must move the revision — otherwise the
+    record could not answer "what trust did this source have at revision 3?".
+
+    Returns (hex digest, [canonical lines]) so a mismatch can be explained rather
+    than merely reported.
+    """
+    lines = []
+    if isinstance(manifest, dict):
+        for ep in manifest.get("episodes") or []:
+            if not isinstance(ep, dict):
+                continue
+            eid = str(ep.get("episode_id", "")).strip()
+            if not eid:
+                continue
+            lines.append("EP %s %s %s" % (eid, str(ep.get("kind", "")).strip() or "-",
+                                          str(ep.get("origin", "")).strip() or "-"))
+        for s in manifest.get("sources") or []:
+            if not isinstance(s, dict) or s.get("load_bearing") is not True:
+                continue
+            kind = str(s.get("kind", "")).strip()
+            if kind in DERIVED_SOURCE_KINDS:
+                continue
+            sid = str(s.get("source_id", "")).strip()
+            if not sid:
+                continue
+            identity = "-"
+            for field in ("sha256", "commit", "origin"):
+                value = str(s.get(field, "")).strip()
+                if value:
+                    identity = value.lower() if field == "sha256" else value
+                    break
+            lines.append("SRC %s %s %s %s %s %s"
+                         % (sid, kind or "-",
+                            str(s.get("capture_status", "")).strip() or "-",
+                            str(s.get("trust", "")).strip() or "-",
+                            str(s.get("instruction_authority", "")).strip().lower() or "-",
+                            identity))
+    for did in owner_delta_ids:
+        did = str(did).strip()
+        if did:
+            lines.append("ODL %s" % did)
+    lines.sort()
+    return sha256_text("\n".join(lines) + "\n"), lines
 
 
 # --------------------------------------------------------- secret hygiene --

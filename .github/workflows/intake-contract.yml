@@ -35,6 +35,9 @@ jobs:
       - name: Context-continuity suite (scenarios A–L, mutations, acceptance)
         run: python3 evals/test_context_v2.py
 
+      - name: Living-context suite (C1–C15, source trust T1–T8, mutation matrix)
+        run: python3 evals/test_context_v21.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e
@@ -56,7 +59,7 @@ jobs:
           # not silently exit 0 having executed nothing, which the suites' own
           # MIN_CHECKS floor turns into a non-zero exit.
           for module in plan_contract context_contract intake_common; do
-            for suite in test_plan_contract test_context_v2; do
+            for suite in test_plan_contract test_context_v2 test_context_v21; do
               cp /tmp/real/*.py scripts/
               printf 'import sys\nsys.exit(0)\n' > "scripts/$module.py"
               if python3 "evals/$suite.py" > /tmp/mut.log 2>&1; then
@@ -71,10 +74,12 @@ jobs:
           # And the specific shape that used to slip through: a stub that still IMPORTS
           # cleanly but answers nothing.
           printf 'import sys\ndef main(argv=None):\n    print("PASS")\n    return 0\nif __name__ == "__main__":\n    sys.exit(main())\n' > scripts/context_contract.py
-          if python3 evals/test_context_v2.py > /tmp/mut2.log 2>&1; then
-            echo "MUTATION GUARD FAILED: test_context_v2 passed against an inert context_contract"
-            fail=1
-          fi
+          for suite in test_context_v2 test_context_v21; do
+            if python3 "evals/$suite.py" > /tmp/mut2.log 2>&1; then
+              echo "MUTATION GUARD FAILED: $suite passed against an inert context_contract"
+              fail=1
+            fi
+          done
           cp /tmp/real/*.py scripts/
           git diff --quiet -- scripts/ || { echo "GUARD DID NOT RESTORE scripts/"; exit 1; }
           exit $fail
