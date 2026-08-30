@@ -791,8 +791,9 @@ approved plan and the brief stays `clarified`.
    unknowable after the fact and is NEVER retroactively promoted to STRONG. Once
    committed, any flip is caught as `PLAN_MUTATED_AFTER_COMMIT` like every other
    post-approval edit; before the commit, the attestation lives under the same
-   git-rooted witness boundary as every other approval byte — which is one more
-   reason the candidate is committed before the owner reviews.
+   git-rooted witness boundary as every other approval byte — a WEAK approval's
+   record is exactly as durable as the corpus's commit state, which is precisely
+   what the WEAK label is telling you.
 
    It also carries the candidate's **context binding** across:
 

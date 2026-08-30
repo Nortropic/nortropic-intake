@@ -670,6 +670,26 @@ def e_idea_routing(tmp):
     rc, out = F.project(["coverage", "--project", "demo-sweep"], corpus)
     check("E21b the smuggled ambiguity still counts as an open review item",
           "OPEN_REVIEW_ITEMS=1" in out and "RQ-002" in out, out.strip()[:1500])
+
+    # E21c: burying the concern solely in an evidence line hides nothing either.
+    queue.write_text(review_queue_doc("demo-sweep", [
+        rq_block("RQ-001",
+                 issue="CONV-003 may be a CONTINUE_EXISTING of quality-gate, or "
+                       "merely RELATED",
+                 affects="CONV-003, quality-gate",
+                 recommendation="hold as no-ideas; owner decides the relation")])
+        + "\n".join([
+            "## RQ-002",
+            "- date: 2026-08-30",
+            "- resolves: RQ-001",
+            "- evidence: msg 1–3 of CONV-003 suggest it SUPERSEDES quality-gate — "
+            "unresolved",
+            "- owner_answer: RQ-001: keep as no-ideas.",
+        ]) + "\n\n", encoding="utf-8")
+    rc, out = F.project(["validate", "--project", "demo-sweep"], corpus)
+    check("E21c a concern buried in an evidence line is still a mixed entry, "
+          "still open",
+          rc != 0 and "REVIEW_QUEUE_MIXED_ENTRY" in out, out.strip()[:1200])
     # restore the clean queue so E20 fails for ITS OWN reason only
     queue.write_text(review_queue_doc("demo-sweep", [
         rq_block("RQ-001",
@@ -809,6 +829,19 @@ def g_audit_trust(tmp):
     check("G26d an owner answer about an unrelated RQ dismisses nothing",
           rc != 0 and "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER" in out
           and "about something else dismisses nothing" in out, out.strip()[:1500])
+
+    # G26e: planting the FIND id in an agent-authored line beside a genuine owner
+    # answer supplies nothing — the owner's OWN WORDS must name the finding.
+    queue.write_text(review_queue_doc("audit-sweep", [
+        rq_block("RQ-001", issue="Is CONV-003 a duplicate? (re FIND-001)",
+                 affects="CONV-003",
+                 recommendation="drop FIND-001 as moot",
+                 owner_answer="Yes, drop that test thread.")]),
+        encoding="utf-8")
+    rc, out = F.project(["audit", "--project", "audit-sweep"], corpus)
+    check("G26e a FIND id planted outside the owner_answer dismisses nothing",
+          rc != 0 and "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER" in out,
+          out.strip()[:1500])
     # restore the legitimate queue for the checks that follow
     queue.write_text(review_queue_doc("audit-sweep", [
         rq_block("RQ-001", issue="CONV-002 uncapturable? (audit FIND-001)",

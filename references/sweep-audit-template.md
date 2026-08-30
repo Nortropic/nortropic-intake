@@ -61,10 +61,11 @@ The rules, identical in spirit to the distillation audit and enforced by
   swept idea slug, or message numbers (`SWEEP_AUDIT_FINDING_UNEVIDENCED`).
 - A round may never close a finding it raised (`SWEEP_AUDIT_FINDING_SELF_CLOSED`);
   remediation is closed by a LATER round naming it: `- remediated: FIND-001`.
-- Only the owner dismisses one, by a review-queue entry carrying the owner's exact
-  words AND naming the finding: `- dismissed: FIND-002 (RQ-005)` is valid only when
-  RQ-005 has an `owner_answer` and mentions `FIND-002` in its block — an owner
-  answer about something else dismisses nothing. Anything less is
+- Only the owner dismisses one, by a review-queue entry whose `owner_answer` — the
+  owner's own words — names the finding: `- dismissed: FIND-002 (RQ-005)` is valid
+  only when RQ-005's `owner_answer` value itself mentions `FIND-002`. An owner
+  answer about something else dismisses nothing, and an agent-authored line planting
+  the id beside a real answer supplies nothing. Anything less is
   `SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER`.
 - An unremediated material finding blocks `finalize`
   (`SWEEP_AUDIT_UNREMEDIATED`), and the file is append-only against git.

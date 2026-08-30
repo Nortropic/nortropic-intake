@@ -313,8 +313,11 @@ def open_review_items(entries):
 
 
 def _raises_item(entry):
+    # `affects`/`evidence` are included on purpose: a concern buried solely in an
+    # evidence line on a resolution entry is still a concern leaving the open list.
     return any(str(entry.get(field, "")).strip()
-               for field in ("issue", "recommendation", "owner_judgment_required"))
+               for field in ("issue", "recommendation", "owner_judgment_required",
+                             "affects", "evidence"))
 
 
 def validate_review_queue(proj, data, findings):
@@ -427,10 +430,13 @@ def validate_sweep_audit(proj, data, findings, require=False):
     """
     queue_entries = parse_review_queue(proj.queue) if proj.queue.exists() else []
     # An owner answer dismisses ONLY the finding it actually addresses: the cited RQ
-    # must carry the owner's words AND name the FIND id in its block. Without the
-    # naming requirement, one genuine owner answer becomes a skeleton key that waves
-    # away arbitrarily many findings the owner never saw.
-    owner_answered = {e["id"]: e.get("raw", "") for e in queue_entries
+    # must carry the owner's words AND those words themselves must name the FIND id.
+    # The OWNER_ANSWER value alone is searched — never the agent-authored issue/
+    # recommendation lines, where a planted id would let an agent ride a genuine
+    # owner answer about something else. Without this, one owner answer becomes a
+    # skeleton key that waves away findings the owner never saw.
+    owner_answered = {e["id"]: str(e.get("owner_answer", "")).strip()
+                      for e in queue_entries
                       if str(e.get("owner_answer", "")).strip()}
 
     if not proj.audit.exists():
@@ -519,13 +525,13 @@ def validate_sweep_audit(proj, data, findings, require=False):
             if not backed:
                 findings.append(Finding(
                     proj.name, "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER",
-                    "AUDIT-%d dismisses %s without citing a review-queue entry that "
-                    "carries the owner's own answer AND names %s — a finding is never "
-                    "waved away by the same lineage that ran the sweep, and an owner "
-                    "answer about something else dismisses nothing. Record the owner's "
-                    "decision on THIS finding as an RQ entry (mention %s in it) with "
-                    "owner_answer, and cite it."
-                    % (r["revision"], fid, fid, fid)))
+                    "AUDIT-%d dismisses %s without citing a review-queue entry whose "
+                    "OWNER_ANSWER itself names %s — a finding is never waved away by "
+                    "the same lineage that ran the sweep, and an owner answer about "
+                    "something else dismisses nothing (nor does an agent-authored "
+                    "line that plants the id next to a real answer). Record the "
+                    "owner's decision on THIS finding, in their own words naming %s, "
+                    "and cite that RQ." % (r["revision"], fid, fid, fid)))
 
     for e in entries:
         if e["id"] in seen:

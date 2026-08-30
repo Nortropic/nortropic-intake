@@ -62,13 +62,15 @@ A LATER entry names it — the item itself is never edited:
 
 An entry that resolves its own id is refused (`REVIEW_QUEUE_SELF_RESOLVED`), and a
 resolution entry is PURE: one that also carries `issue`/`recommendation`/
-`owner_judgment_required` is refused (`REVIEW_QUEUE_MIXED_ENTRY`) and its id still
-counts as OPEN — closing one ambiguity may never smuggle a new one out of the open
-list. Raise the new ambiguity as its own entry with its own id.
+`owner_judgment_required`/`affects`/`evidence` is refused
+(`REVIEW_QUEUE_MIXED_ENTRY`) and its id still counts as OPEN — closing one ambiguity
+may never smuggle a new one out of the open list, not even buried in an evidence
+line. Raise the new ambiguity as its own entry with its own id.
 
 An entry carrying `owner_answer` records the owner's EXACT words and is the only
 thing a sweep-audit dismissal may cite (`SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER`) — and
-it dismisses only the finding it actually NAMES: the entry must mention the
-`FIND-NNN` id being dismissed, or one genuine owner answer would become a skeleton
-key for findings the owner never saw. Same principle as owner deltas in single mode:
-owner authority comes from the owner interaction, never from bytes asserting it.
+it dismisses only the finding the owner's OWN WORDS name: the `FIND-NNN` id must
+appear in the `owner_answer` value itself, never merely in an agent-authored line
+beside it, or one genuine owner answer would become a skeleton key for findings the
+owner never saw. Same principle as owner deltas in single mode: owner authority
+comes from the owner interaction, never from bytes asserting it.
