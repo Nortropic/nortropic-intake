@@ -411,9 +411,12 @@ CHECKS = [
     # Z. The architecture freeze. Reopening v2.1 has to remove this
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
-    ("SKILL.md", "Z1 the architecture record is present, with honest lineage", [
+    ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
         "NORTROPIC_INTAKE_VERSION=v3.0",
-        "ARCHITECTURE_STATE=REOPENED_FOR_V3_IMPLEMENTATION",
+        "ARCHITECTURE_STATE=FROZEN",
+        "FREEZE_DATE=2026-08-30",
+        "SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50",
+        "SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711",
         "REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner "
         "architecture change)",
         # v2.1's frozen identities stay recorded as lineage — history is never dropped.
@@ -451,9 +454,11 @@ CHECKS = [
     ("SKILL.md", "Z7 the capability list claims properties, not completeness", [
         "each exercised by the suites",
         "The suites prove specific properties of each, never\ncompleteness"]),
-    ("SKILL.md", "Z5 no invented identities — freeze only what is published", [
-        "Recording invented SHAs would be a forged freeze",
-        "read the tree, not\nthe branch head"]),
+    ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
+        "Those two SKILL identities are the **frozen architecture**, not this file's "
+        "current\ncommit",
+        "Recording invented\nSHAs would have been a forged freeze",
+        "read the tree, not the branch head"]),
     ("SKILL.md", "Z8 v3.0 records its own new residual risks honestly", [
         "**Role truth is inherited from capture.**",
         "resolved conservatively",

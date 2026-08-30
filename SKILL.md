@@ -1349,8 +1349,8 @@ inside a sweep):
 
 ## Architecture freeze — read this before changing the skill
 
-The v3.0 architecture is owner-authorized; the record below freezes it at publication.
-Nice ideas are not a reason to reopen it; a demonstrated defect is.
+The v3.0 architecture is owner-authorized and **frozen**. Nice ideas are not a reason to
+reopen it; a demonstrated defect is.
 
 **Lineage, recorded honestly.** v2.1 was frozen 2026-08-26
 (`SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e`,
@@ -1363,8 +1363,12 @@ approval-attestation strength). The reopen was authority, not drift.
 
 ```
 NORTROPIC_INTAKE_VERSION=v3.0
-ARCHITECTURE_STATE=REOPENED_FOR_V3_IMPLEMENTATION
+ARCHITECTURE_STATE=FROZEN
+FREEZE_DATE=2026-08-30
 REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner architecture change)
+
+SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50
+SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711
 
 CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00
 CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c
@@ -1376,13 +1380,14 @@ RELOAD_NOT_REMEMBER=YES
 CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
-No SKILL identities are recorded yet, on purpose: they name the v3.0 implementation
-merge on `main` and its tree, which do not exist until this change is published.
-Recording invented SHAs would be a forged freeze — the freeze commit that follows the
-merge sets `ARCHITECTURE_STATE=FROZEN` and writes the REAL post-publication
-`SKILL_MAIN`/`SKILL_TREE`, and nothing else may. The corpus identities are v2.1's,
-unchanged: v3.0 mutated no corpus content. When reading a freeze, read the tree, not
-the branch head.
+Those two SKILL identities are the **frozen architecture**, not this file's current
+commit: `SKILL_MAIN` is the v3.0 implementation merge on `main` (PR #3) and
+`SKILL_TREE` its tree, and recording the freeze necessarily moved `main` past them by
+one documentation-only commit that changed no runtime behaviour. Recording invented
+SHAs would have been a forged freeze, which is why the implementation itself shipped
+with `REOPENED_FOR_V3_IMPLEMENTATION` and no identities. The corpus identities are
+v2.1's, unchanged: v3.0 mutated no corpus content. If you need the exact frozen
+bytes, read the tree, not the branch head.
 
 **The standing principle is RELOAD, NOT REMEMBER.** A conversation is working memory.
 Durable files, git, hashes and provenance are long-term context. After handoff, Claude
