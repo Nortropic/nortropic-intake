@@ -292,19 +292,29 @@ def parse_review_queue(path):
 
 
 def open_review_items(entries):
-    """RQ ids raised and not yet resolved by a LATER entry. Never hidden, never lost."""
+    """RQ ids raised and not yet resolved by a LATER entry. Never hidden, never lost.
+
+    An entry that carries `resolves:` AND item-defining fields (`issue`, …) is
+    counted as OPEN anyway: closing one ambiguity may not smuggle a new one out of
+    the open list — the validator separately refuses the mixed shape.
+    """
     resolved = {}
     for position, e in enumerate(entries):
         for rid in re.findall(r"\bRQ-\d+\b", str(e.get("resolves", ""))):
             resolved.setdefault(rid, position)
     out = []
     for position, e in enumerate(entries):
-        if str(e.get("resolves", "")).strip():
-            continue                      # a resolution record, not an item
+        if str(e.get("resolves", "")).strip() and not _raises_item(e):
+            continue                      # a PURE resolution record, not an item
         closes = resolved.get(e["id"])
         if closes is None or closes <= position:
             out.append(e["id"])
     return out
+
+
+def _raises_item(entry):
+    return any(str(entry.get(field, "")).strip()
+               for field in ("issue", "recommendation", "owner_judgment_required"))
 
 
 def validate_review_queue(proj, data, findings):
@@ -344,6 +354,14 @@ def validate_review_queue(proj, data, findings):
                     findings.append(Finding(
                         proj.name, "REVIEW_QUEUE_ORPHANED",
                         "%s resolves %s, which no earlier entry raised" % (e["id"], rid)))
+            if _raises_item(e):
+                findings.append(Finding(
+                    proj.name, "REVIEW_QUEUE_MIXED_ENTRY",
+                    "%s both resolves an earlier item and raises a new one (it carries "
+                    "issue/recommendation/owner_judgment_required) — closing one "
+                    "ambiguity may not smuggle a new one out of the open list. Write "
+                    "TWO entries: a pure resolution, and a fresh item with its own id."
+                    % e["id"]))
             continue
         for field in ("date", "issue", "affects", "recommendation",
                       "owner_judgment_required"):
@@ -408,7 +426,11 @@ def validate_sweep_audit(proj, data, findings, require=False):
     owner — here recorded as a review-queue entry carrying the owner's exact words.
     """
     queue_entries = parse_review_queue(proj.queue) if proj.queue.exists() else []
-    owner_answered = {e["id"] for e in queue_entries
+    # An owner answer dismisses ONLY the finding it actually addresses: the cited RQ
+    # must carry the owner's words AND name the FIND id in its block. Without the
+    # naming requirement, one genuine owner answer becomes a skeleton key that waves
+    # away arbitrarily many findings the owner never saw.
+    owner_answered = {e["id"]: e.get("raw", "") for e in queue_entries
                       if str(e.get("owner_answer", "")).strip()}
 
     if not proj.audit.exists():
@@ -491,14 +513,19 @@ def validate_sweep_audit(proj, data, findings, require=False):
         dismissed_line = str(r.get("dismissed", ""))
         for fid in re.findall(r"\bFIND-\d+\b", dismissed_line):
             cited_rq = re.findall(r"\bRQ-\d+\b", dismissed_line)
-            if not cited_rq or not any(rq in owner_answered for rq in cited_rq):
+            backed = any(rq in owner_answered
+                         and re.search(r"\b%s\b" % re.escape(fid), owner_answered[rq])
+                         for rq in cited_rq)
+            if not backed:
                 findings.append(Finding(
                     proj.name, "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER",
                     "AUDIT-%d dismisses %s without citing a review-queue entry that "
-                    "carries the owner's own answer — a finding is never waved away by "
-                    "the same lineage that ran the sweep. Record the owner's decision "
-                    "as an RQ entry with owner_answer, and cite it."
-                    % (r["revision"], fid)))
+                    "carries the owner's own answer AND names %s — a finding is never "
+                    "waved away by the same lineage that ran the sweep, and an owner "
+                    "answer about something else dismisses nothing. Record the owner's "
+                    "decision on THIS finding as an RQ entry (mention %s in it) with "
+                    "owner_answer, and cite it."
+                    % (r["revision"], fid, fid, fid)))
 
     for e in entries:
         if e["id"] in seen:
@@ -664,6 +691,23 @@ def _validate_sources(proj, data, findings):
                     "captured revision is immutable; an updated conversation is a NEW "
                     "revision, and history is never rewritten"
                     % (sid, r.get("revision"), rel)))
+            # The verification VERDICT is recomputed from the bytes on every sweep —
+            # never trusted from the stored flag. A hand-flipped `verified: true` on a
+            # capture that fails the format checks is exactly how a hard gap would
+            # dress up as coverage, and the manifest is a file the writing agent
+            # controls; the bytes are not.
+            actual_ok, actual_detail, _ = verify_transcript_format(
+                target.read_text(encoding="utf-8"))
+            if bool(r.get("verified")) != actual_ok:
+                findings.append(Finding(
+                    proj.name, "SOURCE_VERIFICATION_INCONSISTENT",
+                    "%s revision %s records verified=%r but the bytes at %s %s — the "
+                    "verification verdict is derived from the content, and a flag the "
+                    "content cannot back is a forged one%s"
+                    % (sid, r.get("revision"), r.get("verified"), rel,
+                       "pass the format checks" if actual_ok
+                       else "FAIL the format checks",
+                       "" if actual_ok else (": %s" % actual_detail))))
         if numbers != list(range(1, len(numbers) + 1)):
             findings.append(Finding(
                 proj.name, "SOURCE_REVISION_INVALID",
@@ -888,6 +932,14 @@ def cmd_coverage(proj, args):
         return 1
     sources = [s for s in data.get("sources") or [] if isinstance(s, dict)]
     hard = hard_gap_sources(data)
+    # A verification verdict the bytes cannot back is a hard gap wearing a flag —
+    # the findings are the truth here, not the stored state.
+    forged = {m.group(1) for f in findings
+              if f.code == "SOURCE_VERIFICATION_INCONSISTENT"
+              for m in [re.match(r"^(CONV-\d+)", f.detail)] if m}
+    for s in sources:
+        if s.get("source_id") in forged and s not in hard:
+            hard.append(s)
     unfinished = unfinished_sources(data)
     queue_entries = parse_review_queue(proj.queue) if proj.queue.exists() else []
     open_items = open_review_items(queue_entries)
@@ -934,7 +986,10 @@ def cmd_coverage(proj, args):
               "DECLARED inventory only; the platform's project may hold conversations "
               "this sweep never saw. Never report it as full project coverage.")
     status = derive_project_status(proj, data)
-    finalizable = bool(sources) and not unfinished and audit_current
+    if forged and status != "INCOMPLETE_HARD_GAPS":
+        status = "INCOMPLETE_HARD_GAPS"
+    finalizable = bool(sources) and not unfinished and audit_current \
+        and not fails(findings)
     print("PROJECT_STATUS=%s%s" % (status if finalizable else "NOT_FINALIZABLE",
                                    "" if finalizable else
                                    " (would be %s once processing and audit are "

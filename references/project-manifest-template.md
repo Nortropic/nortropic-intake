@@ -66,7 +66,11 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
   `DISCOVERED → CAPTURED → VERIFIED → EXTRACTED → ROUTED → COMPLETE` (plus explicit
   `FAILED`) is recomputed from the record; a label the files cannot back fails as
   `SOURCE_STATE_INCONSISTENT` or `FALSE_COMPLETENESS`. `COMPLETE` is written only by
-  `finalize`, and only over a source that is ROUTED at its latest revision.
+  `finalize`, and only over a source that is ROUTED at its latest revision. The
+  verification VERDICT is recomputed from the bytes on every `validate`/`coverage`
+  (`SOURCE_VERIFICATION_INCONSISTENT`) — a hand-flipped `verified: true` on a
+  capture the content cannot back is a forged flag, and it reads as the hard gap it
+  is hiding.
 - **Idea provenance is a hash link.** A source's `ideas` list holds slugs whose
   packages carry this conversation as an episode transcript, byte-identical to a
   recorded revision (`IDEA_PROVENANCE_DANGLING`, `IDEA_EPISODE_HASH_UNLINKED`).

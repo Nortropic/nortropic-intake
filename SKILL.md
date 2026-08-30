@@ -384,11 +384,14 @@ cited message through the transcript's own `## Meddelande N — <roll>` headers 
 SPOKE, so the role lives in the same immutable, hash-bound, git-witnessed bytes as the
 message itself. A decision, rejection or acceptance criterion is owner-backed only when
 at least one cited message resolves to a turn the OWNER spoke (or a CLAR / an
-authority-bearing source backs it). Every reading assistant-only →
-`OWNER_BACKING_ASSISTANT_ONLY` blocks: an assistant saying *"B is decided"* is a
-proposal, not an owner decision. A legacy transcript whose headers cannot prove the
-speaker is reported as `PROVENANCE_ROLE_UNKNOWN` — honestly unknown, never assumed
-owner-backed, and never blocked on an accusation the evidence cannot support. In a
+authority-bearing source backs it). A citation resolving to provably-ASSISTANT turns
+with no provable owner backing → `OWNER_BACKING_ASSISTANT_ONLY` blocks — an assistant
+saying *"B is decided"* is a proposal, not an owner decision — **and co-citing an
+unclassifiable message downgrades nothing**: an unknown-role header never supplies
+the owner backing the assistant turns lack. Only when NO cited message is provably
+assistant and none is provably owner is the entry reported as
+`PROVENANCE_ROLE_UNKNOWN` — honestly unknown, never assumed owner-backed, and never
+blocked on an accusation the evidence cannot support. In a
 multi-episode package a bare message number is read against every episode
 (conservatively: any owner reading counts); scope a citation with its episode id —
 `(← CHAT-002 msg 3)` — to remove the ambiguity. The distillation auditor has the
@@ -781,11 +784,15 @@ approved plan and the brief stays `clarified`.
    when the approval ran, WEAK when `--allow-uncommitted-candidate` was used — where
    the receipt attests only that this process was handed that sha. A weak approval is
    not forbidden; it may just never masquerade as strong afterwards: `validate` refuses
-   an out-of-vocabulary value (`PLAN_ATTESTATION_INVALID`), `resume` reports the
-   strength, and a plan approved before v3.0 is reported as
-   `PLAN_ATTESTATION_LEGACY_UNKNOWN` — its strength is unknowable after the fact and is
-   NEVER retroactively promoted to STRONG. Once committed, flipping the field is caught
-   as `PLAN_MUTATED_AFTER_COMMIT` like any other post-approval edit.
+   an out-of-vocabulary value (`PLAN_ATTESTATION_INVALID`), refuses a pair `approve`
+   can never emit (STRONG ⇔ anchor UNCHANGED — flipping the word without forging the
+   anchor is caught immediately), `resume` reports the strength, and a plan approved
+   before v3.0 is reported as `PLAN_ATTESTATION_LEGACY_UNKNOWN` — its strength is
+   unknowable after the fact and is NEVER retroactively promoted to STRONG. Once
+   committed, any flip is caught as `PLAN_MUTATED_AFTER_COMMIT` like every other
+   post-approval edit; before the commit, the attestation lives under the same
+   git-rooted witness boundary as every other approval byte — which is one more
+   reason the candidate is committed before the owner reviews.
 
    It also carries the candidate's **context binding** across:
 

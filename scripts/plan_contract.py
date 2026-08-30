@@ -446,6 +446,7 @@ def _check_plan_artifact(slug, plan_path, pfm, pbody, expect_current, candidate=
         # one is a plan approved before v3.0 — honestly LEGACY_UNKNOWN, and never
         # silently promoted to STRONG.
         attestation = fm_str(pfm, "approval_attestation")
+        anchor = fm_str(pfm, "approval_git_anchor")
         if attestation and attestation not in ATTESTATION_VALUES:
             out.append(Finding(
                 slug, "PLAN_ATTESTATION_INVALID",
@@ -459,6 +460,24 @@ def _check_plan_artifact(slug, plan_path, pfm, pbody, expect_current, candidate=
                 "contract (v3.0). Its strength is unknowable after the fact and is "
                 "reported as %s, never assumed STRONG." % (name, ATTESTATION_LEGACY),
                 level="WARN"))
+        else:
+            # The pair must be one `approve` can actually emit: STRONG ⇔ the anchor
+            # was UNCHANGED. A STRONG riding on an UNTRACKED/MUTATED/absent anchor is
+            # a claim the promotion path cannot produce — a masquerade shape, refused
+            # even before the git witness gets its say.
+            if not anchor:
+                out.append(Finding(
+                    slug, "PLAN_ATTESTATION_INVALID",
+                    "%s: approval_attestation=%s but no approval_git_anchor — "
+                    "`approve` always writes both; half a receipt is not a receipt"
+                    % (name, attestation)))
+            elif (attestation == "STRONG") != (anchor == "UNCHANGED"):
+                out.append(Finding(
+                    slug, "PLAN_ATTESTATION_INVALID",
+                    "%s: approval_attestation=%s with approval_git_anchor=%s — a pair "
+                    "`approve` can never emit (STRONG ⇔ anchor UNCHANGED). This is "
+                    "what an after-the-fact upgrade looks like." % (name, attestation,
+                                                                    anchor)))
 
     for field in ("source_brief_sha256", "plan_content_sha256",
                   "approved_candidate_sha256"):

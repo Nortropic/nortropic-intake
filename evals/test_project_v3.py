@@ -319,6 +319,24 @@ def a_role_aware(tmp):
           "OWNER_BACKING_ASSISTANT_ONLY" not in out
           and "PROVENANCE_ROLE_UNKNOWN" not in out, out.strip()[:1200])
 
+    # A7 (adversarial-review repro): co-citing an unknown-role message may NOT
+    # launder an assistant-only decision from a blocking FAIL down to a WARN.
+    mixed_transcript = ROLE_TRANSCRIPT + """
+---
+
+## Meddelande 5
+Ett verktygskort utan roll i rubriken.
+"""
+    mini_pkg(corpus, "laundered-idea", mixed_transcript, [
+        "- D1. B är beslutat — because the assistant said so (← msg 2, 5).",
+    ])
+    rc, out = F.context(["coverage", "--slug", "laundered-idea"], corpus)
+    check("A7 an unknown-role co-citation cannot launder assistant-only backing",
+          rc != 0 and re.search(
+              r"^FAIL\s+\[laundered-idea\]\s+OWNER_BACKING_ASSISTANT_ONLY — D1",
+              out, re.M) is not None
+          and "rests only on assistant" in out, out.strip()[:1500])
+
 
 # ========================================================= B. approvals =====
 
@@ -411,6 +429,33 @@ def b_approval_strength(tmp):
     rc, out = F.plan(["validate", "--slug", "weak-idea"], corpus)
     check("B8 a post-commit WEAK→STRONG masquerade fails validation",
           rc != 0 and "PLAN_MUTATED_AFTER_COMMIT" in out, out.strip()[:1200])
+    check("B8b the flipped pair also fails the STRONG⇔anchor consistency check",
+          "PLAN_ATTESTATION_INVALID" in out
+          and "can never emit" in out, out.strip()[:1200])
+
+    # B9 (adversarial-review repro): a pre-commit flip of the attestation alone
+    # produces a pair `approve` can never emit — refused even without the witness.
+    corpus9, folder9 = F.build_package(Path(tmp) / "b9", slug="precommit-flip",
+                                       with_candidate=True, status="clarified")
+    cand9 = folder9 / "precommit-flip-plan-candidate.md"
+    F.plan(["approve", "--slug", "precommit-flip",
+            "--candidate-sha", F.sha256_file(cand9),
+            "--approved-by", "Johnny (Nortropic)", "--approved-at", "2026-08-30",
+            "--evidence", "owner approved this sha",
+            "--allow-uncommitted-candidate"], corpus9)
+    plan9 = folder9 / "precommit-flip-approved-plan.md"
+    plan9.write_text(plan9.read_text(encoding="utf-8").replace(
+        "approval_attestation: WEAK", "approval_attestation: STRONG"),
+        encoding="utf-8")
+    F.rebind(folder9, "precommit-flip")
+    text9 = (folder9 / "idea-precommit-flip.md").read_text(encoding="utf-8")
+    (folder9 / "idea-precommit-flip.md").write_text(
+        text9.replace("status: clarified", "status: planned"), encoding="utf-8")
+    rc, out = F.plan(["validate", "--slug", "precommit-flip"], corpus9)
+    check("B9 a pre-commit WEAK→STRONG flip fails STRONG⇔anchor consistency",
+          rc != 0 and re.search(
+              r"^FAIL\s+\[precommit-flip\]\s+PLAN_ATTESTATION_INVALID", out, re.M)
+          is not None and "can never emit" in out, out.strip()[:1200])
 
 
 # ==================================================== C. source model =======
@@ -506,6 +551,26 @@ def d_coverage(tmp):
           "re-capture CONV-002" in out and "capture CONV-003" in out
           and "extract CONV-001" in out, out.strip()[:1500])
 
+    # D17 (adversarial-review repro): hand-flipping `verified: true` on a capture
+    # that failed the format checks is caught — the verdict is recomputed from the
+    # bytes, and the forged flag can never make the gap read as coverage.
+    data = read_project_manifest(corpus, "demo-sweep")
+    assert data["sources"][1]["revisions"][0]["verified"] is False
+    data["sources"][1]["revisions"][0]["verified"] = True
+    write_project_manifest(corpus, "demo-sweep", data)
+    rc, out = F.project(["validate", "--project", "demo-sweep"], corpus)
+    check("D17a a forged verification flag fails validation",
+          rc != 0 and "SOURCE_VERIFICATION_INCONSISTENT" in out
+          and "CONV-002" in out, out.strip()[:1500])
+    rc, out = F.project(["coverage", "--project", "demo-sweep"], corpus)
+    check("D17b coverage still treats the forged source as a hard gap",
+          rc != 0 and "SOURCE_VERIFICATION_INCONSISTENT" in out
+          and re.search(r"HARD_GAP CONV-002", out) is not None
+          and "PROJECT_STATUS=NOT_FINALIZABLE" in out, out.strip()[:2000])
+    data = read_project_manifest(corpus, "demo-sweep")
+    data["sources"][1]["revisions"][0]["verified"] = False
+    write_project_manifest(corpus, "demo-sweep", data)
+
     # D16: a hand-asserted COMPLETE fails validation.
     data = read_project_manifest(corpus, "demo-sweep")
     data["project_status"] = "COMPLETE"
@@ -587,6 +652,33 @@ def e_idea_routing(tmp):
     check("E19c the kernel handoff carries the enumeration status, unhidden",
           "ENUMERATION=declared/UNVERIFIED" in out, out.strip()[:1500])
 
+    # E21 (adversarial-review repro): a resolution entry may not smuggle a fresh
+    # ambiguity out of the open list.
+    queue.write_text(queue.read_text(encoding="utf-8") + "\n".join([
+        "## RQ-002",
+        "- date: 2026-08-30",
+        "- resolves: RQ-001",
+        "- issue: CONV-003 may SUPERSEDE an existing idea — still unresolved",
+        "- recommendation: needs its own routing pass",
+        "- owner_judgment_required: yes",
+        "- owner_answer: RQ-001: keep as no-ideas.",
+    ]) + "\n\n", encoding="utf-8")
+    rc, out = F.project(["validate", "--project", "demo-sweep"], corpus)
+    check("E21a a mixed resolve+raise entry fails validation",
+          rc != 0 and "REVIEW_QUEUE_MIXED_ENTRY" in out and "RQ-002" in out,
+          out.strip()[:1200])
+    rc, out = F.project(["coverage", "--project", "demo-sweep"], corpus)
+    check("E21b the smuggled ambiguity still counts as an open review item",
+          "OPEN_REVIEW_ITEMS=1" in out and "RQ-002" in out, out.strip()[:1500])
+    # restore the clean queue so E20 fails for ITS OWN reason only
+    queue.write_text(review_queue_doc("demo-sweep", [
+        rq_block("RQ-001",
+                 issue="CONV-003 may be a CONTINUE_EXISTING of quality-gate, or "
+                       "merely RELATED",
+                 affects="CONV-003, quality-gate",
+                 recommendation="hold as no-ideas; owner decides the relation")]),
+        encoding="utf-8")
+
     # E20: duplicate INDEX rows are detected.
     index = Path(corpus) / "INDEX.md"
     index.write_text(index.read_text(encoding="utf-8")
@@ -637,8 +729,9 @@ def f_mode_separation(tmp):
             encoding="utf-8"))
     check("F21b swept ideas land at status: idea — never clarified, never planned",
           fm.get("status") == "idea", str(fm.get("status")))
-    check("F23 single mode still interviews and plans (proven by suites 6–8 and "
-          "B6 above)", True)
+    # F23 (single mode still plans) is exercised for real by B6 above and by the
+    # entire plan/context suites — a hard-coded `True` here would only inflate the
+    # check count, so there deliberately is no such line.
 
 
 # ===================================================== G. audit & trust =====
@@ -694,13 +787,36 @@ def g_audit_trust(tmp):
           out.strip()[:1200])
     queue = Path(corpus) / "_projects" / "audit-sweep" / "review-queue.md"
     queue.write_text(review_queue_doc("audit-sweep", [
-        rq_block("RQ-001", issue="CONV-002 uncapturable?", affects="CONV-002",
+        rq_block("RQ-001", issue="CONV-002 uncapturable? (audit FIND-001)",
+                 affects="CONV-002",
                  recommendation="owner decides whether to drop it",
-                 owner_answer="Drop it — that chat was a duplicate test thread.")]),
+                 owner_answer="Drop FIND-001 — that chat was a duplicate test "
+                              "thread.")]),
         encoding="utf-8")
     rc, out = F.project(["audit", "--project", "audit-sweep"], corpus)
-    check("G26c the same dismissal passes once the RQ carries the owner's answer",
+    check("G26c the dismissal passes once an owner-answered RQ names the finding",
           rc == 0, out.strip()[:1200])
+
+    # G26d (adversarial-review repro): a genuine owner answer about something ELSE
+    # is not a skeleton key — the cited RQ must name the finding it dismisses.
+    queue.write_text(review_queue_doc("audit-sweep", [
+        rq_block("RQ-001", issue="Is CONV-003 a duplicate test thread?",
+                 affects="CONV-003",
+                 recommendation="owner decides",
+                 owner_answer="Yes, drop that test thread.")]),
+        encoding="utf-8")
+    rc, out = F.project(["audit", "--project", "audit-sweep"], corpus)
+    check("G26d an owner answer about an unrelated RQ dismisses nothing",
+          rc != 0 and "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER" in out
+          and "about something else dismisses nothing" in out, out.strip()[:1500])
+    # restore the legitimate queue for the checks that follow
+    queue.write_text(review_queue_doc("audit-sweep", [
+        rq_block("RQ-001", issue="CONV-002 uncapturable? (audit FIND-001)",
+                 affects="CONV-002",
+                 recommendation="owner decides whether to drop it",
+                 owner_answer="Drop FIND-001 — that chat was a duplicate test "
+                              "thread.")]),
+        encoding="utf-8")
 
     # G27: a tampered hash in the manifest is caught.
     data = read_project_manifest(corpus, "audit-sweep")

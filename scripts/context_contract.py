@@ -985,6 +985,32 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
                     owner_backed = True
         if owner_backed:
             continue
+        # ORDER IS LOAD-BEARING. A provably-assistant citation with no provable owner
+        # backing FAILS even when unknown-role messages ride along — otherwise
+        # co-citing one unclassifiable header (a system turn, a legacy header) would
+        # launder a blocking FAIL down to a WARN, and the assistant's "this is
+        # decided" would pass exactly by adding noise. The unknown-only case stays a
+        # WARN: there the evidence cannot support an accusation, only honesty.
+        if assistant_msgs:
+            unknown_note = ""
+            if unknown_msgs:
+                unknown_note = (" (msg %s additionally cited, speaker unprovable — an "
+                                "unclassifiable header never supplies the owner "
+                                "backing the assistant turns lack)"
+                                % ", ".join(str(n) for n in sorted(unknown_msgs)))
+            cov.findings.append(Finding(
+                pkg.slug, "OWNER_BACKING_ASSISTANT_ONLY",
+                "%s (%s) cites msg %s, resolving only to ASSISTANT turns, and no cited "
+                "message resolves to the owner%s. An assistant saying \"this is "
+                "decided\" is a proposal, not an owner decision: owner backing needs a "
+                "message the owner spoke, or an owner delta. Cite where the owner "
+                "actually adopted it, or record it honestly as an assistant proposal "
+                "or an unresolved candidate."
+                % (key, labels[prefix],
+                   ", ".join(str(n) for n in sorted(assistant_msgs)), unknown_note)))
+            cov.block("owner backing for %s, which currently rests only on assistant "
+                      "turns" % key)
+            continue
         if unknown_msgs:
             role_unknown_entries.append(key)
             cov.findings.append(Finding(
@@ -995,19 +1021,6 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
                 "message the owner spoke, or an owner delta."
                 % (key, labels[prefix],
                    ", ".join(str(n) for n in sorted(unknown_msgs))), level="WARN"))
-            continue
-        if assistant_msgs:
-            cov.findings.append(Finding(
-                pkg.slug, "OWNER_BACKING_ASSISTANT_ONLY",
-                "%s (%s) cites msg %s — every cited message resolves to an ASSISTANT "
-                "turn. An assistant saying \"this is decided\" is a proposal, not an "
-                "owner decision: owner backing needs a message the owner spoke, or an "
-                "owner delta. Cite where the owner actually adopted it, or record it "
-                "honestly as an assistant proposal or an unresolved candidate."
-                % (key, labels[prefix],
-                   ", ".join(str(n) for n in sorted(assistant_msgs)))))
-            cov.block("owner backing for %s, which currently rests only on assistant "
-                      "turns" % key)
             continue
         if not cited or not cited <= evidence_only:
             continue
