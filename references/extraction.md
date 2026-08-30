@@ -272,3 +272,33 @@ chat text merely *talks about* tokens/cookies/auth. Handle in this order:
    First verify the page contains zero pre-existing U+2060 so the restore is lossless.
 3. Never use this technique to move actual credentials, and never work around a block
    whose cause you have not diagnosed.
+
+## Project discovery (PROJECT_SWEEP only) — enumerating a project's conversations
+
+Per-conversation capture above is VERIFIED tooling. Project-level ENUMERATION is not:
+`scripts/project_discovery.js` is a **CANDIDATE adapter** (ChatGPT only, unverified
+against a live project listing as of v3.0). The rules are fail-closed, and they are the
+whole point:
+
+1. **Try the data layer first.** Run `project_discovery.js` on the logged-in project
+   page. It may only be trusted as exhaustive when it returns `complete:true` — items
+   collected equals the API's own `total`, with no pagination errors. Only then may
+   the inventory be declared `--method data-layer --verified` (after a human
+   sanity-check against the visible project).
+2. **Anything less provable → declared inventory.** Take an owner-provided/exported
+   conversation list (URLs or `host/<id>` keys), write it as JSON, and
+   `project_contract.py declare --method declared` WITHOUT `--verified`. The manifest
+   then carries `PROJECT_ENUMERATION_UNVERIFIED`, and coverage answers for the
+   declared inventory only. **DO NOT FAKE IT** — the architecture would rather say
+   "unverified" than claim 100% coverage it cannot prove.
+3. **Identity is the platform's conversation id, never the title.** Titles are
+   editable, duplicable and routinely reused; `conversation_key = host/<id>` is what
+   reruns upsert on, which is what makes a sweep idempotent.
+4. **Lazy loading/pagination:** the candidate adapter pages with offset+limit and
+   cross-checks the API's `total`. A DOM-scrolled sidebar listing is NOT a completion
+   signal — window-virtualized lists unmount items exactly like the chat transcript
+   does (see above), so a scraped list proves presence, never exhaustion.
+5. **Screenshots/OCR are never a capture or enumeration method.**
+6. Per-conversation capture inside a sweep is EXACTLY the playbook above
+   (data_capture.js first, DOM fallback, same gates) — the sweep changes discovery
+   and bookkeeping, never capture quality.

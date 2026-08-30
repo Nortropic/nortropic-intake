@@ -1,11 +1,33 @@
 ---
 name: nortropic-intake
-description: Load a brainstorm into Claude Code as the understanding and context of what Johnny intends to implement. Captures a conversation — the active ChatGPT or Claude tab, this Claude conversation, or (in local Claude Code with Chrome) any chat by URL — with a host-aware, fail-closed extraction playbook, then distills it into a self-contained idea brief (decisions incl. rejected paths, EARS acceptance criteria, open questions) plus a design-rationale file preserving why the design took its shape (reasoning chains, rejections, trade-offs, message-level provenance), with the verbatim transcript kept as linked evidence. Delivers all three as real .md files into the idea-corpus repo (idébanken) and, when implementing now, into the current working session so Claude Code can plan and build from them; it writes files and an index row but never commits or pushes. Use whenever Johnny asks to harvest, load or bring a brainstorm or chat into Claude Code, "harvest this URL", "arkivera vart samtal", "kor intake", "spara/lägg idén i idébanken" / park an idea for later, give Claude Code the context for an idea, or turn a discussion into an implementation brief — Swedish or English, even if unnamed. Do NOT use merely to discuss or summarize a chat, or to edit an existing brief.
+description: Load a brainstorm into Claude Code as the understanding and context of what Johnny intends to implement. Two explicit modes. SINGLE (default) captures one conversation — the active ChatGPT or Claude tab, this Claude conversation, or (in local Claude Code with Chrome) any chat by URL — with a host-aware, fail-closed extraction playbook, then distills it into a self-contained idea brief (decisions incl. rejected paths, EARS acceptance criteria, open questions) plus a design-rationale file preserving why the design took its shape (reasoning chains, rejections, trade-offs, role-aware message-level provenance), with the verbatim transcript kept as linked evidence; delivers all three as real .md files into the idea-corpus repo (idébanken) and, when implementing now, into the current working session so Claude Code can plan and build from them. PROJECT_SWEEP (explicit invocation only, never inferred) sweeps a WHOLE ChatGPT/Claude project or an explicit conversation list into a lossless, coverage-verified, normalized R&D corpus — stable source identities, immutable per-conversation raw, mechanically provable coverage, a review queue for ambiguities, an independent sweep audit — without interviewing the owner or opening plan mode. The skill writes files and an index row but never commits or pushes. Use whenever Johnny asks to harvest, load or bring a brainstorm or chat into Claude Code, "harvest this URL", "arkivera vart samtal", "kor intake", "spara/lägg idén i idébanken" / park an idea for later, give Claude Code the context for an idea, turn a discussion into an implementation brief, or — for the sweep — "svep projektet", "kör project sweep", "sweep the whole project into the idea bank", "harvest all conversations in this project" — Swedish or English, even if unnamed. Do NOT use merely to discuss or summarize a chat, to edit an existing brief, or to list a project's conversations without archiving them.
 ---
 
 # Nortropic intake: brainstorm → understanding for Claude Code
 
-**One job:** turn a brainstorm into the understanding Claude Code needs to implement it.
+## Two modes — explicit, never inferred
+
+Since v3.0 this skill has exactly two jobs, and the mode is always explicit:
+
+- **SINGLE** (the default, and everything below until the Project sweep section):
+  one conversation/brainstorm → one trustworthy implementation-understanding
+  package. This is the v2.1 flow, preserved unchanged — routing (idébank vs
+  implement-now), owner interview, plan mode and exact approval all live here.
+- **PROJECT_SWEEP** (see the Project sweep section): a whole ChatGPT/Claude project,
+  or an explicit conversation list → a lossless, coverage-verified, normalized R&D
+  corpus. Corpus ingest, not IMPLEMENT_NOW: non-interactive by default — no Phase
+  2.5 interview per historical chat, no Plan Mode, no approvals; ambiguities are
+  recorded, queued and the sweep continues, while capture integrity and source
+  coverage fail closed.
+
+The mode is chosen by what Johnny asked for — "kör intake <url>" is SINGLE, "svep
+projektet" / "kör project sweep" is PROJECT_SWEEP — and NEVER by heuristics: a URL
+that happens to be a project page does not switch modes by itself; when the request
+is genuinely ambiguous, ask. A sweep produces ordinary idea packages at
+`status: idea`; pulling one to build later is the normal SINGLE implement-now flow.
+
+**One job (SINGLE):** turn a brainstorm into the understanding Claude Code needs to
+implement it.
 The output is three local files — a progressive-disclosure ladder, smallest first:
 
 1. `idea-<slug>.md` — the **execution brief**: the smallest self-contained context from
@@ -355,6 +377,25 @@ invented decision produces. Ranges and lists are checked at **every** end — `(
 would hide. Where a capture is honestly `partial` (its frontmatter, its manifest source,
 or its episode says so), the bound is a floor and the finding is reported rather than
 blocking.
+
+**Provenance is role-aware: an assistant turn can never impersonate the owner.** The
+notation stays `(← msg N)` — good UX changes nothing — but the validator resolves every
+cited message through the transcript's own `## Meddelande N — <roll>` headers to WHO
+SPOKE, so the role lives in the same immutable, hash-bound, git-witnessed bytes as the
+message itself. A decision, rejection or acceptance criterion is owner-backed only when
+at least one cited message resolves to a turn the OWNER spoke (or a CLAR / an
+authority-bearing source backs it). A citation resolving to provably-ASSISTANT turns
+with no provable owner backing → `OWNER_BACKING_ASSISTANT_ONLY` blocks — an assistant
+saying *"B is decided"* is a proposal, not an owner decision — **and co-citing an
+unclassifiable message downgrades nothing**: an unknown-role header never supplies
+the owner backing the assistant turns lack. Only when NO cited message is provably
+assistant and none is provably owner is the entry reported as
+`PROVENANCE_ROLE_UNKNOWN` — honestly unknown, never assumed owner-backed, and never
+blocked on an accusation the evidence cannot support. In a
+multi-episode package a bare message number is read against every episode
+(conservatively: any owner reading counts); scope a citation with its episode id —
+`(← CHAT-002 msg 3)` — to remove the ambiguity. The distillation auditor has the
+matching code: `OWNER_DECISION_BACKED_ONLY_BY_ASSISTANT`.
 
 ## Phase 2.6 — Independent distillation audit (the builder is not its own judge)
 
@@ -737,6 +778,23 @@ approved plan and the brief stays `clarified`.
    what the owner saw and what implementation uses, and the candidate file is kept,
    unmutated, as the receipt.
 
+   **Approval strength survives, durably.** `approve` also writes
+   `approval_attestation: STRONG|WEAK` (+ the observed `approval_git_anchor`) into the
+   plan's own frontmatter: STRONG when the candidate's bytes were already committed
+   when the approval ran, WEAK when `--allow-uncommitted-candidate` was used — where
+   the receipt attests only that this process was handed that sha. A weak approval is
+   not forbidden; it may just never masquerade as strong afterwards: `validate` refuses
+   an out-of-vocabulary value (`PLAN_ATTESTATION_INVALID`), refuses a pair `approve`
+   can never emit (STRONG ⇔ anchor UNCHANGED — flipping the word without forging the
+   anchor is caught immediately), `resume` reports the strength, and a plan approved
+   before v3.0 is reported as `PLAN_ATTESTATION_LEGACY_UNKNOWN` — its strength is
+   unknowable after the fact and is NEVER retroactively promoted to STRONG. Once
+   committed, any flip is caught as `PLAN_MUTATED_AFTER_COMMIT` like every other
+   post-approval edit; before the commit, the attestation lives under the same
+   git-rooted witness boundary as every other approval byte — a WEAK approval's
+   record is exactly as durable as the corpus's commit state, which is precisely
+   what the WEAK label is telling you.
+
    It also carries the candidate's **context binding** across:
 
        APPROVED_PLAN_SHA256=X
@@ -975,7 +1033,16 @@ graph database.
                          pointer --slug S --workstream W --into F --retire --reason R
                          hash F [--body]
 
-Both accept `--corpus PATH` before or after the subcommand, and fall back to
+    project_contract.py  init --project P --title T | declare --project P --inventory F
+                                 [--method declared|data-layer] [--verified]
+                         register --project P --url U | capture --project P --source ID --file F
+                         mark-extracted --project P --source ID (--ideas s1,s2 | --no-ideas --note …)
+                         mark-routed --project P --source ID | mark-failed … --stage … --detail …
+                         status --project P | coverage --project P | audit --project P
+                         report --project P [--write] | validate [--project P …]
+                         finalize --project P        # honest terminal state, never a hidden gap
+
+All three accept `--corpus PATH` before or after the subcommand, and fall back to
 `$NORTROPIC_INTAKE_CORPUS`, then `~/nortropic/innovation-intake`. `hash F` gives the FILE
 sha (what `--candidate-sha` takes); `hash F --body` gives the content identity.
 
@@ -988,6 +1055,99 @@ approved plan, it is persisted with `plan_source: recovered-from-known-source` a
 transcript is never scraped automatically and a model reconstruction is never accepted as
 the plan. If no known source exists, the honest outcome is `status: clarified` and a
 re-plan.
+
+## Project sweep (PROJECT_SWEEP) — a whole project into the corpus
+
+**Explicit invocation only** ("svep projektet", "kör project sweep", "sweep the whole
+project"), never inferred from a URL. The job: `MESSY HUMAN R&D → TRUSTWORTHY CORPUS`.
+A later Autonomy Kernel run does `TRUSTWORTHY CORPUS + CURRENT VERIFIED REPO REALITY →
+CURRENT UNDERSTANDING → Concept/Constitution/Architecture/Roadmap`; the sweep therefore
+**must not** design future Nortropic, prioritize the backlog, or produce implementation
+plans. Idea packages a sweep produces are corpus artifacts, not final ontology: the
+Kernel may later MERGE several, SPLIT one, SUPERSEDE, classify ALREADY_IMPLEMENTED,
+REJECT, or derive a more fundamental principle — so the sweep preserves evidence and
+understanding, never locks architecture, and never assumes one idea package = one
+future subsystem.
+
+The artifact model (see `references/project-manifest-template.md`,
+`review-queue-template.md`, `sweep-audit-template.md`):
+
+    _projects/<project>/project-manifest.json   WHICH conversations, what state, what identity
+    _projects/<project>/sources/CONV-NNN/       immutable raw, one file per revision
+    _projects/<project>/review-queue.md         ambiguities: record → queue → continue
+    _projects/<project>/sweep-audit.md          independent falsification, append-only
+    _projects/<project>/PROJECT.md              generated summary (manifest stays canonical)
+
+plus ordinary idea packages in the corpus root, at `status: idea`, each carrying its
+conversation(s) as episode transcripts — byte-identical to a recorded source revision,
+which is what makes provenance a hash link instead of a hope. One chat → many ideas and
+many chats → one idea (CONTINUE_EXISTING) both fall out of the normal v2.1 episode
+model; the Phase 2.8 corpus check applies project-globally, with one change: a genuine
+ambiguity (CONTINUE_EXISTING vs RELATED, uncertain duplicate, unclear supersession)
+becomes a review-queue item and the sweep CONTINUES — it never stops the other sources,
+and it never guesses silently.
+
+**P0 — Scope & mode.** Confirm the project (or the explicit conversation list) and
+that this is a sweep. `project_contract.py init --project <name> --title …`.
+
+**P1 — Enumerate, honestly.** Data-layer first: `scripts/project_discovery.js` is a
+**CANDIDATE adapter (unverified)** for ChatGPT project listings — declare its output
+`--method data-layer --verified` ONLY when it returns `complete:true` (item count
+matches the API's own total). Anything less provable: take an owner-provided/exported
+conversation inventory and `declare --method declared` **without** `--verified` — the
+manifest then says `PROJECT_ENUMERATION_UNVERIFIED` and coverage answers for the
+declared inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration
+method. Identity is the platform's conversation id (`conversation_key = host/<id>`),
+never a title; reruns upsert by identity, so the same project can be swept repeatedly
+without duplicating a source.
+
+**P2 — Capture every conversation, fail closed.** Per conversation, the SINGLE-mode
+Phase 1 pipeline unchanged (data-layer capture via `scripts/data_capture.js`, DOM
+playbook only as fallback, same quality gates), then
+`capture --project P --source CONV-NNN --file <captured.md>` — which stores the bytes
+as the next immutable revision, hashes them, and verifies the transcript format
+(headers, contiguous numbering, balanced fences, provable speaker roles). A failed
+verification leaves the source at CAPTURED with the error recorded; an uncapturable
+conversation is `mark-failed` — both are HARD gaps: `SOURCE_COVERAGE_COMPLETE=NO`,
+and no review-queue entry can absorb them. An updated conversation re-captured later
+becomes revision N+1; the old raw is never touched. Never modify anything on the
+platform — read only.
+
+**P3 — Extract.** Distill each verified conversation with the normal Phase 2
+templates — zero, one or several ideas per conversation. Deliver each conversation
+into each extracted idea package as an episode transcript (byte-identical copy), then
+`mark-extracted --ideas slug1,slug2` (or `--no-ideas --note "<why>"` — a conversation
+that produced nothing durable must say so). **No Phase 2.5 interview, ever** — open
+questions stay in the briefs for the day an idea is pulled to build.
+
+**P4 — Route, project-globally.** Phase 2.8 semantics across the whole corpus:
+CONTINUE_EXISTING / SUPERSEDES / RELATED / DISTINCT, INDEX.md upserted one row per
+idea. Ambiguities → `review-queue.md` (stable RQ id, affected sources/ideas, issue,
+recommendation, evidence, owner_judgment_required) and continue. Then `mark-routed`.
+
+**P5 — Independent sweep audit.** A fresh, isolated reviewer tries to FALSIFY the
+sweep (inventory completeness, duplicate identities, mutated raw, tree mismatches,
+dangling idea provenance, owner claims backed only by assistant messages, external
+evidence promoted to instruction, silent capture failures, false completeness,
+idempotency violations — see `references/sweep-audit-template.md`). Findings are
+append-only rounds bound to the current inventory revision; no round closes its own
+finding; only an owner-answered review-queue entry dismisses one.
+
+**P6 — Finalize, honestly.** `finalize --project P` refuses unfinished processing and
+a stale audit, then ends the sweep in exactly one of:
+
+    COMPLETE | COMPLETE_WITH_OPEN_REVIEW | INCOMPLETE_HARD_GAPS
+
+A hard capture/coverage gap is never "complete with review", and the KERNEL_HANDOFF
+block always carries the gaps, the open review items and the enumeration status
+together — a handoff that hides either is a false completeness. The stored status is
+re-derived by `validate`, so a hand-asserted COMPLETE fails as `FALSE_COMPLETENESS`.
+
+Interrupted? `status --project P` names exactly what remains, from the manifest alone
+— the sweep is resumable from files, RELOAD NOT REMEMBER. The sweep never runs the
+real production project without a separate explicit owner instruction, and the tools
+write files only: committing the swept corpus is the owner's step, exactly as in
+SINGLE mode.
 
 ## Execution checklist
 
@@ -1118,6 +1278,29 @@ read-only` before step 1; steps 1–9 then run exactly as above (same playbook).
 Delivery (steps 8–9): corpus repo + INDEX.md row in local Claude Code, or hand the
 files to Johnny elsewhere. No commit, no push, no Drive — see Phase 3.
 
+PROJECT_SWEEP checklist (replaces steps 0–9 above; the SINGLE checklist never runs
+inside a sweep):
+
+```
+[ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run
+[ ] P1. Inventory declared honestly: data-layer --verified ONLY on a provable
+        completion signal, else owner-declared WITHOUT --verified
+        (PROJECT_ENUMERATION_UNVERIFIED); identity by conversation id, never title
+[ ] P2. Every conversation captured via the Phase 1 pipeline + `capture` verified;
+        failures recorded (CAPTURED+error or mark-failed) — never silent
+[ ] P3. Extraction per conversation (0..n ideas), conversations delivered into idea
+        packages as byte-identical episodes, mark-extracted (--no-ideas needs --note);
+        NO owner interview, NO plan mode, briefs at status: idea
+[ ] P4. Project-global routing (CONTINUE_EXISTING/SUPERSEDES/RELATED/DISTINCT);
+        ambiguities queued as RQ entries and the sweep CONTINUES; INDEX upserted;
+        mark-routed
+[ ] P5. Independent sweep audit at the CURRENT inventory revision; material findings
+        remediated by later rounds or owner-dismissed via an owner-answered RQ
+[ ] P6. finalize → COMPLETE | COMPLETE_WITH_OPEN_REVIEW | INCOMPLETE_HARD_GAPS;
+        KERNEL_HANDOFF carries gaps + open review + enumeration status together;
+        no commit, no push, no real-project sweep without separate owner instruction
+```
+
 ## Conventions
 
 - Transcript file: Swedish metadata/headers. Brief and rationale: English (agent-facing
@@ -1154,22 +1337,34 @@ files to Johnny elsewhere. No commit, no push, no Drive — see Phase 3.
   writes + one index row, nothing more. No commit, no push, no Drive upload. If Johnny
   wants the corpus committed or archived elsewhere, that is a separate step he asks for
   explicitly.
+- Project-sweep artifacts live under `_projects/<project>/` (manifest, sources,
+  review queue, sweep audit, generated PROJECT.md); idea packages produced by a sweep
+  are ordinary packages under `<slug>/` in the corpus root, indistinguishable from
+  SINGLE-mode ones except for their episode provenance.
 - Repeatable evals live in `evals/` (trigger queries, golden capture signature,
-  brief rubric, rationale rubric, contract lint, approved-plan falsification suite) —
-  run them after any change to this skill; see `evals/README.md`.
+  brief rubric, rationale rubric, contract lint, approved-plan falsification suite,
+  context suites, and the v3 suite `test_project_v3.py` covering role-aware
+  provenance, approval strength and the project contract) — run them after any change
+  to this skill; see `evals/README.md`.
 
 ## Architecture freeze — read this before changing the skill
 
-The v2.1 architecture is owner-approved and **frozen**. Nice ideas are not a reason to
-reopen it; a demonstrated defect is.
+The v3.0 architecture is owner-authorized; the record below freezes it at publication.
+Nice ideas are not a reason to reopen it; a demonstrated defect is.
+
+**Lineage, recorded honestly.** v2.1 was frozen 2026-08-26
+(`SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e`,
+`SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc`, corpus at
+`6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00`). It was reopened 2026-08-30 under its own
+reopen policy — the `owner architecture change` condition: the owner explicitly ordered
+the v3.0 architecture (*Project Corpus Intake*: v2.1's single-brainstorm intake
+preserved, plus an explicit PROJECT_SWEEP mode, role-aware provenance and durable
+approval-attestation strength). The reopen was authority, not drift.
 
 ```
-NORTROPIC_INTAKE_VERSION=v2.1
-ARCHITECTURE_STATE=FROZEN
-FREEZE_DATE=2026-08-26
-
-SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e
-SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc
+NORTROPIC_INTAKE_VERSION=v3.0
+ARCHITECTURE_STATE=REOPENED_FOR_V3_IMPLEMENTATION
+REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner architecture change)
 
 CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00
 CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c
@@ -1181,10 +1376,13 @@ RELOAD_NOT_REMEMBER=YES
 CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
-Those two identities are the **frozen architecture**, not this file's current commit:
-recording the freeze necessarily moved `main` past `SKILL_MAIN` by one
-documentation-only commit that changed no runtime behaviour. If you need the exact
-frozen bytes, read the tree, not the branch head.
+No SKILL identities are recorded yet, on purpose: they name the v3.0 implementation
+merge on `main` and its tree, which do not exist until this change is published.
+Recording invented SHAs would be a forged freeze — the freeze commit that follows the
+merge sets `ARCHITECTURE_STATE=FROZEN` and writes the REAL post-publication
+`SKILL_MAIN`/`SKILL_TREE`, and nothing else may. The corpus identities are v2.1's,
+unchanged: v3.0 mutated no corpus content. When reading a freeze, read the tree, not
+the branch head.
 
 **The standing principle is RELOAD, NOT REMEMBER.** A conversation is working memory.
 Durable files, git, hashes and provenance are long-term context. After handoff, Claude
@@ -1204,27 +1402,50 @@ revisions · distillation audit · planning-context coverage · current reposito
 plan candidate · coherence and context delta · exact owner approval · approved plan ·
 terminal handoff · execution · compaction and fresh-session reload · CONTINUE_EXISTING ·
 stale-plan detection · source-trust boundary · multi-repo and multi-workstream ·
-bidirectional provenance. The suites prove specific properties of each, never
-completeness — see the residual risks below, which are part of the same honest record.
+bidirectional provenance — and, new in v3.0: role-aware provenance · durable approval
+attestation · project sweep (stable source identities, immutable revisions, mechanical
+coverage, review queue, independent sweep audit, honest enumeration). The suites prove
+specific properties of each, never completeness — see the residual risks below, which
+are part of the same honest record.
+
+**Closed in v3.0 — the two risks the v2.1 freeze review surfaced.** Both were accepted
+then as recorded-not-fixed; the owner's v3.0 architecture change closed them:
+
+- *"A weak approval leaves no durable trace"* — closed. `approve` now writes
+  `approval_attestation: STRONG|WEAK` + `approval_git_anchor` into the plan's own
+  frontmatter; `validate` refuses unreadable values, `resume` reports the strength, a
+  pre-v3.0 plan reads as `PLAN_ATTESTATION_LEGACY_UNKNOWN` (never promoted to STRONG),
+  and a post-commit flip fails as `PLAN_MUTATED_AFTER_COMMIT`.
+- *"Message-level provenance is role-blind"* — closed. `(← msg N)` now resolves through
+  the transcript's own headers to WHO SPOKE; assistant-only backing fails
+  (`OWNER_BACKING_ASSISTANT_ONLY`), legacy unprovable roles report
+  `PROVENANCE_ROLE_UNKNOWN` honestly, and the auditor gained
+  `OWNER_DECISION_BACKED_ONLY_BY_ASSISTANT`.
 
 **Accepted residual risks — recorded honestly, and not work items.** No mechanism can
-prove a human read every approved byte. Semantic fidelity stays partly judgement, even
-with independent auditing. Invocation is not fully mechanical if a session ignores the
-skill entirely. Owner-delta authority has a human, procedural trust root. Non-path
-external source claims cannot all be frozen forever. A compromised canonical target
-repository is outside this trust boundary. No system should claim perfect
-prompt-injection detection.
+prove a human read every approved byte (STRONG attests that the bytes predate the
+approval, nothing more). Semantic fidelity stays partly judgement, even with independent
+auditing. Invocation is not fully mechanical if a session ignores the skill entirely.
+Owner-delta authority has a human, procedural trust root. Non-path external source
+claims cannot all be frozen forever. A compromised canonical target repository is
+outside this trust boundary. No system should claim perfect prompt-injection detection.
 
-Two more, surfaced by the freeze review and recorded rather than quietly fixed:
+New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
 
-- **A weak approval leaves no durable trace.** `approve --allow-uncommitted-candidate`
-  prints `APPROVAL_ATTESTATION=WEAK`, but neither that nor the git anchor is written into
-  the approved plan's frontmatter. A later `validate` cannot tell a fully anchored
-  approval from one taken with the escape hatch open.
-- **Message-level provenance is role-blind.** `(← msg N)` counts as owner-backing without
-  consulting who spoke in message N, so a decision tagged to an assistant turn satisfies
-  the check that an external source alone would fail. The mechanism is real; no exploit
-  has been demonstrated against it.
+- **Role truth is inherited from capture.** The role check reads the transcript's
+  headers; those headers are written by the capture pipeline from platform data. A
+  capture that mislabelled a speaker at the source would mislead the check — format
+  verification proves the labels are parseable and consistent, not that the platform
+  told the truth.
+- **A bare `(← msg N)` in a multi-episode package is resolved conservatively.** Any
+  owner reading across episodes counts as owner-backed; an assistant turn could in
+  principle hide behind another episode's owner turn at the same number. Episode-scoped
+  citations (`(← CHAT-002 msg 3)`) remove the ambiguity; no exploit has been
+  demonstrated.
+- **Project enumeration is only as strong as its signal.** The data-layer project
+  listing is a CANDIDATE adapter, unverified against a live ChatGPT project; the
+  declared-inventory fallback proves coverage of the declaration, never of the
+  platform's project — which is exactly what `PROJECT_ENUMERATION_UNVERIFIED` says.
 
-These become work only when an observed failure makes one material — which for the
-second is exactly what `demonstrated security/trust defect` in the reopen policy means.
+These become work only when an observed failure makes one material — that is what
+`observed failure` and `demonstrated security/trust defect` in the reopen policy mean.

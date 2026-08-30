@@ -67,6 +67,15 @@ VALID_BRIEF_STATES = PLAN_REQUIRED_STATES | PRE_PLAN_STATES | {"superseded"}
 PLAN_FILE_RE_TMPL = r"^{slug}-approved-plan(?:-v(\d+))?\.md$"
 CANDIDATE_FILE_RE_TMPL = r"^{slug}-plan-candidate(?:-v(\d+))?\.md$"
 
+# Approval attestation strength — durable in the plan's own frontmatter since v3.0.
+# STRONG: the candidate's bytes were already in git history when the approval ran, so
+# they demonstrably predate it. WEAK: `--allow-uncommitted-candidate` was used — the
+# receipt attests only that this process was handed that sha. A plan approved before
+# v3.0 carries neither and is reported as LEGACY_UNKNOWN: its strength is unknowable
+# after the fact and is NEVER retroactively promoted to STRONG.
+ATTESTATION_VALUES = ("STRONG", "WEAK")
+ATTESTATION_LEGACY = "LEGACY_UNKNOWN"
+
 PLAN_REQUIRED_FIELDS = {
     "type": {"approved-plan"},
     "status": {"approved", "superseded"},
@@ -432,6 +441,43 @@ def _check_plan_artifact(slug, plan_path, pfm, pbody, expect_current, candidate=
             out.append(Finding(slug, "PLAN_NOT_APPROVED",
                                "%s: approved_by=%r names the agent — this field must "
                                "name the owner who approved the plan" % (name, approved_by)))
+        # Attestation strength must survive the approval that produced it. A recorded
+        # value outside the vocabulary is a claim the contract cannot read; an absent
+        # one is a plan approved before v3.0 — honestly LEGACY_UNKNOWN, and never
+        # silently promoted to STRONG.
+        attestation = fm_str(pfm, "approval_attestation")
+        anchor = fm_str(pfm, "approval_git_anchor")
+        if attestation and attestation not in ATTESTATION_VALUES:
+            out.append(Finding(
+                slug, "PLAN_ATTESTATION_INVALID",
+                "%s: approval_attestation=%r must be one of %s — an unreadable "
+                "attestation is indistinguishable from a forged one"
+                % (name, attestation, list(ATTESTATION_VALUES))))
+        elif not attestation:
+            out.append(Finding(
+                slug, "PLAN_ATTESTATION_LEGACY_UNKNOWN",
+                "%s records no approval_attestation — approved before the attestation "
+                "contract (v3.0). Its strength is unknowable after the fact and is "
+                "reported as %s, never assumed STRONG." % (name, ATTESTATION_LEGACY),
+                level="WARN"))
+        else:
+            # The pair must be one `approve` can actually emit: STRONG ⇔ the anchor
+            # was UNCHANGED. A STRONG riding on an UNTRACKED/MUTATED/absent anchor is
+            # a claim the promotion path cannot produce — a masquerade shape, refused
+            # even before the git witness gets its say.
+            if not anchor:
+                out.append(Finding(
+                    slug, "PLAN_ATTESTATION_INVALID",
+                    "%s: approval_attestation=%s but no approval_git_anchor — "
+                    "`approve` always writes both; half a receipt is not a receipt"
+                    % (name, attestation)))
+            elif (attestation == "STRONG") != (anchor == "UNCHANGED"):
+                out.append(Finding(
+                    slug, "PLAN_ATTESTATION_INVALID",
+                    "%s: approval_attestation=%s with approval_git_anchor=%s — a pair "
+                    "`approve` can never emit (STRONG ⇔ anchor UNCHANGED). This is "
+                    "what an after-the-fact upgrade looks like." % (name, attestation,
+                                                                    anchor)))
 
     for field in ("source_brief_sha256", "plan_content_sha256",
                   "approved_candidate_sha256"):
@@ -1278,6 +1324,11 @@ def cmd_approve(args):
         "plan_content_sha256: %s" % sha256_text(pbody),
         "approved_candidate: %s" % cand_path.name,
         "approved_candidate_sha256: %s" % actual,
+        # Durable attestation strength: a later validator must be able to tell a
+        # fully git-anchored approval from one taken with the escape hatch open —
+        # from the artifact alone, forever.
+        "approval_attestation: %s" % ("STRONG" if anchor == "UNCHANGED" else "WEAK"),
+        "approval_git_anchor: %s" % anchor,
     ]
     targets = fm_list(pfm, "execution_targets")
     if targets:
@@ -1312,10 +1363,12 @@ def cmd_approve(args):
     print("CANDIDATE_GIT_ANCHOR=%s" % anchor)
     print("PROMOTION=body copied byte-for-byte from the candidate (mechanically checked)")
     print("APPROVAL_ATTESTATION=%s"
-          % ("the approved sha was already in git history when this ran; the bytes "
-             "predate the approval" if anchor == "UNCHANGED" else
+          % ("STRONG — the approved sha was already in git history when this ran; the "
+             "bytes predate the approval" if anchor == "UNCHANGED" else
              "WEAK — candidate was not committed; this attests only that this process "
              "was handed that sha"))
+    print("  (recorded durably as approval_attestation in the plan's frontmatter — a "
+          "weak approval stays visibly weak forever)")
     print("")
     print("What this does NOT prove: that a human read these bytes. No tool can. It")
     print("proves the promoted plan is the candidate, and that the candidate existed")
@@ -1793,6 +1846,8 @@ def cmd_resume(args):
           % (fm_str(pfm, "approval_state") or "?", fm_str(pfm, "approved_by") or "?",
              fm_str(pfm, "approved_at") or "?", fm_str(pfm, "approved_candidate") or "—",
              (fm_str(pfm, "approved_candidate_sha256") or "")[:16] + "…"))
+    print("APPROVAL_ATTESTATION=%s"
+          % (fm_str(pfm, "approval_attestation") or ATTESTATION_LEGACY))
     print("INTAKE_STATUS=%s" % status)
     print("DESIGN_RATIONALE=on-demand (not preloaded)")
     print("RAW_TRANSCRIPT=on-demand (not preloaded)")

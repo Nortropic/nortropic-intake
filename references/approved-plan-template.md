@@ -158,6 +158,14 @@ authority: owner-approved-execution-intent
 plan_content_sha256: <sha256 of this file's body — the identity the owner approved>
 approved_candidate: <slug>-plan-candidate.md
 approved_candidate_sha256: <sha256 of that candidate FILE, unmutated>
+# Attestation strength — durable since v3.0, written by `approve`, never by hand.
+# STRONG: the candidate's bytes were already committed when the approval ran.
+# WEAK: --allow-uncommitted-candidate was used; the receipt attests only that this
+# process was handed that sha. A plan without these fields predates v3.0 and is
+# reported as LEGACY_UNKNOWN — a weak approval stays visibly weak forever, and a
+# legacy one is NEVER retroactively promoted to STRONG.
+approval_attestation: STRONG        # STRONG | WEAK
+approval_git_anchor: UNCHANGED      # the git anchor observed at approval time
 # Living context — PROVENANCE, not authority: the understanding this plan was approved
 # against. Copied from the candidate at approval; `approve` refuses a candidate whose
 # binding does not match the package's current revision.

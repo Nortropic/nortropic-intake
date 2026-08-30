@@ -283,6 +283,50 @@ def parse_slices(text):
     return out
 
 
+# -------------------------------------------------------- transcript roles --
+
+# WHO SPOKE lives in the transcript's own message headers — `## Meddelande N — Johnny
+# (användare)` / `## Message N — … (assistant)`. Role-aware provenance resolves
+# `(← msg N)` against these headers, so the role is read from the same immutable,
+# hash-bound, git-witnessed bytes as the message itself: no parallel role metadata
+# exists that could drift from — or be edited apart from — the evidence.
+TRANSCRIPT_HEADER_RE = re.compile(
+    r"^##\s*(?:Meddelande|Message)\s+(\d+)\s*(?:—|-|:)?\s*(.*?)\s*$", re.M)
+_OWNER_ROLE_RE = re.compile(r"användare|\buser\b", re.I)
+_ASSISTANT_ROLE_RE = re.compile(r"assistent|\bassistant\b", re.I)
+
+ROLE_OWNER = "owner"
+ROLE_ASSISTANT = "assistant"
+ROLE_UNKNOWN = "unknown"
+
+
+def parse_transcript_roles(text):
+    """{message number: 'owner'|'assistant'|'unknown'} from a transcript's headers.
+
+    Fail-closed vocabulary: a header label that names neither the user nor the
+    assistant is 'unknown' — never guessed toward owner. A label that somehow names
+    both, or a number that appears twice with conflicting roles, is 'unknown' too:
+    an undecidable speaker must not pass as an owner. Legacy transcripts without
+    parseable role labels simply yield 'unknown' throughout, which the validators
+    report honestly rather than treating as owner-backed.
+    """
+    roles = {}
+    for m in TRANSCRIPT_HEADER_RE.finditer(text):
+        n = int(m.group(1))
+        label = m.group(2)
+        is_owner = bool(_OWNER_ROLE_RE.search(label))
+        is_assistant = bool(_ASSISTANT_ROLE_RE.search(label))
+        if is_owner == is_assistant:          # neither, or contradictorily both
+            role = ROLE_UNKNOWN
+        else:
+            role = ROLE_OWNER if is_owner else ROLE_ASSISTANT
+        if n in roles and roles[n] != role:
+            roles[n] = ROLE_UNKNOWN
+        else:
+            roles[n] = role
+    return roles
+
+
 # ------------------------------------------------------------ git evidence --
 
 def git(repo, *args, **kw):
