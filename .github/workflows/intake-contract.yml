@@ -38,6 +38,9 @@ jobs:
       - name: Living-context suite (C1–C15, source trust T1–T8, mutation matrix)
         run: python3 evals/test_context_v21.py
 
+      - name: v3 suite (role-aware provenance, approval attestation, project sweep)
+        run: python3 evals/test_project_v3.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e
@@ -55,11 +58,14 @@ jobs:
           set -e
           mkdir -p /tmp/real && cp scripts/*.py /tmp/real/
           fail=0
-          # Every combination of (mutated module, suite). A suite must FAIL — and must
-          # not silently exit 0 having executed nothing, which the suites' own
-          # MIN_CHECKS floor turns into a non-zero exit.
-          for module in plan_contract context_contract intake_common; do
-            for suite in test_plan_contract test_context_v2 test_context_v21; do
+          # Every combination of (mutated module, suite that DEPENDS on it). A suite
+          # must FAIL — and must not silently exit 0 having executed nothing, which
+          # the suites' own MIN_CHECKS floor turns into a non-zero exit. The three
+          # v2-era suites never invoke project_contract, so that pairing is not a
+          # dependency and is deliberately absent below.
+          guard() {
+            module="$1"; shift
+            for suite in "$@"; do
               cp /tmp/real/*.py scripts/
               printf 'import sys\nsys.exit(0)\n' > "scripts/$module.py"
               if python3 "evals/$suite.py" > /tmp/mut.log 2>&1; then
@@ -69,7 +75,11 @@ jobs:
                 echo "ok: $suite fails with $module stubbed ($(grep -c '^PASS ' /tmp/mut.log || true) checks survived)"
               fi
             done
-          done
+          }
+          guard plan_contract    test_plan_contract test_context_v2 test_context_v21 test_project_v3
+          guard context_contract test_plan_contract test_context_v2 test_context_v21 test_project_v3
+          guard intake_common    test_plan_contract test_context_v2 test_context_v21 test_project_v3
+          guard project_contract test_project_v3
           cp /tmp/real/*.py scripts/
           # And the specific shape that used to slip through: a stub that still IMPORTS
           # cleanly but answers nothing.

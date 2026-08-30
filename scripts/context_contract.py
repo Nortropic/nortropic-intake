@@ -40,10 +40,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, expand, fails, fm_list, fm_str, git_blob_at,
     git, git_commits_for, git_evidence, git_head_blob, git_immutability, git_is_committed,
-    id_kind, parse_ids, parse_frontmatter, read_frontmatter, read_json, report,
-    scan_credentials, sha256_file, sha256_text,
+    id_kind, parse_ids, parse_frontmatter, parse_transcript_roles, read_frontmatter,
+    read_json, report, scan_credentials, sha256_file, sha256_text,
     source_set_identity, write_json, DERIVED_SOURCE_KINDS, EPISODE_ID_RE,
-    EPISODE_KINDS, FIND_ID_RE, PROVENANCE_RE, REF_RE,
+    EPISODE_KINDS, EPISODE_REF, FIND_ID_RE, PROVENANCE_RE, REF_RE,
+    ROLE_ASSISTANT, ROLE_OWNER, ROLE_UNKNOWN,
 )
 
 # v1 = the v2 contract (source map only). v2 = the living-context contract: the same
@@ -124,6 +125,9 @@ AUDIT_FINDING_CODES = (
     # are the auditor's authority lens: text found in evidence must not arrive in the
     # brief wearing the owner's voice.
     "EXTERNAL_INSTRUCTION_PROMOTED_TO_OWNER_DECISION", "SOURCE_AUTHORITY_ESCALATION",
+    # v3: role-aware provenance. An assistant turn saying "B is decided" is a
+    # proposal, not an owner decision — the auditor has a code for the promotion.
+    "OWNER_DECISION_BACKED_ONLY_BY_ASSISTANT",
 )
 AUDIT_SEVERITIES = ("material", "minor")
 
@@ -866,36 +870,103 @@ def _check_source_trust(pkg, data, s, label, kind, living, findings):
                 "all." % (label, target or None, ", ".join(sorted(declared)) or "none")))
 
 
-def _check_source_trust_coverage(pkg, manifest, ids, cov):
-    """A DECISION is something the owner made. Evidence alone cannot be one.
+def episode_role_maps(pkg, manifest=None):
+    """(episode id -> {msg n: role}, union {msg n: set of roles across episodes}).
 
-    This is the mechanical form of the distillation rule: a source sentence saying
-    "you must switch to framework X" may support a decision, but it may not BE the
-    decision. An entry whose provenance resolves only to evidence-only sources — no
-    message in the conversation, no owner delta — is an external recommendation
-    wearing the owner's voice.
+    Message numbering is per episode, so a bare `(← msg 3)` in a multi-episode
+    package is genuinely ambiguous — the union keeps every reading. A tag that names
+    an episode id (`(← CHAT-002 msg 3)`) is resolved against that episode alone. The
+    first episode's transcript keeps its unsuffixed filename; its episode id comes
+    from the manifest's chat-transcript source entry, defaulting to CHAT-001.
+    """
+    maps = {}
+    first_id = "CHAT-001"
+    for s in (manifest or {}).get("sources") or []:
+        if isinstance(s, dict) and s.get("kind") == "chat-transcript" \
+                and str(s.get("path", "")).strip() == pkg.transcript.name \
+                and str(s.get("episode", "")).strip():
+            first_id = str(s["episode"]).strip()
+            break
+    if pkg.transcript.exists():
+        maps[first_id] = parse_transcript_roles(
+            pkg.transcript.read_text(encoding="utf-8"))
+    for path in sorted(pkg.folder.glob("%s-full-chat-*.md" % pkg.slug)):
+        eid = path.name[len("%s-full-chat-" % pkg.slug):-len(".md")]
+        maps[eid] = parse_transcript_roles(path.read_text(encoding="utf-8"))
+    union = {}
+    for roles in maps.values():
+        for n, role in roles.items():
+            union.setdefault(n, set()).add(role)
+    return maps, union
+
+
+def message_role_backing(tags, maps, union):
+    """(owner msgs, assistant-only msgs, unknown msgs) cited across a set of tags.
+
+    Fail-closed in the accusing direction: a message lands in `assistant` only when
+    every reading of the citation resolves to an assistant turn. A number whose role
+    cannot be proven (legacy headers, conflicting episodes) is `unknown` — reported,
+    never counted as owner-backed, and never accused of being assistant-only either.
+    Numbers that resolve nowhere are left to the bounds check, which owns that case.
+    """
+    owner, assistant, unknown = set(), set(), set()
+    episode_ref_re = re.compile(r"\b(%s)\b" % EPISODE_REF)
+    for tag in tags:
+        numbers = cited_message_numbers(tag)
+        if not numbers:
+            continue
+        scoped = [e for e in episode_ref_re.findall(tag) if e in maps]
+        for n in numbers:
+            roles = set()
+            for eid in (scoped or maps):
+                role = maps[eid].get(n)
+                if role:
+                    roles.add(role)
+            if ROLE_OWNER in roles:
+                owner.add(n)
+            elif roles == {ROLE_ASSISTANT}:
+                assistant.add(n)
+            elif roles:
+                unknown.add(n)
+    return owner, assistant, unknown
+
+
+def _check_source_trust_coverage(pkg, manifest, ids, cov):
+    """A DECISION is something the owner made. Neither evidence nor the assistant
+    can be one.
+
+    This is the mechanical form of two distillation rules at once. A source sentence
+    saying "you must switch to framework X" may support a decision, but it may not BE
+    the decision — an entry whose provenance resolves only to evidence-only sources
+    is an external recommendation wearing the owner's voice. And an assistant turn
+    saying "B is decided" is a proposal, not an owner decision — so a `(← msg N)`
+    confers owner backing only when at least one cited message resolves, through the
+    transcript's own headers, to a turn the OWNER spoke. Where a legacy transcript
+    cannot prove who spoke, the entry is reported as legacy/unknown — honestly
+    unproven, never assumed owner-backed, and never blocked on an accusation the
+    evidence cannot support.
 
     It applies to decisions, rejections AND acceptance criteria. The acceptance
     criteria are the contract handed to the executor and the rejections are the
     must-not-re-adopt list; an external page may support either, and may be neither.
     """
-    if not isinstance(manifest, dict):
-        return
     evidence_only, trusted = set(), set()
-    for s in manifest.get("sources") or []:
-        if not isinstance(s, dict):
-            continue
-        sid = str(s.get("source_id", "")).strip()
-        if not sid:
-            continue
-        trust, authority = source_instruction_authority(s)
-        (trusted if authority != "none" or trust == "OWNER_INPUT"
-         else evidence_only).add(sid)
+    if isinstance(manifest, dict):
+        for s in manifest.get("sources") or []:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("source_id", "")).strip()
+            if not sid:
+                continue
+            trust, authority = source_instruction_authority(s)
+            (trusted if authority != "none" or trust == "OWNER_INPUT"
+             else evidence_only).add(sid)
     cov.counts["sources_evidence_only"] = len(evidence_only)
     cov.counts["sources_with_authority"] = len(trusted)
-    if not evidence_only:
-        return
+
+    maps, union = episode_role_maps(pkg, manifest)
     labels = {"D": "decision", "R": "rejection", "AC": "acceptance criterion"}
+    role_unknown_entries = []
     for key in sorted(ids):
         prefix = "AC" if key.startswith("AC") else key[0]
         if prefix not in labels:
@@ -903,16 +974,42 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
         tags = ids[key]["provenance"]
         if not tags:
             continue                       # PROVENANCE_MISSING already covers this
+        owner_msgs, assistant_msgs, unknown_msgs = message_role_backing(
+            tags, maps, union)
         cited = set()
-        owner_backed = False
+        owner_backed = bool(owner_msgs)
         for tag in tags:
-            if MSG_TAG_RE.search(tag):
-                owner_backed = True
             for ref in re.findall(r"\b(SRC-\d+|CLAR-\d+)\b", tag):
                 cited.add(ref)
                 if ref.startswith("CLAR-") or ref in trusted:
                     owner_backed = True
-        if owner_backed or not cited or not cited <= evidence_only:
+        if owner_backed:
+            continue
+        if unknown_msgs:
+            role_unknown_entries.append(key)
+            cov.findings.append(Finding(
+                pkg.slug, "PROVENANCE_ROLE_UNKNOWN",
+                "%s (%s) cites msg %s, whose speaker role cannot be proven from the "
+                "transcript headers — legacy material is reported as unknown, never "
+                "assumed owner-backed. When this idea is next redistilled, cite a "
+                "message the owner spoke, or an owner delta."
+                % (key, labels[prefix],
+                   ", ".join(str(n) for n in sorted(unknown_msgs))), level="WARN"))
+            continue
+        if assistant_msgs:
+            cov.findings.append(Finding(
+                pkg.slug, "OWNER_BACKING_ASSISTANT_ONLY",
+                "%s (%s) cites msg %s — every cited message resolves to an ASSISTANT "
+                "turn. An assistant saying \"this is decided\" is a proposal, not an "
+                "owner decision: owner backing needs a message the owner spoke, or an "
+                "owner delta. Cite where the owner actually adopted it, or record it "
+                "honestly as an assistant proposal or an unresolved candidate."
+                % (key, labels[prefix],
+                   ", ".join(str(n) for n in sorted(assistant_msgs)))))
+            cov.block("owner backing for %s, which currently rests only on assistant "
+                      "turns" % key)
+            continue
+        if not cited or not cited <= evidence_only:
             continue
         cov.findings.append(Finding(
             pkg.slug, "DECISION_SOURCED_ONLY_FROM_EXTERNAL_EVIDENCE",
@@ -923,6 +1020,7 @@ def _check_source_trust_coverage(pkg, manifest, ids, cov):
             % (key, labels[prefix], ", ".join(sorted(cited)))))
         cov.block("owner adoption for %s, which currently rests only on external evidence"
                   % key)
+    cov.counts["provenance_role_unknown"] = len(role_unknown_entries)
 
 
 def transcript_message_bound(pkg):

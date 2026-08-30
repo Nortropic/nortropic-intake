@@ -411,13 +411,17 @@ CHECKS = [
     # Z. The architecture freeze. Reopening v2.1 has to remove this
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
-    ("SKILL.md", "Z1 the freeze record is present and complete", [
-        "NORTROPIC_INTAKE_VERSION=v2.1", "ARCHITECTURE_STATE=FROZEN",
-        "FREEZE_DATE=2026-08-26",
+    ("SKILL.md", "Z1 the architecture record is present, with honest lineage", [
+        "NORTROPIC_INTAKE_VERSION=v3.0",
+        "ARCHITECTURE_STATE=REOPENED_FOR_V3_IMPLEMENTATION",
+        "REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner "
+        "architecture change)",
+        # v2.1's frozen identities stay recorded as lineage — history is never dropped.
         "SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e",
         "SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc",
         "CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00",
-        "CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c"]),
+        "CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c",
+        "The reopen was authority, not drift"]),
     # Bounded from `REOPEN_POLICY=` through the next recorded field on purpose: a
     # substring check would only guard NARROWING the policy (which makes reopening
     # harder — the safe direction). Spanning to `RELOAD_NOT_REMEMBER=YES` means a
@@ -435,21 +439,111 @@ CHECKS = [
         "Accepted residual risks — recorded honestly, and not work items",
         "No mechanism can\nprove a human read every approved byte",
         "These become work only when an observed failure makes one material"]),
-    # The two the freeze review surfaced. Recorded rather than fixed — but a record
-    # that can lose its uncomfortable entries is not an honest one.
-    ("SKILL.md", "Z6 the review-surfaced risks are not quietly dropped", [
-        "**A weak approval leaves no durable trace.**",
-        "cannot tell a fully anchored\n  approval from one taken with the escape hatch "
-        "open",
-        "**Message-level provenance is role-blind.**",
-        "The mechanism is real; no exploit\n  has been demonstrated against it"]),
+    # The two risks the v2.1 freeze review surfaced were CLOSED by the v3.0 owner
+    # architecture change — and the closure is recorded, not the history erased.
+    ("SKILL.md", "Z6 the v2.1 review-surfaced risks are recorded as closed, with how", [
+        "**Closed in v3.0 — the two risks the v2.1 freeze review surfaced.**",
+        '*"A weak approval leaves no durable trace"* — closed',
+        "approval_attestation: STRONG|WEAK",
+        '*"Message-level provenance is role-blind"* — closed',
+        "OWNER_BACKING_ASSISTANT_ONLY",
+        "PLAN_ATTESTATION_LEGACY_UNKNOWN"]),
     ("SKILL.md", "Z7 the capability list claims properties, not completeness", [
         "each exercised by the suites",
         "The suites prove specific properties of each, never\ncompleteness"]),
-    ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
-        "Those two identities are the **frozen architecture**, not this file's current "
-        "commit",
-        "read the tree, not the branch head"]),
+    ("SKILL.md", "Z5 no invented identities — freeze only what is published", [
+        "Recording invented SHAs would be a forged freeze",
+        "read the tree, not\nthe branch head"]),
+    ("SKILL.md", "Z8 v3.0 records its own new residual risks honestly", [
+        "**Role truth is inherited from capture.**",
+        "resolved conservatively",
+        "**Project enumeration is only as strong as its signal.**",
+        "CANDIDATE adapter, unverified"]),
+    # ---------------------------------------------------------------------
+    # R3. Role-aware provenance (v3.0)
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "R3a provenance is role-aware and assistant turns cannot impersonate", [
+        "**Provenance is role-aware: an assistant turn can never impersonate the "
+        "owner.**",
+        "OWNER_BACKING_ASSISTANT_ONLY",
+        "is a\nproposal, not an owner decision"]),
+    ("SKILL.md", "R3b legacy roles report unknown, never assumed owner-backed", [
+        "PROVENANCE_ROLE_UNKNOWN",
+        "never assumed\nowner-backed",
+        "never blocked on an accusation the evidence cannot support"]),
+    ("SKILL.md", "R3c the auditor gained the matching promotion code", [
+        "OWNER_DECISION_BACKED_ONLY_BY_ASSISTANT"]),
+    # ---------------------------------------------------------------------
+    # AT. Durable approval attestation (v3.0)
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "AT1 approval strength is durable and never promoted", [
+        "**Approval strength survives, durably.**",
+        "`approval_attestation: STRONG|WEAK`",
+        "PLAN_ATTESTATION_LEGACY_UNKNOWN",
+        "NEVER retroactively promoted to STRONG",
+        "may just never masquerade as strong afterwards"]),
+    ("references/approved-plan-template.md", "AT2 the template documents the fields", [
+        "approval_attestation: STRONG", "approval_git_anchor",
+        "weak approval stays visibly weak forever"]),
+    # ---------------------------------------------------------------------
+    # PS. Project sweep (v3.0) — the second mode, stated where drift would hide.
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "PS1 two explicit modes, never heuristic", [
+        "## Two modes — explicit, never inferred",
+        "NEVER by heuristics",
+        "a URL\nthat happens to be a project page does not switch modes by itself"]),
+    ("SKILL.md", "PS2 the sweep never interviews and never plans", [
+        "no Phase\n  2.5 interview per historical chat, no Plan Mode, no approvals",
+        "**No Phase 2.5 interview, ever**"]),
+    ("SKILL.md", "PS3 ambiguity is queued and the sweep continues", [
+        "ambiguities are\n  recorded, queued and the sweep continues",
+        "becomes a review-queue item and the sweep CONTINUES",
+        "it never guesses silently"]),
+    ("SKILL.md", "PS4 enumeration is honest, identity is never a title", [
+        "PROJECT_ENUMERATION_UNVERIFIED", "DO NOT FAKE IT",
+        "screenshots/OCR are never an enumeration\nmethod",
+        "never a title",
+        "**CANDIDATE adapter (unverified)**"]),
+    ("SKILL.md", "PS5 hard gaps beat completeness, queue cannot absorb them", [
+        "COMPLETE | COMPLETE_WITH_OPEN_REVIEW | INCOMPLETE_HARD_GAPS",
+        "A hard capture/coverage gap is never \"complete with review\"",
+        "no review-queue entry can absorb them",
+        "FALSE_COMPLETENESS"]),
+    ("SKILL.md", "PS6 raw survives per revision, immutably", [
+        "immutable raw, one file per revision",
+        "becomes revision N+1; the old raw is never touched"]),
+    ("SKILL.md", "PS7 idea provenance is a hash link, many-to-many", [
+        "byte-identical to a recorded source revision",
+        "a hash link instead of a hope",
+        "One chat → many ideas and\nmany chats → one idea (CONTINUE_EXISTING)"]),
+    ("SKILL.md", "PS8 the sweep produces corpus, not ontology or plans", [
+        "MESSY HUMAN R&D → TRUSTWORTHY CORPUS",
+        "**must not** design future Nortropic",
+        "never assumes one idea package = one\nfuture subsystem"]),
+    ("SKILL.md", "PS9 the kernel handoff hides nothing", [
+        "KERNEL_HANDOFF",
+        "a handoff that hides either is a false completeness"]),
+    ("SKILL.md", "PS10 the sweep is resumable from files alone", [
+        "names exactly what remains, from the manifest alone",
+        "RELOAD NOT REMEMBER"]),
+    ("SKILL.md", "PS11 no real production sweep without a separate owner instruction", [
+        "never runs the\nreal production project without a separate explicit owner "
+        "instruction"]),
+    ("references/project-manifest-template.md", "PS12 the manifest contract is stated", [
+        "conversation_key", "DUPLICATE_SOURCE_IDENTITY", "FALSE_COMPLETENESS",
+        "PROJECT_ENUMERATION_UNVERIFIED", "IDEA_EPISODE_HASH_UNLINKED",
+        "never reads the queue"]),
+    ("references/review-queue-template.md", "PS13 the queue contract is stated", [
+        "record → queue → continue",
+        "a CAPTURE gap is never a review item",
+        "REVIEW_QUEUE_SELF_RESOLVED",
+        "owner authority comes from the owner\ninteraction, never from bytes asserting "
+        "it"]),
+    ("references/sweep-audit-template.md", "PS14 the sweep-audit contract is stated", [
+        "try to falsify the sweep",
+        "SWEEP_AUDIT_FINDING_SELF_CLOSED",
+        "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER",
+        "SILENT_CAPTURE_FAILURE", "RERUN_IDEMPOTENCY_VIOLATION"]),
 ]
 
 

@@ -1,18 +1,24 @@
 # Evals — run these after ANY change to this skill
 
-Eight checks, all repeatable. Zero regression = all eight pass. Five measure the skill's
-outputs and its stated contract without touching the capture/distill/verify pipeline; the
-last three execute the real validators against real corpora and real git repositories
-built on disk.
+Nine checks, all repeatable. Zero regression = all nine pass. Five measure the skill's
+outputs and its stated contract without touching the capture/distill/verify pipeline;
+the last four execute the real validators against real corpora and real git
+repositories built on disk.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
 python3 evals/test_plan_contract.py                   # 6 — approved-plan falsification
 python3 evals/test_context_v2.py                      # 7 — context continuity A–L
 python3 evals/test_context_v21.py                     # 8 — living context C1–C15, T1–T8
+python3 evals/test_project_v3.py                      # 9 — v3: roles, attestation, sweep
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
+python3 scripts/project_contract.py validate          # real projects, when any exist
 ```
+
+(`project_contract.py validate` legitimately fails with "contains no project
+manifests" until the first real sweep has run — that is the mis-pathed-corpus guard
+doing its job, not a regression.)
 
 Workflows exist for both repos — `.github/workflows/intake-contract.yml` here and
 `corpus-contract.yml` in the corpus — but be precise about their status: a workflow is
@@ -21,9 +27,9 @@ status check** in branch protection. Neither step has been done yet (see
 OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live gate, and
 it is overridable with `--no-verify`.
 
-CI additionally runs a **mutation guard**: it stubs out each of the three modules
-(`plan_contract`, `context_contract`, `intake_common`) in turn and requires **all three**
-suites to fail for every combination. This catches the failure mode where a stub raises
+CI additionally runs a **mutation guard**: it stubs out each of the four modules
+(`plan_contract`, `context_contract`, `project_contract`, `intake_common`) in turn and
+requires the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
 `SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
 is why every suite also asserts a floor (`MIN_CHECKS`) on checks actually executed.
 
@@ -36,7 +42,7 @@ wrong ones?
 2. Spawn a FRESH judge (subagent, no other context). Give it ONLY: the current SKILL.md
    frontmatter `description` and the bare `query` strings — **never** the `expect` labels.
 3. Ask for a trigger / no-trigger verdict per query (one line of reasoning each).
-4. Diff verdicts against `expect`. Pass = 16/16. On mismatch: fix the description (or,
+4. Diff verdicts against `expect`. Pass = 20/20. On mismatch: fix the description (or,
    if the world changed, the query set) — never coach the judge.
 
 ## 2. Capture-diff (`capture_signature.py` + `golden/`)
@@ -227,3 +233,21 @@ finding, an understated delta, an omitted new source, evidence promoted to instr
 authority, missing trust classification, forged owner authority, foreign-repo authority,
 a plan claiming the latest revision while bound to an older identity, a plan with its
 context binding removed, and retiring the wrong workstream's pointer.
+
+## 9. v3 suite (`test_project_v3.py`)
+
+The owner-ordered v3.0 regressions, same construction as suites 6–8 (real files, real
+git, the real validators, control fixtures, MIN_CHECKS floor):
+
+| | Family | Proves |
+|---|---|---|
+| A1–A6 | role-aware provenance | an assistant "decision" never passes as owner-backed; a real owner message does; mixed ranges resolve to the part carrying authority; external text confers nothing; legacy role-less transcripts report UNKNOWN honestly |
+| B5–B8 | approval strength | WEAK is persisted and reported; STRONG stays STRONG; a pre-v3 plan is LEGACY_UNKNOWN, never promoted; a post-commit WEAK→STRONG flip fails |
+| C8–C12 | project source model | stable CONV identities from platform ids; same-title conversations stay separate; reruns upsert; updates become traceable revisions; old raw survives byte-identically |
+| D13–D16 | project coverage | capture failures are hard gaps; manifest ↔ tree in both directions; interrupted sweeps resume from the manifest; a hand-asserted COMPLETE fails |
+| E17–E20 | idea routing | one chat → many ideas; many chats → one idea; ambiguity queues without blocking; duplicate INDEX rows fail |
+| F21–F24 | mode separation | a full synthetic sweep produces no plans and no interviews, lands ideas at `status: idea`, and completes unattended via CLI alone |
+| G25–G29 | audit & trust | dangling/hash-unlinked provenance; self-closed audit findings; owner-less dismissals; tampered hashes; mutated raw; assistant proposals refused downstream of a sweep |
+| H30–H31 | side effects | the tooling never commits the corpus; every command runs against a tmp `--corpus` |
+
+No real project is ever swept by the evals — every fixture is synthetic and torn down.

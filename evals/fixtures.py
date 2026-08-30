@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 PLAN_CONTRACT = SCRIPTS / "plan_contract.py"
 CONTEXT_CONTRACT = SCRIPTS / "context_contract.py"
+PROJECT_CONTRACT = SCRIPTS / "project_contract.py"
 
 CONTROL_SLUG = "control-ok"
 
@@ -884,3 +885,7 @@ def plan(argv, corpus=None):
 
 def context(argv, corpus=None):
     return run(CONTEXT_CONTRACT, argv, corpus)
+
+
+def project(argv, corpus=None):
+    return run(PROJECT_CONTRACT, argv, corpus)

@@ -1,6 +1,6 @@
 # nortropic-intake
 
-**A Claude Code skill that turns a brainstorm chat (in ChatGPT or Claude) into ready-to-build implementation context: a distilled idea brief, a design rationale preserving why the design took its shape, and the verbatim transcript kept as evidence.**
+**A Claude Code skill that turns messy human R&D (a brainstorm chat, or a whole ChatGPT/Claude project) into a trustworthy corpus: distilled idea briefs, design rationales preserving why each design took its shape, and the verbatim transcripts kept as evidence.**
 
 Resten av den här filen är på svenska. README:n förklarar *vad* skillen gör och *varför* —
 det exakta *hur* står i [SKILL.md](SKILL.md).
@@ -12,8 +12,21 @@ och kör kod från terminalen. En **skill** är ett instruktionspaket i vanliga 
 som Claude Code läser in när en viss sorts uppgift dyker upp: en checklista och
 spelregler för just den uppgiften.
 
-Den här skillen gör en sak: den förvandlar en brainstorm-chatt till den kontext en
-kodagent behöver för att implementera idén.
+Sedan v3.0 har skillen **två uttryckliga lägen** — aldrig gissade, alltid begärda:
+
+- **SINGLE** (standard): en brainstorm-chatt → den kontext en kodagent behöver för att
+  implementera idén. Det är hela flödet nedan.
+- **PROJECT_SWEEP** ("svep projektet", "kör project sweep"): ett helt ChatGPT/Claude-
+  projekt, eller en uttrycklig konversationslista → ett förlustfritt,
+  täckningsverifierat R&D-korpus. Korpusintag, inte bygge: ingen ägarintervju per
+  historisk chatt, ingen planläge, inga godkännanden — tvetydigheter köas i en
+  granskningskö och svepet fortsätter, medan capture-integritet och källtäckning
+  faller stängt. Varje konversation får en stabil identitet (plattformens
+  konversations-id, aldrig titeln), varje fångad version är orörlig, och
+  fullständighet **bevisas mekaniskt** — ett hårt capture-glapp kan aldrig kallas
+  "komplett". Se Project sweep-avsnittet i SKILL.md samt
+  `_projects/<projekt>/`-artefakterna (manifest, källor, granskningskö, oberoende
+  svepaudit).
 
 ## Problemet
 
@@ -135,6 +148,16 @@ och tvetydiga fall faller stängt.
 Det här är en **auktoritetsmodell, inte en injektionsdetektor**: det råa bevaras ordagrant
 även när det ser fientligt ut. Det som styrs är tolkningen, aldrig bevisningen.
 
+Sedan v3.0 är proveniensen dessutom **rollmedveten**: `(← msg N)` slås upp mot
+transkriptets egna rubriker (`## Meddelande N — <roll>`), så en assistent-tur som säger
+"B är beslutat" kan aldrig ensam räknas som ägarstöd — ägarstöd kräver ett meddelande
+ägaren faktiskt skrev, eller ett ägardelta. Gammalt material utan bevisbara roller
+rapporteras ärligt som okänt, aldrig antaget som ägarstött. Och ett plangodkännandes
+**styrka** överlever numera för alltid: `approve` skriver `approval_attestation:
+STRONG|WEAK` i själva planfilen — ett svagt godkännande får finnas, men det kan aldrig
+maskera sig som starkt i efterhand, och en äldre plan utan fältet läses som
+LEGACY_UNKNOWN, aldrig som STRONG.
+
 **Auktoritetsordning** (högst vinner): gällande kanonisk repo-auktoritet (målrepots
 konstitution, regelverk, godkänd arkitektur) → senare ägargodkänd spec/plan → godkänd
 intake-plan → brief → rationale → transkript. Intake-artefakter bevarar intention och
@@ -208,7 +231,10 @@ Svenska eller engelska fungerar.
 | [references/owner-clarifications-template.md](references/owner-clarifications-template.md) | Ägardeltans mall: CLAR-id, typer över alla faser, append-only, dispositioner |
 | [references/context-delta-template.md](references/context-delta-template.md) | Kontextdeltat: ett REV-block per revision, i stabila id:n, kontrollerat mot evidens |
 | [references/distillation-audit-template.md](references/distillation-audit-template.md) | Destillationsauditen: fyndkoder, append-only rundor, bevis per fynd |
-| [scripts/](scripts/) | Capture- och verifieringsskripten (körs i webbläsaren respektive lokalt) samt `plan_contract.py` — validerar, återupptar och pekar ut den godkända planen |
+| [references/project-manifest-template.md](references/project-manifest-template.md) | Projektmanifestet: stabila källidentiteter, orörliga versioner, mekanisk täckning, ärlig enumerering |
+| [references/review-queue-template.md](references/review-queue-template.md) | Granskningskön: registrera → köa → fortsätt; ett capture-glapp kan aldrig gömmas här |
+| [references/sweep-audit-template.md](references/sweep-audit-template.md) | Svepauditen: oberoende falsifiering på projektnivå, append-only rundor |
+| [scripts/](scripts/) | Capture-, discovery- och verifieringsskripten samt de tre kontrakten: `plan_contract.py`, `context_contract.py`, `project_contract.py` |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 
 ## Principerna bakom bygget
