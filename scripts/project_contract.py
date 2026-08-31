@@ -637,6 +637,27 @@ def _validate_enumeration(proj, data, findings):
                 proj.name, "ENUMERATION_CLAIM_INVALID",
                 "enumeration evidence names no terminal_signal — exhaustion must say "
                 "what ended the cursor walk"))
+        else:
+            # The archived record has to still be there, and still be the bytes the
+            # claim was checked against.
+            rel = str(evidence.get("record") or "").strip()
+            target = proj.corpus / rel if rel else None
+            if not rel:
+                findings.append(Finding(
+                    proj.name, "ENUMERATION_EVIDENCE_MISSING",
+                    "enumeration evidence records no archived path — a proof nobody "
+                    "can re-read is not evidence"))
+            elif not target.is_file():
+                findings.append(Finding(
+                    proj.name, "ENUMERATION_EVIDENCE_MISSING",
+                    "enumeration evidence points at %s, which does not exist — the "
+                    "record that backs a verified claim must survive with the corpus"
+                    % rel))
+            elif sha256_file(target) != str(evidence.get("sha256", "")).strip().lower():
+                findings.append(Finding(
+                    proj.name, "ENUMERATION_EVIDENCE_TAMPERED",
+                    "%s no longer hashes to the digest recorded with the claim — the "
+                    "proof was edited after it was accepted" % rel))
 
 
 def _validate_sources(proj, data, findings):
@@ -1145,8 +1166,18 @@ def check_enumeration_evidence(path, inventory):
         platform may drop, and no item may belong to another project;
       * exhaustion is the cursor's own terminal signal, walked page by page — not
         arithmetic against a `total` this endpoint never sends;
+      * the page ledger must describe a walk that adds up: pages that account for the
+        items collected, cursors that chain, and a last page that ends;
       * and the evidence must describe THIS inventory, item for item, or it is
         evidence about something else.
+
+    Be exact about what this cannot do. It re-reads a record for internal consistency
+    and agreement with the inventory; it cannot prove an HTTP request ever happened.
+    A careful forgery that keeps every number consistent will pass, which is why
+    references/extraction.md says never to hand-write one: the value of the proof is
+    that a machine produced it. What this closes is the realistic failure — a record
+    reconstructed, summarized or half-remembered by an agent, which stops agreeing
+    with itself almost immediately.
     """
     record, err = read_json(Path(path))
     if err or not isinstance(record, dict):
@@ -1186,6 +1217,35 @@ def check_enumeration_evidence(path, inventory):
         refusals.append("the last page still hands out a cursor (%r) — the walk "
                         "stopped, it did not finish"
                         % (pages[-1] or {}).get("cursor_out"))
+    else:
+        # The ledger's own numbers have to account for the result it claims.
+        if (pages[0] or {}).get("cursor_in") is not None:
+            refusals.append("the first page was fetched WITH a cursor (%r) — a walk "
+                            "that starts mid-stream has not enumerated the beginning"
+                            % (pages[0] or {}).get("cursor_in"))
+        for a, b in zip(pages, pages[1:]):
+            if (a or {}).get("cursor_out") != (b or {}).get("cursor_in"):
+                refusals.append("the cursor chain breaks between page %r and %r "
+                                "(%r handed out, %r used) — these pages are not one "
+                                "walk" % ((a or {}).get("page"), (b or {}).get("page"),
+                                          (a or {}).get("cursor_out"),
+                                          (b or {}).get("cursor_in")))
+                break
+        seen_items = sum(int((pg or {}).get("items") or 0) for pg in pages)
+        want = (record.get("collected") or 0) + (record.get("duplicates_dropped") or 0)
+        if seen_items != want:
+            refusals.append("the ledger saw %d item(s) across its pages but the record "
+                            "claims %d collected + %d duplicate(s) dropped — the walk "
+                            "does not account for the result"
+                            % (seen_items, record.get("collected") or 0,
+                               record.get("duplicates_dropped") or 0))
+
+    # The adapter's own extra oracle, when it fired, is not allowed to be ignored.
+    oracle = str(record.get("count_oracle") or "")
+    if oracle.strip().upper().startswith("DISAGREES"):
+        refusals.append("the record's own count oracle says %r — a disagreement the "
+                        "adapter reported cannot be declared as a verification"
+                        % oracle[:120])
 
     items = record.get("items")
     if not isinstance(items, list):
@@ -1240,7 +1300,6 @@ def check_enumeration_evidence(path, inventory):
                            len(ev_keys ^ inv_keys)))
 
     summary = {
-        "record": str(path),
         "sha256": sha256_file(Path(path)),
         "source": record.get("source"),
         "endpoint": record.get("endpoint"),
@@ -1320,6 +1379,15 @@ def cmd_declare(proj, args):
     # declaration without one must not inherit the old proof and leave the manifest
     # describing an inventory that is no longer there.
     if evidence:
+        # Archive the record beside the manifest. A digest of a file that lives at an
+        # absolute path on one operator's laptop is not something an auditor can check,
+        # and a proof nobody can re-read is the shape of trust this architecture
+        # refuses everywhere else — RAW SOURCE SURVIVES applies to the proof too.
+        dest = proj.folder / ("enumeration-evidence-r%d.json"
+                              % (int(data.get("inventory_revision") or 0) + 1))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(Path(args.evidence).read_bytes())
+        evidence["record"] = proj.rel(dest)
         enum["evidence"] = evidence
     else:
         enum.pop("evidence", None)
@@ -1400,15 +1468,26 @@ def cmd_capture(proj, args):
     at = args.at or today()
 
     # A revision answers to the CONVERSATION, never to the header the builder wrote
-    # about it. Compare on source identity, and recompute it from the bytes on disk
-    # for revisions captured before this field existed — a legacy corpus must reach
-    # the same no-op without being migrated first.
+    # about it. Compare on source identity, recomputed from the bytes on disk — the
+    # recorded field is a cross-check, not the answer.
+    #
+    # This decision is the one place a wrong value does real damage: if it says
+    # "unchanged" it returns 0, writes nothing, and a genuine new revision is gone with
+    # no trace anywhere. So it is derived from content for the same reason the
+    # verification verdict is, and a stored value that disagrees is reported rather
+    # than quietly preferred. Revisions captured before the field existed simply have
+    # nothing to cross-check, and reach the same answer without being migrated.
     for r in source.get("revisions") or []:
-        known = str(r.get("source_sha256", "")).strip().lower()
-        if not known:
-            prior = proj.corpus / str(r.get("path", "")).strip()
-            if prior.is_file():
-                known = transcript_source_sha256(prior.read_text(encoding="utf-8"))
+        prior = proj.corpus / str(r.get("path", "")).strip()
+        recorded = str(r.get("source_sha256", "")).strip().lower()
+        known = ""
+        if prior.is_file():
+            known = transcript_source_sha256(prior.read_text(encoding="utf-8"))
+            if recorded and recorded != known:
+                print("SOURCE_IDENTITY_RECORD_STALE — revision %s records "
+                      "source_sha256 %s… but %s holds %s…; using the bytes. Run "
+                      "`validate` — the manifest is out of step with the corpus."
+                      % (r.get("revision"), recorded[:16], proj.rel(prior), known[:16]))
         if known and known == source_digest:
             if str(r.get("sha256", "")).strip().lower() == digest:
                 print("CAPTURE_UNCHANGED — these bytes are already revision %s of %s; a "

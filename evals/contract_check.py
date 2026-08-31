@@ -473,7 +473,7 @@ CHECKS = [
         "would be a false security claim",
         "**A trusted click may not land.**",
         "no retry framework was added for it",
-        "**The chunk bound is a prescription, not a spill detector.**",
+        "**The chunk bound is a prescription; a separate check notices a spill.**",
         "the header's own bytes are\n  outside source identity"]),
     # ---------------------------------------------------------------------
     # R3. Role-aware provenance (v3.0)

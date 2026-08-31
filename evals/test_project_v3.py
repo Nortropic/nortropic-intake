@@ -1072,10 +1072,22 @@ def i_source_identity(tmp):
           rc != 0 and "PROJECT_SOURCE_IDENTITY_MISMATCH" in out, out.strip()[:700])
     check("I42b and the finding says why it matters — a swallowed revision",
           "silently swallows the next real revision" in out, out.strip()[:700])
+    # And `capture` is the decision point, so it must not trust the field either: a
+    # wrong value there says "unchanged", writes nothing, returns 0, and a genuine
+    # revision disappears with no trace for `validate` to find later.
     rc, out = capture(corpus4, "forge", "CONV-001", real_next, forge_tmp, at="2026-09-02")
-    check("I42c (the shape it protects: a forged field makes a REAL change look "
-          "unchanged, which is why the manifest never gets the last word)",
-          "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+    check("I42c a forged field does NOT make a real change look unchanged — capture "
+          "derives prior identity from the bytes, not from the manifest",
+          rc == 0 and "revision 2" in out and "CAPTURE_UNCHANGED" not in out,
+          out.strip()[:700])
+    check("I42d and the stale record is reported rather than quietly preferred",
+          "SOURCE_IDENTITY_RECORD_STALE" in out, out.strip()[:700])
+    data2 = read_project_manifest(corpus4, "forge")
+    check("I42e the genuine revision landed and both raw files survive",
+          [r["revision"] for r in data2["sources"][0]["revisions"]] == [1, 2]
+          and all((Path(corpus4) / r["path"]).is_file()
+                  for r in data2["sources"][0]["revisions"]),
+          str(data2["sources"][0]["revisions"]))
 
     check("I41c the orphaned bytes survive on disk for the operator to resolve",
           (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md"
@@ -1195,6 +1207,39 @@ def j_enumeration_evidence(tmp):
     check("J43f a collected count that does not match the items it counts is refused",
           rc != 0 and "does not match what it counts" in out, out.strip()[:700])
 
+    # The ledger has to add up, not merely exist. A record reconstructed from memory
+    # after a transport failure stops agreeing with itself here.
+    thin = real_discovery_record(urls)
+    thin["exhaustion"]["pages"] = [{"page": 1, "cursor_in": None, "items": 0,
+                                    "cursor_out": None}]
+    thin["exhaustion"]["pages_walked"] = 1
+    ev = _evidence(tmp, "thinledger", urls, _base=thin)
+    rc, out = declare(ev)
+    check("J43g a ledger whose pages saw 0 items cannot account for the conversations "
+          "the record claims to have collected",
+          rc != 0 and "does not account for the result" in out, out.strip()[:700])
+
+    broken = real_discovery_record(urls)
+    broken["exhaustion"]["pages"][1]["cursor_in"] = "a-different-cursor"
+    ev = _evidence(tmp, "chainbreak", urls, _base=broken)
+    rc, out = declare(ev)
+    check("J43h pages whose cursors do not chain are not one walk",
+          rc != 0 and "cursor chain breaks" in out, out.strip()[:700])
+
+    midstream = real_discovery_record(urls)
+    midstream["exhaustion"]["pages"][0]["cursor_in"] = "resume-token"
+    ev = _evidence(tmp, "midstream", urls, _base=midstream)
+    rc, out = declare(ev)
+    check("J43i a walk that started mid-stream never enumerated the beginning",
+          rc != 0 and "has not enumerated the beginning" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "disagrees", urls,
+                   count_oracle="DISAGREES: collected 27 vs total 800")
+    rc, out = declare(ev)
+    check("J43j the adapter's own count disagreement cannot be declared as a "
+          "verification",
+          rc != 0 and "count oracle says" in out, out.strip()[:700])
+
     data = read_project_manifest(corpus, "enum")
     check("J44a not one refused declaration promoted the enumeration",
           data["enumeration"]["verified"] is False, str(data["enumeration"]))
@@ -1222,6 +1267,27 @@ def j_enumeration_evidence(tmp):
     check("J44d an evidence-backed verified enumeration validates clean, no warning",
           rc == 0 and "ENUMERATION_EVIDENCE_LEGACY_ABSENT" not in out,
           out.strip()[:700])
+
+    # The proof survives with the corpus, and answers to its own bytes.
+    archived = Path(corpus) / data["enumeration"]["evidence"]["record"]
+    check("J44e the record itself is archived in the corpus, not left at an absolute "
+          "path on whichever laptop ran the sweep",
+          archived.is_file()
+          and not Path(data["enumeration"]["evidence"]["record"]).is_absolute()
+          and F.sha256_file(archived) == data["enumeration"]["evidence"]["sha256"],
+          str(data["enumeration"]["evidence"].get("record")))
+    archived.write_text(archived.read_text(encoding="utf-8").replace(
+        '"collected"', '"COLLECTED"'), encoding="utf-8")
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44f editing the archived proof after the fact is caught",
+          rc != 0 and "ENUMERATION_EVIDENCE_TAMPERED" in out, out.strip()[:700])
+    archived.unlink()
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44g and deleting it is caught too — a proof nobody can re-read is not one",
+          rc != 0 and "ENUMERATION_EVIDENCE_MISSING" in out, out.strip()[:700])
+    ev = _evidence(tmp, "good2", urls, _base=real)
+    declare(ev)
+    data = read_project_manifest(corpus, "enum")
 
     # Back-compat: a claim made before the evidence contract existed stays VALID,
     # is reported as legacy, and is never silently promoted.

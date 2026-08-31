@@ -28,10 +28,13 @@ Two things the Improvements proving run taught this script:
    without thinking about it.
 
    Be exact about the limit of that check: it fires on an oversized chunk that
-   ARRIVED INTACT. A chunk that genuinely spilled never reaches this script as a
-   chunk at all — it shows up as a missing slice index, which is the other failure
-   below. The bound is what stops the playbook from prescribing a size that spills;
-   it is not a detector for a spill that already happened.
+   ARRIVED INTACT. A chunk that actually got cut loses its `#END#`, and the slice
+   regex is non-greedy, so it swallows the FOLLOWING slice's marker and the two
+   arrive merged — an index silently absent from the ledger while nothing looks
+   missing. That shape is detected separately below, by counting `S<i>|` markers in
+   the raw text against the slices actually parsed. The bound is what stops the
+   playbook from prescribing a size that spills; the marker count is what notices
+   when one did.
 
 2. LENGTH DOES NOT IDENTIFY BYTES. The clipboard relay needs a trusted click to arm
    its copy handler. When that click does not land, `pbpaste` returns whatever the
@@ -39,8 +42,8 @@ Two things the Improvements proving run taught this script:
    length passes every check this script used to run, and the wrong conversation is
    delivered as a verified capture. `--sha256` closes that; nothing else here can.
 
-Checks: chunk bound (per transport), every index present exactly once, exact total
-length, exact digest when given, JSON parses, U+2060 stripped (restores neutralized
+Checks: chunk bound (per transport), no truncated/merged slice, every index present
+exactly once, exact total length, exact digest when given, JSON parses, U+2060 stripped (restores neutralized
 words), no empty messages, balanced code fences per message. Exits non-zero on any
 failure — do NOT build the markdown from unverified data.
 """
@@ -95,6 +98,20 @@ def main():
     if not idx:
         fail("no S<i>|...#END# slices found")
 
+    # A slice that got cut mid-payload lost its `#END#`, so the non-greedy match ran on
+    # and ate the next slice's marker with it. Two slices arrive as one, no index looks
+    # missing, and the only symptom would otherwise be a bare length mismatch with
+    # nothing to re-fetch. Count the markers that are actually in the text.
+    markers = len(re.findall(r"S\d+\|", raw))
+    if markers != len(found):
+        swallowed = sorted(k for k, v in idx.items() if re.search(r"S\d+\|", v))
+        print("TRANSPORT_SLICE_MERGED — %d marker(s) in the file but %d slice(s) "
+              "parsed; slice(s) %s carry another slice's marker inside them"
+              % (markers, len(found), swallowed or "?"))
+        fail("a slice lost its #END# — it was truncated in transit, and the one after "
+             "it was absorbed into the gap. Re-fetch slice(s) %s and everything after "
+             "them; the earlier slices are still valid." % (swallowed or "?"))
+
     if args.transport == "tool-output":
         # Measure what the tool actually carried: the framed chunk, not the payload
         # inside it. A payload exactly at the bound still spills once framed.
@@ -136,7 +153,15 @@ def main():
               "equal length are indistinguishable here. Record this downgrade wherever "
               "the capture is reported; do not let it read as a verified transfer.")
 
-    data = json.loads(s)
+    try:
+        data = json.loads(s)
+    except ValueError as exc:
+        fail("reassembled payload is not JSON: %s" % exc)
+    if not isinstance(data, list) or not all(
+            isinstance(m, dict) and "text" in m and "role" in m for m in data):
+        fail("reassembled payload is not a list of {role, text} messages — this is a "
+             "fail-closed gate, so an unexpected shape stops here rather than being "
+             "half-understood")
     for m in data:
         m["text"] = m["text"].replace("⁠", "").strip()
     if any(not m["text"] for m in data):

@@ -36,11 +36,13 @@ manifests" until the first real sweep has run — that is the mis-pathed-corpus 
 doing its job, not a regression.)
 
 Workflows exist for both repos — `.github/workflows/intake-contract.yml` here and
-`corpus-contract.yml` in the corpus — but be precise about their status: a workflow is
-only *running* once the file is pushed, and only *enforcing* once it is a **required
-status check** in branch protection. Neither step has been done yet (see
-OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live gate, and
-it is overridable with `--no-verify`.
+`corpus-contract.yml` in the corpus — and a workflow is only *running* once the file is
+pushed, only *enforcing* once it is a **required status check** in branch protection.
+For THIS repo both steps are now done: `main` requires the `contract` check (verified
+against the branch-protection API on 2026-08-31, `strict: true`), so a red run blocks the
+merge. `enforce_admins` is off, so an admin can still override — that is a person
+deciding, not a gate that silently is not there. The corpus repo's own hook remains a
+local gate, overridable with `--no-verify`.
 
 CI additionally runs a **mutation guard**: it stubs out each of the five modules
 (`plan_contract`, `context_contract`, `project_contract`, `intake_common`,

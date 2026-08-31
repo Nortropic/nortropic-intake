@@ -1034,7 +1034,8 @@ graph database.
                          hash F [--body]
 
     project_contract.py  init --project P --title T | declare --project P --inventory F
-                                 [--method declared|data-layer] [--verified]
+                                 [--method declared|data-layer]
+                                 [--verified --evidence D]   # --verified REQUIRES it
                          register --project P --url U | capture --project P --source ID --file F
                          mark-extracted --project P --source ID (--ideas s1,s2 | --no-ideas --note …)
                          mark-routed --project P --source ID | mark-failed … --stage … --detail …
@@ -1501,10 +1502,13 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   `--sha256` transport oracle is mandatory precisely so that becomes a hard failure
   rather than a plausible capture, which is as far as this layer can go — the flakiness
   itself lives in the browser tooling, and no retry framework was added for it.
-- **The chunk bound is a prescription, not a spill detector.** It fires on an oversized
-  chunk that arrived intact, which is what keeps the playbook from prescribing a size
-  that spills. A chunk that genuinely spilled never arrives as a chunk at all — it
-  arrives as a missing slice index, and that is the failure the operator sees.
+- **The chunk bound is a prescription; a separate check notices a spill.** The bound
+  fires on an oversized chunk that arrived intact, which is what keeps the playbook from
+  prescribing a size that spills. A chunk that actually got cut is a different shape: it
+  loses its `#END#`, the next slice's marker is swallowed into the gap, and no index
+  looks missing — so `reassemble_verify.py` counts `S<i>|` markers against the slices it
+  parsed and names the truncated one. Neither check can see a spill the transport never
+  handed over at all.
 - **The source region begins at the first message header, so the header's own bytes are
   outside source identity.** That is the point — it is what makes a re-worded purpose
   line a no-op — but it also means the attachment inventory and the URL line, both of

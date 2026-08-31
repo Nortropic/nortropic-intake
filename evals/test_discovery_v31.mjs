@@ -24,7 +24,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'scripts/project_discovery.js'), 'ut
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 
 // A suite that exits 0 having run nothing reports success it did not earn.
-const MIN_CHECKS = 20;
+const MIN_CHECKS = 24;
 const RESULTS = [];
 function check(name, cond, detail = '') {
   RESULTS.push([name, !!cond]);
@@ -197,9 +197,67 @@ await scenario('A9a', async () => {
         /no project id in URL/.test(r2.error || ''), JSON.stringify(r2));
 });
 
-// ---- lint: the broken endpoint is gone for good --------------------------
-check('A10 the v3.0 filter-query endpoint no longer appears as a request in the adapter',
-      !/fetch\([^)]*\/backend-api\/conversations\?/.test(SRC));
+// ---- A10: the endpoint the adapter BUILDS, not the string it happens to contain.
+// The first version of this check grepped for `fetch('/backend-api/conversations?…')`.
+// The adapter passes a variable to fetch, so that pattern could never match — it
+// passed against a fully regressed adapter. What is testable without a network is the
+// URL the adapter constructs, so ask it: run it and read `endpoint`.
+await scenario('A10', async () => {
+  const r = await discover(twoPages);
+  check('A10a the adapter builds a PATH-scoped project URL, with the id in the path',
+        r.endpoint === `/backend-api/gizmos/${GID}/conversations`, r.endpoint);
+  check('A10b and never the v3.0 account listing with a gizmo_id query filter',
+        !/^\/backend-api\/conversations\b/.test(r.endpoint || '') &&
+        !/[?&]gizmo_id=/.test(r.endpoint || ''), r.endpoint);
+});
+
+// ---- A11: extract.js — the digest finding D's fix depends on ---------------
+// scripts/extract.js gained the sha256 that closes the stale-clipboard defect, and
+// nothing executed it. The documented regression is cheap and total: drop the leading
+// `await` and the pending Promise serializes as {}, sha256 comes back undefined, and
+// the operator is nudged straight to --digest-unavailable. So run the real file.
+await scenario('A11', async () => {
+  const EXTRACT = fs.readFileSync(path.join(ROOT, 'scripts/extract.js'), 'utf8');
+  check('A11a extract.js is async and its leading `await` is present — without it the '
+        + 'Promise serializes as {} and the digest is silently lost',
+        /^await \(async function\(\)\{/m.test(EXTRACT));
+
+  // A minimal DOM: only what the ChatGPT adapter path touches.
+  const el = (role, text) => {
+    const node = {
+      _role: role, innerText: text, textContent: text,
+      getAttribute: (a) => (a === 'data-message-author-role' ? role : null),
+      querySelectorAll: () => [],
+      cloneNode: () => ({...node, querySelectorAll: () => []}),
+    };
+    return node;
+  };
+  const turns = [el('user', 'Bygg Evolution Radar.'),
+                 el('assistant', 'Beslutat: radarn laser Aquarium.')];
+  const holder = {style: {}, appendChild(){}, removeChild(){}};
+  const document = {
+    querySelectorAll: (sel) => sel === '[data-message-author-role]' ? turns : [],
+    createElement: () => holder,
+    body: {appendChild(){}, removeChild(){}},
+  };
+  const run = new AsyncFunction('location', 'document', 'window', 'crypto',
+                                'TextEncoder', EXTRACT.replace(/^await /m, 'return await '));
+  const win = {};
+  const out = JSON.parse(await run({hostname: 'chatgpt.com'}, document, win,
+                                   globalThis.crypto, globalThis.TextEncoder));
+
+  check('A11b it reports a sha256 alongside the length', typeof out.sha256 === 'string'
+        && out.sha256.length === 64, JSON.stringify(out).slice(0, 200));
+  const expected = [...new Uint8Array(await crypto.subtle.digest(
+    'SHA-256', new TextEncoder().encode(win.__nxExport)))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  check('A11c and the digest is of the exact bytes it stored on window.__nxExport — '
+        + 'the same bytes reassemble_verify.py checks --sha256 against',
+        out.sha256 === expected && out.len === win.__nxExport.length,
+        `${out.sha256} vs ${expected}`);
+  check('A11d two different conversations do not share a digest',
+        out.sha256 !== 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+});
 
 const failed = RESULTS.filter(([, ok]) => !ok);
 console.log(`\n${RESULTS.length - failed.length}/${RESULTS.length} checks passed`);

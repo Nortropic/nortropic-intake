@@ -21,6 +21,27 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
     "declared_inventory_sha256": "<sha256 of the inventory file>",
     "note": "owner-exported URL list; data-layer listing not provable"
   },
+
+  // …or, when the cursor walk proved itself (v3.1+). `evidence` is written by
+  // `declare --evidence`, never by hand, and the record it names is archived in the
+  // project folder so the proof survives with the corpus:
+  //
+  // "enumeration": {
+  //   "method": "data-layer",
+  //   "verified": true,
+  //   "declared_inventory_sha256": "…",
+  //   "evidence": {
+  //     "record": "_projects/<P>/enumeration-evidence-r<N>.json",
+  //     "sha256": "<of that record>",
+  //     "source": "project-discovery-cursor",
+  //     "endpoint": "/backend-api/gizmos/<gid>/conversations",
+  //     "membership_scope": "path-scoped-project-endpoint",
+  //     "membership_established_by": "project id in the request PATH",
+  //     "terminal_signal": "cursor-absent",
+  //     "pages_walked": 2, "collected": 27, "duplicates_dropped": 0,
+  //     "count_oracle": "absent — this endpoint sends no total; exhaustion is the proof"
+  //   }
+  // },
   "project_status": "",
   "inventory_revision": 3,
   "inventory_sha256": "<deterministic identity of the source inventory>",
@@ -75,11 +96,19 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
   packages carry this conversation as an episode transcript, byte-identical to a
   recorded revision (`IDEA_PROVENANCE_DANGLING`, `IDEA_EPISODE_HASH_UNLINKED`).
   One chat may produce many ideas; many chats may CONTINUE_EXISTING one idea.
-- **Enumeration is honest.** `verified: true` requires a provable completion signal
-  (see `scripts/project_discovery.js` — a CANDIDATE adapter until verified live);
-  otherwise coverage answers for the DECLARED inventory only and prints
+- **Enumeration is honest.** `verified: true` requires `--evidence`: a discovery record
+  from `scripts/project_discovery.js` whose membership is established by the project id
+  in the request PATH and whose cursor was walked to its own terminal signal. `declare`
+  re-reads that record — endpoint, project id, page ledger, item set — rather than
+  trusting its labels (`ENUMERATION_VERIFICATION_REFUSED`), archives it in the project
+  folder, and the validator re-checks that the archived bytes still hash to the recorded
+  digest (`ENUMERATION_EVIDENCE_MISSING`, `ENUMERATION_EVIDENCE_TAMPERED`). Otherwise
+  coverage answers for the DECLARED inventory only and prints
   `PROJECT_ENUMERATION_UNVERIFIED`. Claiming verified with `method: none` fails
-  (`ENUMERATION_CLAIM_INVALID`). DO NOT FAKE IT.
+  (`ENUMERATION_CLAIM_INVALID`). A claim made before this contract existed stays valid
+  and is reported as `ENUMERATION_EVIDENCE_LEGACY_ABSENT` — recorded, never promoted.
+  DO NOT FAKE IT: never hand-write an evidence record, because the point of the proof
+  is that a machine produced it.
 - **Hard gaps beat everything.** A source at DISCOVERED/CAPTURED/FAILED is a hard
   gap: `SOURCE_COVERAGE_COMPLETE=NO`, and the project's end state is
   `INCOMPLETE_HARD_GAPS` — never "complete with review". A review-queue item can
