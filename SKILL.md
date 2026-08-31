@@ -1490,15 +1490,30 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   Claude Code, not to this skill — which is why no path into that storage is written
   anywhere in this file. Intake can bound its own transport so nothing needs to spill
   (`TOOL_OUTPUT_CHUNK_MAX`), and it can keep its own instructions from sending anyone
-  across that line; both are tested, and the operational statement of the boundary lives
-  in `references/extraction.md` where the transport steps are. Intake cannot stop an
-  agent that decides to go around the boundary anyway, and a check claiming otherwise
-  would be a false security claim.
+  across that line — the latter by pinned inventory rather than by reading its own prose,
+  because the first version of that check tried to tell a prohibition from an
+  instruction and an independent review defeated it with one appended sentence. The
+  operational statement of the boundary lives in `references/extraction.md`, where the
+  transport steps are. Intake cannot stop an agent that decides to go around the
+  boundary anyway, and a check claiming otherwise would be a false security claim.
 - **A trusted click may not land.** The clipboard relay needs a real click to arm its
   copy handler; when that click misses, `pbpaste` returns the previous export. The
-  `--sha256` transport oracle turns that into a hard failure rather than a plausible
-  capture, which is as far as this layer can go — the flakiness itself lives in the
-  browser tooling, and no retry framework was added for it.
+  `--sha256` transport oracle is mandatory precisely so that becomes a hard failure
+  rather than a plausible capture, which is as far as this layer can go — the flakiness
+  itself lives in the browser tooling, and no retry framework was added for it.
+- **The chunk bound is a prescription, not a spill detector.** It fires on an oversized
+  chunk that arrived intact, which is what keeps the playbook from prescribing a size
+  that spills. A chunk that genuinely spilled never arrives as a chunk at all — it
+  arrives as a missing slice index, and that is the failure the operator sees.
+- **The source region begins at the first message header, so the header's own bytes are
+  outside source identity.** That is the point — it is what makes a re-worded purpose
+  line a no-op — but it also means the attachment inventory and the URL line, both of
+  which the playbook puts in the metadata header, can be corrected without producing a
+  revision. Neither is a claim about what was said; both are recoverable by re-reading
+  the current delivery. A transcript that quotes a `## Meddelande N` line inside its own
+  header would move the region boundary upward, which `verify_transcript_format` then
+  rejects as non-contiguous numbering — fail-closed, but worth knowing for a corpus whose
+  subject matter is this very format.
 
 These become work only when an observed failure makes one material — that is what
 `observed failure` and `demonstrated security/trust defect` in the reopen policy mean.

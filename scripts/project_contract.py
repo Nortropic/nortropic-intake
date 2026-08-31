@@ -728,8 +728,27 @@ def _validate_sources(proj, data, findings):
             # capture that fails the format checks is exactly how a hard gap would
             # dress up as coverage, and the manifest is a file the writing agent
             # controls; the bytes are not.
-            actual_ok, actual_detail, _ = verify_transcript_format(
-                target.read_text(encoding="utf-8"))
+            raw = target.read_text(encoding="utf-8")
+
+            # Same rule, same reason, for source identity. `capture` compares against
+            # this field to decide whether a rerun is a no-op, so a wrong value there
+            # SWALLOWS a genuine revision: the tool reports CAPTURE_UNCHANGED, the new
+            # bytes are never written, and nothing downstream can tell. A decision
+            # that fail-closed has to answer to the content, not to the manifest.
+            declared_src = str(r.get("source_sha256", "")).strip().lower()
+            if declared_src:
+                actual_src = transcript_source_sha256(raw)
+                if declared_src != actual_src:
+                    findings.append(Finding(
+                        proj.name, "PROJECT_SOURCE_IDENTITY_MISMATCH",
+                        "%s revision %s records source_sha256 %s… but the conversation "
+                        "in %s hashes to %s… — capture compares reruns against this "
+                        "field, so a stale or forged value silently swallows the next "
+                        "real revision"
+                        % (sid, r.get("revision"), declared_src[:16], rel,
+                           actual_src[:16])))
+
+            actual_ok, actual_detail, _ = verify_transcript_format(raw)
             if bool(r.get("verified")) != actual_ok:
                 findings.append(Finding(
                     proj.name, "SOURCE_VERIFICATION_INCONSISTENT",
@@ -1136,6 +1155,46 @@ def check_enumeration_evidence(path, inventory):
     refusals = []
     membership = record.get("membership") or {}
     exhaustion = record.get("exhaustion") or {}
+
+    # A record describes itself; these checks read what it describes. `scope:
+    # "path-scoped-project-endpoint"` is a label anyone can type — the endpoint it
+    # names is the thing that either carries the project id in its path or does not.
+    endpoint = str(record.get("endpoint") or "")
+    pid = str(record.get("projectId") or "")
+    if not pid:
+        refusals.append("the record names no projectId, so nothing can be checked "
+                        "against it")
+    expected_path = "/backend-api/gizmos/%s/conversations" % pid
+    if not pid or endpoint.split("?")[0] != expected_path:
+        refusals.append("endpoint=%r is not %r — the label on the scope is not the "
+                        "proof; the request path is" % (endpoint, expected_path))
+    if re.search(r"[?&]gizmo_id=", endpoint):
+        refusals.append("endpoint carries a gizmo_id QUERY filter — this platform "
+                        "accepts that filter and then answers with the whole account; "
+                        "that is the v3.0 defect, not a verification")
+
+    # The cursor ledger has to show a walk that actually happened and actually ended.
+    pages = exhaustion.get("pages")
+    walked = exhaustion.get("pages_walked")
+    if not isinstance(pages, list) or not pages:
+        refusals.append("exhaustion records no page ledger — a walk nobody can inspect "
+                        "is not a demonstrated walk")
+    elif walked != len(pages):
+        refusals.append("exhaustion claims %r page(s) but the ledger holds %d — the "
+                        "count and the evidence disagree" % (walked, len(pages)))
+    elif (pages[-1] or {}).get("cursor_out") is not None:
+        refusals.append("the last page still hands out a cursor (%r) — the walk "
+                        "stopped, it did not finish"
+                        % (pages[-1] or {}).get("cursor_out"))
+
+    items = record.get("items")
+    if not isinstance(items, list):
+        refusals.append("the record carries no items list")
+    elif record.get("collected") != len(items):
+        refusals.append("collected=%r but %d item(s) are listed — a count that does "
+                        "not match what it counts proves nothing"
+                        % (record.get("collected"), len(items)))
+
     if membership.get("scope") != "path-scoped-project-endpoint":
         refusals.append("membership.scope=%r — only an endpoint that carries the "
                         "project id in its PATH establishes membership; a query "
@@ -1157,15 +1216,21 @@ def check_enumeration_evidence(path, inventory):
     if record.get("verifiable") is not True:
         refusals.append("the record does not claim verifiable:true")
 
-    ev_keys = set()
+    ev_keys, unresolved = set(), 0
     for item in record.get("items") or []:
-        if isinstance(item, dict):
-            ev_keys.add(conversation_key(str(item.get("key") or item.get("url") or "")))
+        key = (conversation_key(str(item.get("key") or item.get("url") or ""))
+               if isinstance(item, dict) else None)
+        if key is None:
+            unresolved += 1          # dropping these would let extras hide in the set
+        else:
+            ev_keys.add(key)
+    if unresolved:
+        refusals.append("%d evidence item(s) carry no resolvable conversation "
+                        "identity — an unreadable item is not a member" % unresolved)
     inv_keys = set()
     for item in inventory:
         if isinstance(item, dict):
             inv_keys.add(conversation_key(str(item.get("key") or item.get("url") or "")))
-    ev_keys.discard(None)
     inv_keys.discard(None)
     if ev_keys != inv_keys:
         refusals.append("the evidence enumerates %d conversation(s) but the inventory "
@@ -1251,9 +1316,12 @@ def cmd_declare(proj, args):
         "declared_inventory_sha256": sha256_file(Path(args.inventory)),
         "note": args.note or enum.get("note", ""),
     })
+    # An evidence record belongs to the declaration it was checked against. A later
+    # declaration without one must not inherit the old proof and leave the manifest
+    # describing an inventory that is no longer there.
     if evidence:
         enum["evidence"] = evidence
-    elif verified:
+    else:
         enum.pop("evidence", None)
     data["enumeration"] = enum
     bump_inventory(proj, data, at, "declare inventory (%s, %d item(s))"

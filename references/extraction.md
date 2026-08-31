@@ -296,30 +296,56 @@ chat text merely *talks about* tokens/cookies/auth. Handle in this order:
 
 ## Project discovery (PROJECT_SWEEP only) — enumerating a project's conversations
 
-Per-conversation capture above is VERIFIED tooling. Project-level ENUMERATION is not:
-`scripts/project_discovery.js` is a **CANDIDATE adapter** (ChatGPT only, unverified
-against a live project listing as of v3.0). The rules are fail-closed, and they are the
-whole point:
+Per-conversation capture above is VERIFIED tooling. Project-level ENUMERATION was not,
+until the Improvements proving run measured it (2026-08-31).
+`scripts/project_discovery.js` walks the project's own listing endpoint,
+`/backend-api/gizmos/<gid>/conversations`, which is **cursor-paginated and sends no
+count or total**. The rules are fail-closed, and they are the whole point:
 
 1. **Try the data layer first.** Run `project_discovery.js` on the logged-in project
-   page. It may only be trusted as exhaustive when it returns `complete:true` — items
-   collected equals the API's own `total`, with no pagination errors. Only then may
-   the inventory be declared `--method data-layer --verified` (after a human
-   sanity-check against the visible project).
+   page. Read two fields of its output, and no others:
+   - `verifiable: true` — membership scope is `path-scoped-project-endpoint`, no foreign
+     items came back, and `exhaustion.proven` is true with a named `terminal_signal`.
+   - `items` — the inventory itself.
+
+   Save the WHOLE record to a file. Declare with **both** flags:
+
+   ```bash
+   python3 scripts/project_contract.py declare --project P \
+     --inventory discovery.json --evidence discovery.json \
+     --method data-layer --verified
+   ```
+
+   `--verified` **requires** `--evidence`, and `project_contract.py` re-reads that
+   record instead of taking its word: endpoint shape, project id, membership scope,
+   foreign items, the page ledger, and an item set matching the inventory. A record
+   that does not carry its proof is refused with `ENUMERATION_VERIFICATION_REFUSED`
+   and nothing is declared — go to rule 2 rather than trying to satisfy the checker.
+   (Before v3.1 this adapter called `conversations?…&gizmo_id=`, an endpoint that
+   accepts the filter and answers with the whole ACCOUNT, and trusted `complete:true`
+   from an item count matching that account's `total`. Both are gone. If you are
+   looking for `complete` in the output, you are reading a pre-v3.1 instruction.)
 2. **Anything less provable → declared inventory.** Take an owner-provided/exported
    conversation list (URLs or `host/<id>` keys), write it as JSON, and
-   `project_contract.py declare --method declared` WITHOUT `--verified`. The manifest
-   then carries `PROJECT_ENUMERATION_UNVERIFIED`, and coverage answers for the
-   declared inventory only. **DO NOT FAKE IT** — the architecture would rather say
-   "unverified" than claim 100% coverage it cannot prove.
+   `project_contract.py declare --method declared` WITHOUT `--verified` (and without
+   `--evidence`). The manifest then carries `PROJECT_ENUMERATION_UNVERIFIED`, and
+   coverage answers for the declared inventory only. **DO NOT FAKE IT** — the
+   architecture would rather say "unverified" than claim 100% coverage it cannot
+   prove. Never hand-write an evidence record to get past the checker: the point of
+   the proof is that a machine produced it.
 3. **Identity is the platform's conversation id, never the title.** Titles are
    editable, duplicable and routinely reused; `conversation_key = host/<id>` is what
    reruns upsert on, which is what makes a sweep idempotent.
-4. **Lazy loading/pagination:** the candidate adapter pages with offset+limit and
-   cross-checks the API's `total`. A DOM-scrolled sidebar listing is NOT a completion
+4. **Exhaustion is the cursor's own ending, not arithmetic.** The adapter follows
+   `cursor` until the platform stops offering one. A cursor that repeats is a loop, not
+   a proof; the page cap is a runaway guard, not an ending; and a `total`, on the rare
+   response that carries one, is an EXTRA oracle whose absence proves nothing and whose
+   disagreement blocks the claim. A DOM-scrolled sidebar listing is NOT a completion
    signal — window-virtualized lists unmount items exactly like the chat transcript
    does (see above), so a scraped list proves presence, never exhaustion.
-5. **Screenshots/OCR are never a capture or enumeration method.**
+5. **Screenshots/OCR are never a capture or enumeration method.** Owner confirmation is
+   a welcome EXTRA oracle — the mechanical proof does not need it, and it cannot stand
+   in for one.
 6. Per-conversation capture inside a sweep is EXACTLY the playbook above
    (data_capture.js first, DOM fallback, same gates) — the sweep changes discovery
    and bookkeeping, never capture quality.

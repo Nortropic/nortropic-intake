@@ -37,6 +37,7 @@ Usage (from the skill root):
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1051,6 +1052,31 @@ def i_source_identity(tmp):
           len(after["sources"][0]["revisions"])
           == len(data["sources"][0]["revisions"]),
           str(after["sources"][0]["revisions"]))
+    # ---- I42: source_sha256 steers a fail-closed decision, so it must answer to
+    # the bytes. A stale or forged value would make `capture` report CAPTURE_UNCHANGED
+    # for a conversation that really did change — the new bytes never written, and
+    # nothing downstream able to tell. The validator recomputes it, like the
+    # verification verdict and the whole-file hash before it.
+    corpus4 = sweep_project(Path(tmp) / "forge", "forge")
+    forge_tmp = Path(tmp) / "forge"
+    capture(corpus4, "forge", "CONV-001", _delivery(SYFTE_R1), forge_tmp, at="2026-08-31")
+    real_next = _delivery(SYFTE_R1, body="Ett helt nytt svar som faktiskt ändrats.")
+    data = read_project_manifest(corpus4, "forge")
+    import hashlib
+    region = real_next[real_next.index("## Meddelande 1"):].rstrip()
+    data["sources"][0]["revisions"][0]["source_sha256"] = hashlib.sha256(
+        region.encode("utf-8")).hexdigest()          # points at content not on disk
+    write_project_manifest(corpus4, "forge", data)
+    rc, out = F.project(["validate", "--project", "forge"], corpus4)
+    check("I42a a source_sha256 the bytes cannot back is caught by the validator",
+          rc != 0 and "PROJECT_SOURCE_IDENTITY_MISMATCH" in out, out.strip()[:700])
+    check("I42b and the finding says why it matters — a swallowed revision",
+          "silently swallows the next real revision" in out, out.strip()[:700])
+    rc, out = capture(corpus4, "forge", "CONV-001", real_next, forge_tmp, at="2026-09-02")
+    check("I42c (the shape it protects: a forged field makes a REAL change look "
+          "unchanged, which is why the manifest never gets the last word)",
+          "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+
     check("I41c the orphaned bytes survive on disk for the operator to resolve",
           (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md"
            ).read_text(encoding="utf-8") == orphan)
@@ -1058,19 +1084,29 @@ def i_source_identity(tmp):
 
 # ======================== J. enumeration evidence (v3.1) ====================
 
-def _evidence(tmp, name, urls, **over):
-    """A discovery record in the shape scripts/project_discovery.js emits."""
-    rec = {"source": "project-discovery-cursor", "projectId": "g-p-demo",
-           "endpoint": "/backend-api/gizmos/g-p-demo/conversations",
-           "membership": {"scope": "path-scoped-project-endpoint",
-                          "established_by": "project id in the request PATH",
-                          "foreign_items": []},
-           "exhaustion": {"proven": True, "terminal_signal": "cursor-absent",
-                          "reason": "", "pages_walked": 2, "pages": []},
-           "count_oracle": "absent — this endpoint sends no total",
-           "collected": len(urls), "duplicates_dropped": 0, "verifiable": True,
-           "items": [{"url": u, "key": u.replace("https://", "").replace("/c/", "/"),
-                      "title": "t", "updated": None} for u in urls]}
+GID = "g-p-demo"
+
+
+def real_discovery_record(urls, gid=GID):
+    """The record the SHIPPED adapter actually emits for these conversations.
+
+    Hand-writing this fixture is exactly the mistake it would be testing for: the two
+    halves of the enumeration contract — the adapter that produces the proof and the
+    checker that re-reads it — only mean something if the checker is fed what the
+    adapter really writes. So the adapter is run, under node, from its own source file.
+    """
+    ids = [u.rstrip("/").rsplit("/", 1)[-1] for u in urls]
+    out = subprocess.run(
+        ["node", str(Path(__file__).resolve().parent / "discovery_record.mjs"), gid]
+        + ids, capture_output=True, text=True)
+    assert out.returncode == 0, out.stdout + out.stderr
+    return json.loads(out.stdout)
+
+
+def _evidence(tmp, name, urls, _base=None, **over):
+    """A discovery record, derived from the real one so the negatives stay realistic."""
+    rec = json.loads(json.dumps(_base if _base is not None
+                                else real_discovery_record(urls)))
     for k, v in over.items():
         if isinstance(v, dict) and isinstance(rec.get(k), dict):
             rec[k].update(v)
@@ -1128,11 +1164,50 @@ def j_enumeration_evidence(tmp):
           "about this inventory",
           rc != 0 and "proves nothing about this one" in out, out.strip()[:700])
 
+    ev = _evidence(tmp, "brokenendpoint", urls,
+                   endpoint="/backend-api/conversations?limit=50&gizmo_id=" + GID)
+    rc, out = declare(ev)
+    check("J43b a record LABELLED path-scoped while naming the v3.0 query endpoint is "
+          "refused — the label is not the proof, the request path is",
+          rc != 0 and "gizmo_id QUERY filter" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "wrongproject", urls, projectId="g-p-somewhere-else")
+    rc, out = declare(ev)
+    check("J43c a record whose endpoint belongs to another project is refused",
+          rc != 0 and "the request path is" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "noledger", urls,
+                   exhaustion={"pages": [], "pages_walked": 2})
+    rc, out = declare(ev)
+    check("J43d a walk with no page ledger cannot demonstrate exhaustion",
+          rc != 0 and "no page ledger" in out, out.strip()[:700])
+
+    real_open = real_discovery_record(urls)
+    real_open["exhaustion"]["pages"][-1]["cursor_out"] = "still-more"
+    ev = _evidence(tmp, "openledger", urls, _base=real_open)
+    rc, out = declare(ev)
+    check("J43e a ledger whose last page still hands out a cursor stopped, "
+          "it did not finish",
+          rc != 0 and "it did not finish" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "miscount", urls, collected=99999)
+    rc, out = declare(ev)
+    check("J43f a collected count that does not match the items it counts is refused",
+          rc != 0 and "does not match what it counts" in out, out.strip()[:700])
+
     data = read_project_manifest(corpus, "enum")
     check("J44a not one refused declaration promoted the enumeration",
           data["enumeration"]["verified"] is False, str(data["enumeration"]))
 
-    ev = _evidence(tmp, "good", urls)
+    real = real_discovery_record(urls)
+    check("J44a2 the shipped adapter's own output is what the checker is fed — the "
+          "two halves of the enumeration contract actually meet",
+          real["verifiable"] is True
+          and real["endpoint"] == "/backend-api/gizmos/%s/conversations" % GID
+          and len(real["exhaustion"]["pages"]) == real["exhaustion"]["pages_walked"]
+          and real["exhaustion"]["pages"][-1]["cursor_out"] is None,
+          json.dumps(real.get("exhaustion"))[:400])
+    ev = _evidence(tmp, "good", urls, _base=real)
     rc, out = declare(ev)
     data = read_project_manifest(corpus, "enum")
     check("J44b a path-scoped, cursor-exhausted record DOES verify the enumeration",
