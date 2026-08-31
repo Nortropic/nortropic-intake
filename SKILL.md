@@ -1090,16 +1090,34 @@ and it never guesses silently.
 **P0 — Scope & mode.** Confirm the project (or the explicit conversation list) and
 that this is a sweep. `project_contract.py init --project <name> --title …`.
 
-**P1 — Enumerate, honestly.** Data-layer first: `scripts/project_discovery.js` is a
-**CANDIDATE adapter (unverified)** for ChatGPT project listings — declare its output
-`--method data-layer --verified` ONLY when it returns `complete:true` (item count
-matches the API's own total). Anything less provable: take an owner-provided/exported
-conversation inventory and `declare --method declared` **without** `--verified` — the
-manifest then says `PROJECT_ENUMERATION_UNVERIFIED` and coverage answers for the
-declared inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration
-method. Identity is the platform's conversation id (`conversation_key = host/<id>`),
-never a title; reruns upsert by identity, so the same project can be swept repeatedly
-without duplicating a source.
+**P1 — Enumerate, honestly.** Data-layer first: `scripts/project_discovery.js` walks
+the project's own listing endpoint, `/backend-api/gizmos/<gid>/conversations`, which is
+**cursor-paginated and sends no total**. Enumeration is therefore proved the way that
+endpoint actually works:
+
+> **membership observed + pagination exhaustion mechanically demonstrated
+> = enumeration may be mechanically verified.**
+
+**Membership** comes from the endpoint's construction: the project id is in the request
+PATH, so every item comes back *as* a member. A query-filter endpoint cannot establish
+it — the Improvements proving run measured this platform accepting
+`conversations?…&gizmo_id=<gid>` and then ignoring the filter, answering with the whole
+account. **Exhaustion** is the cursor's own terminal signal, followed page by page until
+the platform stops offering one; a cursor that repeats is a loop, not a proof, and a
+page cap is a runaway guard, not an ending. A `total`, when the platform volunteers one,
+is an EXTRA oracle: its absence proves nothing, its disagreement blocks the claim.
+
+`declare --method data-layer --verified` now **requires `--evidence <discovery.json>`**,
+and `project_contract.py` re-reads that record rather than taking its word: membership
+scope, no foreign items, `exhaustion.proven`, a named terminal signal, and an item set
+matching the inventory being declared. Anything less provable: take an owner-provided or
+exported inventory and `declare --method declared` **without** `--verified` — the
+manifest then says `PROJECT_ENUMERATION_UNVERIFIED` and coverage answers for the declared
+inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration method, and
+owner confirmation is a welcome EXTRA oracle that this proof does not require and cannot
+be substituted by. Identity is the platform's conversation id
+(`conversation_key = host/<id>`), never a title; reruns upsert by identity, so the same
+project can be swept repeatedly without duplicating a source.
 
 **P2 — Capture every conversation, fail closed.** Per conversation, the SINGLE-mode
 Phase 1 pipeline unchanged (data-layer capture via `scripts/data_capture.js`, DOM
@@ -1112,6 +1130,20 @@ conversation is `mark-failed` — both are HARD gaps: `SOURCE_COVERAGE_COMPLETE=
 and no review-queue entry can absorb them. An updated conversation re-captured later
 becomes revision N+1; the old raw is never touched. Never modify anything on the
 platform — read only.
+
+**A revision answers to the conversation, never to the header written about it.**
+Everything above the first `## Meddelande N — <roll>` line — title, source project, URL,
+export date, message count, the one-line purpose, the "Innehåll i korthet" paragraph, the
+citation-chip note — is **derived builder metadata**. `capture` keys the revision
+decision on `source_sha256`, the hash of the source region alone, and records the
+whole-file `sha256` alongside it for tamper detection and immutability. So a re-worded
+purpose line or a later export date is a **true no-op**, while a changed message, or a
+changed speaker label, is still revision N+1. The proving run is why: CONV-012 was
+captured twice with byte-identical messages and a re-phrased `**Syfte:**` line, and the
+whole-file hash minted a second revision out of that one derived line — the independent
+audit called it a `RERUN_IDEMPOTENCY_VIOLATION`, and it was one. Revisions written before
+`source_sha256` existed are handled by recomputing it from the bytes on disk, so a legacy
+corpus reaches the same no-op without being migrated.
 
 **P3 — Extract.** Distill each verified conversation with the normal Phase 2
 templates — zero, one or several ideas per conversation. Deliver each conversation
@@ -1447,10 +1479,26 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   principle hide behind another episode's owner turn at the same number. Episode-scoped
   citations (`(← CHAT-002 msg 3)`) remove the ambiguity; no exploit has been
   demonstrated.
-- **Project enumeration is only as strong as its signal.** The data-layer project
-  listing is a CANDIDATE adapter, unverified against a live ChatGPT project; the
-  declared-inventory fallback proves coverage of the declaration, never of the
-  platform's project — which is exactly what `PROJECT_ENUMERATION_UNVERIFIED` says.
+- **Project enumeration is only as strong as its signal.** The declared-inventory
+  fallback proves coverage of the declaration, never of the platform's project — which is
+  exactly what `PROJECT_ENUMERATION_UNVERIFIED` says. Since v3.1 the data-layer path is
+  measured rather than candidate, and its verified claim carries re-checkable evidence;
+  what remains unprovable is whether the platform's listing endpoint is itself complete,
+  which no client can establish from outside.
+- **Intake does not own the sandbox, and does not pretend to.** The command sandbox, the
+  override that disables it, and the runtime's own private session storage all belong to
+  Claude Code, not to this skill — which is why no path into that storage is written
+  anywhere in this file. Intake can bound its own transport so nothing needs to spill
+  (`TOOL_OUTPUT_CHUNK_MAX`), and it can keep its own instructions from sending anyone
+  across that line; both are tested, and the operational statement of the boundary lives
+  in `references/extraction.md` where the transport steps are. Intake cannot stop an
+  agent that decides to go around the boundary anyway, and a check claiming otherwise
+  would be a false security claim.
+- **A trusted click may not land.** The clipboard relay needs a real click to arm its
+  copy handler; when that click misses, `pbpaste` returns the previous export. The
+  `--sha256` transport oracle turns that into a hard failure rather than a plausible
+  capture, which is as far as this layer can go — the flakiness itself lives in the
+  browser tooling, and no retry framework was added for it.
 
 These become work only when an observed failure makes one material — that is what
 `observed failure` and `demonstrated security/trust defect` in the reopen policy mean.

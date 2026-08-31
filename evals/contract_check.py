@@ -463,7 +463,15 @@ CHECKS = [
         "**Role truth is inherited from capture.**",
         "resolved conservatively",
         "**Project enumeration is only as strong as its signal.**",
-        "CANDIDATE adapter, unverified"]),
+        "no client can establish from outside"]),
+    ("SKILL.md", "Z9 v3.1 records the boundaries it does NOT own, without pretending", [
+        "**Intake does not own the sandbox, and does not pretend to.**",
+        "belong to\n  Claude Code, not to this skill",
+        "no path into that storage is written\n  anywhere in this file",
+        "Intake cannot stop an\n  agent that decides to go around the boundary anyway",
+        "would be a false security claim",
+        "**A trusted click may not land.**",
+        "no retry framework was added for it"]),
     # ---------------------------------------------------------------------
     # R3. Role-aware provenance (v3.0)
     # ---------------------------------------------------------------------
@@ -508,7 +516,37 @@ CHECKS = [
         "PROJECT_ENUMERATION_UNVERIFIED", "DO NOT FAKE IT",
         "screenshots/OCR are never an enumeration\nmethod",
         "never a title",
-        "**CANDIDATE adapter (unverified)**"]),
+        "cursor-paginated and sends no total**"]),
+    ("SKILL.md", "PS15 enumeration is proved by membership + mechanical exhaustion", [
+        "membership observed + pagination exhaustion mechanically demonstrated",
+        "= enumeration may be mechanically verified.**",
+        "the project id is in the request\nPATH",
+        "accepting\n`conversations?…&gizmo_id=<gid>` and then ignoring the filter",
+        "a cursor that repeats is a loop, not a proof",
+        "requires `--evidence <discovery.json>`",
+        "re-reads that record rather than taking its word",
+        "owner confirmation is a welcome EXTRA oracle that this proof does not require"]),
+    ("SKILL.md", "PS16 source identity excludes derived builder metadata", [
+        "**A revision answers to the conversation, never to the header written about it.**",
+        "derived builder metadata",
+        "keys the revision\ndecision on `source_sha256`",
+        "records the\nwhole-file `sha256` alongside it for tamper detection",
+        "a re-worded\npurpose line or a later export date is a **true no-op**",
+        "a changed message, or a\nchanged speaker label, is still revision N+1",
+        "RERUN_IDEMPOTENCY_VIOLATION",
+        "without being migrated"]),
+    ("references/extraction.md", "PS17 transport is bounded and its bytes are identified", [
+        "TOOL_OUTPUT_CHUNK_MAX",
+        "tool output tops out around 32 KB",
+        "`--transport tool-output`",
+        "Length alone is a weak oracle",
+        "--sha256"]),
+    ("references/extraction.md", "PS18 the one sandbox exception carries a negative scope", [
+        "run **only** the pbpaste/pbcopy steps",
+        "SCOPE OF THAT EXCEPTION",
+        "Never\n   disable the sandbox to read Claude Code's own storage",
+        "never to recover a truncated or\n   spilled tool result",
+        "Intake cannot enforce this"]),
     ("SKILL.md", "PS5 hard gaps beat completeness, queue cannot absorb them", [
         "COMPLETE | COMPLETE_WITH_OPEN_REVIEW | INCOMPLETE_HARD_GAPS",
         "A hard capture/coverage gap is never \"complete with review\"",

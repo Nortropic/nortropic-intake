@@ -157,6 +157,50 @@ def body_sha256(path):
     return sha256_text(body)
 
 
+# The first `## Meddelande N — <roll>` header opens the raw source region. Everything
+# above it is the builder's metadata header: title, source project, URL, export date,
+# message count, the one-line purpose, the "Innehall i korthet" paragraph, the
+# citation-chip note. All of that is DERIVED — written by the builder about the
+# conversation, not said in it.
+_SOURCE_REGION_RE = re.compile(r"^##\s*(?:Meddelande|Message)\s+\d+", re.M)
+
+
+def transcript_source_region(text):
+    """(raw_source_text, found) — the conversation itself, without the built header.
+
+    Source identity must answer to what the conversation SAID, never to what the
+    builder wrote ABOUT it. The proving run made the difference material: CONV-012
+    was captured twice with byte-identical messages and a re-worded `**Syfte:**`
+    line, and the whole-file hash minted a second revision out of that one derived
+    line — a RERUN_IDEMPOTENCY_VIOLATION. The same hole makes `**Exportdatum:**`
+    re-revise every conversation in a project on the next calendar day.
+
+    The region starts at the first message header (inclusive, so the `— <roll>`
+    labels stay inside source identity: a changed speaker IS a changed source) and
+    runs to the end, with trailing whitespace stripped because a builder's final
+    newline is not something anyone said.
+
+    Fail closed: a text with no parseable message header has no identifiable source
+    region, so `found` is False and the caller must fall back to the whole bytes
+    rather than hash an empty string and call two different files identical.
+    """
+    m = _SOURCE_REGION_RE.search(text)
+    if not m:
+        return text, False
+    return text[m.start():].rstrip(), True
+
+
+def transcript_source_sha256(text):
+    """Content identity of a captured conversation — derived header excluded.
+
+    Companion to body_sha256, which does the same job for a plan whose frontmatter
+    legitimately differs between candidate and approved copy. Same principle: hash
+    what the contract calls the source, so a rerun can be proved rather than trusted.
+    """
+    region, _ = transcript_source_region(text)
+    return sha256_text(region)
+
+
 # ------------------------------------------------------- markdown structure --
 
 def fence_spans(text):

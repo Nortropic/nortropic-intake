@@ -1,8 +1,8 @@
 # Evals — run these after ANY change to this skill
 
-Nine checks, all repeatable. Zero regression = all nine pass. Five measure the skill's
-outputs and its stated contract without touching the capture/distill/verify pipeline;
-the last four execute the real validators against real corpora and real git
+Eleven checks, all repeatable. Zero regression = all eleven pass. Seven measure the
+skill's outputs and its stated contract without touching the capture/distill/verify
+pipeline; the last four execute the real validators against real corpora and real git
 repositories built on disk.
 
 ```bash
@@ -11,10 +11,25 @@ python3 evals/test_plan_contract.py                   # 6 — approved-plan fals
 python3 evals/test_context_v2.py                      # 7 — context continuity A–L
 python3 evals/test_context_v21.py                     # 8 — living context C1–C15, T1–T8
 python3 evals/test_project_v3.py                      # 9 — v3: roles, attestation, sweep
+python3 evals/test_transport_v31.py                   # 10 — v3.1: bounded transport
+node    evals/test_discovery_v31.mjs                  # 11 — v3.1: cursor enumeration
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
 python3 scripts/project_contract.py validate          # real projects, when any exist
 ```
+
+The two v3.1 suites exist because the Improvements proving run found things the
+previous ten could not have caught:
+
+* `test_discovery_v31.mjs` runs the **real shipped** `scripts/project_discovery.js`
+  under a fake platform — not a Python reimplementation of it, which would have proved
+  only that the copy agrees with itself. Before v3.1 no eval executed any of the
+  browser-side JS at all, which is why a discovery adapter that called the wrong
+  endpoint shipped and was only found by a live run. It needs `node`, which CI
+  already has (`actions/checkout` requires it).
+* `test_transport_v31.py` exercises `scripts/reassemble_verify.py`, which no suite
+  covered either: the >32 KB chunk that spilled during the proving run, and the
+  equal-length stale-clipboard payload that a missed trusted click leaves behind.
 
 (`project_contract.py validate` legitimately fails with "contains no project
 manifests" until the first real sweep has run — that is the mis-pathed-corpus guard
@@ -27,9 +42,10 @@ status check** in branch protection. Neither step has been done yet (see
 OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live gate, and
 it is overridable with `--no-verify`.
 
-CI additionally runs a **mutation guard**: it stubs out each of the four modules
-(`plan_contract`, `context_contract`, `project_contract`, `intake_common`) in turn and
-requires the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
+CI additionally runs a **mutation guard**: it stubs out each of the five modules
+(`plan_contract`, `context_contract`, `project_contract`, `intake_common`,
+`reassemble_verify`) in turn — plus the shipped `project_discovery.js` — and requires
+the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
 `SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
 is why every suite also asserts a floor (`MIN_CHECKS`) on checks actually executed.
 

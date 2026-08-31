@@ -41,6 +41,12 @@ jobs:
       - name: v3 suite (role-aware provenance, approval attestation, project sweep)
         run: python3 evals/test_project_v3.py
 
+      - name: v3.1 transport suite (bounded chunks, exact digests, trust boundary)
+        run: python3 evals/test_transport_v31.py
+
+      - name: v3.1 discovery suite (cursor pagination against the real shipped adapter)
+        run: node evals/test_discovery_v31.mjs
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e
@@ -80,7 +86,20 @@ jobs:
           guard context_contract test_plan_contract test_context_v2 test_context_v21 test_project_v3
           guard intake_common    test_plan_contract test_context_v2 test_context_v21 test_project_v3
           guard project_contract test_project_v3
+          guard reassemble_verify test_transport_v31
           cp /tmp/real/*.py scripts/
+          # The discovery suite runs the SHIPPED adapter, so its mutation is that file:
+          # stub it out and the suite must fail rather than pass against nothing.
+          cp scripts/project_discovery.js /tmp/real-discovery.js
+          printf 'await (async function(){return JSON.stringify({});})()\n' > scripts/project_discovery.js
+          if node evals/test_discovery_v31.mjs > /tmp/mutjs.log 2>&1; then
+            echo "MUTATION GUARD FAILED: discovery suite passed with the adapter stubbed"
+            fail=1
+          else
+            echo "ok: discovery suite fails with project_discovery.js stubbed"
+          fi
+          cp /tmp/real-discovery.js scripts/project_discovery.js
+          git diff --quiet -- scripts/project_discovery.js || { echo "GUARD DID NOT RESTORE the adapter"; exit 1; }
           # And the specific shape that used to slip through: a stub that still IMPORTS
           # cleanly but answers nothing.
           printf 'import sys\ndef main(argv=None):\n    print("PASS")\n    return 0\nif __name__ == "__main__":\n    sys.exit(main())\n' > scripts/context_contract.py

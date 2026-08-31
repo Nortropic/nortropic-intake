@@ -21,6 +21,12 @@ run through the real validators — no mocks:
           mutated raw, and project normalization that cannot mint owner authority.
   H30–H31 side-effect contract: the tools never commit the corpus; fixtures never
           touch the real corpus (every command runs against a tmp --corpus).
+  I32–I38 source identity vs builder metadata (v3.1, from the proving run): a
+          re-worded purpose line or a later export date is DERIVED and never mints a
+          revision; a changed message or a changed speaker still does.
+  J39–J44 enumeration evidence (v3.1, from the proving run): a verified claim must
+          carry a re-checkable proof of membership scope and cursor exhaustion, and a
+          pre-v3.1 claim stays valid as legacy without being promoted.
 
 All real Improvements sweeping is out of scope here BY CONSTRUCTION: every project
 in this suite is synthetic, in a temp directory, and torn down after the run.
@@ -41,7 +47,7 @@ import fixtures as F  # noqa: E402
 RESULTS = []
 
 # A suite that exits 0 having run nothing reports success it did not earn.
-MIN_CHECKS = 50
+MIN_CHECKS = 75
 
 
 def check(name, condition, detail=""):
@@ -915,11 +921,251 @@ def h_side_effects(tmp):
           and "NORTROPIC_INTAKE_CORPUS" in open(F.__file__, encoding="utf-8").read())
 
 
+# ======================== I. source identity vs builder metadata (v3.1) =====
+
+# The real CONV-012 shape. Everything above the first `## Meddelande` header is
+# written by the builder ABOUT the conversation; below it is what was actually said.
+def _delivery(syfte, exportdatum="2026-08-31", body=None, opener="Johnny (användare)"):
+    return (
+        "# Nortropic Evolution Radar — fullständigt transkript\n\n"
+        "**Källprojekt:** Improvements (ChatGPT-projekt)\n"
+        "**Chatt:** Nortropic Evolution Radar\n"
+        "**URL:** %s\n"
+        "**Exportdatum:** %s\n"
+        "**Antal meddelanden:** 2 (1 användare, 1 assistent)\n"
+        "**Syfte:** %s\n\n"
+        "**Innehåll i korthet:** Samtalet öppnar med: ”%s…”\n\n---\n\n"
+        "## Meddelande 1 — %s\n\n%s\n\n---\n\n"
+        "## Meddelande 2 — ChatGPT (assistent)\n\n"
+        "Beslutat: radarn läser från Aquarium-strömmen.\n"
+        % (URL_1, exportdatum, syfte, (body or "Vi bygger Evolution Radar.")[:40],
+           opener, body or "Vi bygger Evolution Radar."))
+
+
+# The two purpose lines the proving run actually produced for CONV-012.
+SYFTE_R1 = ("Brainstorm om Nortropic Aquarium som ambient organisationsobservabilitet "
+            "samt evolution foundations och en Evolution Radar-bevakning.")
+SYFTE_R2 = ("Brainstorm om Nortropic Aquarium som ambient organizational observability "
+            "samt omvärldsbevakning och evolution foundations för Organization OS.")
+
+
+def i_source_identity(tmp):
+    corpus = sweep_project(tmp, "identity")
+    first = _delivery(SYFTE_R1)
+    rc, out = capture(corpus, "identity", "CONV-001", first, tmp, at="2026-08-31")
+    check("I32 the first capture lands as revision 1 and states its source identity",
+          rc == 0 and "revision 1" in out and "SOURCE_SHA256=" in out, out.strip()[:600])
+
+    # ---- I33: THE proving-run bug. Same conversation, re-worded purpose line.
+    drifted = _delivery(SYFTE_R2)
+    body = lambda s: s[s.index("## Meddelande 1"):]
+    check("I33a the reproducer is honest: only the derived header differs",
+          body(first) == body(drifted) and first != drifted)
+    rc, out = capture(corpus, "identity", "CONV-001", drifted, tmp, at="2026-08-31")
+    check("I33b a re-worded **Syfte:** line does NOT mint a revision "
+          "(the CONV-012 RERUN_IDEMPOTENCY_VIOLATION)",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+    check("I33c and it says WHY — derived metadata, not a source change",
+          "only derived builder/header metadata differs" in out, out.strip()[:600])
+
+    # ---- I34: the same root cause, on the field that would have hit all 27.
+    later = _delivery(SYFTE_R1, exportdatum="2026-09-04")
+    rc, out = capture(corpus, "identity", "CONV-001", later, tmp, at="2026-09-04")
+    check("I34 a later **Exportdatum:** does not re-revise the conversation either — "
+          "a rerun on another day is still a no-op",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+
+    # ---- I35: byte-identical input is still a plain no-op.
+    rc, out = capture(corpus, "identity", "CONV-001", first, tmp, at="2026-08-31")
+    check("I35 re-capturing the exact same bytes is a no-op, as it always was",
+          rc == 0 and "these bytes are already revision 1" in out, out.strip()[:600])
+
+    data = read_project_manifest(corpus, "identity")
+    src = data["sources"][0]
+    files = sorted(p.name for p in (Path(corpus) /
+                                    "_projects/identity/sources/CONV-001").iterdir())
+    check("I36a after three header-only reruns there is still exactly one revision",
+          len(src["revisions"]) == 1 and files == ["conversation.md"], str(files))
+    check("I36b and the stored revision records its source identity for the next rerun",
+          len(str(src["revisions"][0].get("source_sha256", ""))) == 64,
+          str(src["revisions"][0]))
+
+    # ---- I37: a REAL change to what was said must still create N+1.
+    changed = _delivery(SYFTE_R1, body="Vi bygger Evolution Radar, och den läser "
+                                       "Aquarium varje timme.")
+    rc, out = capture(corpus, "identity", "CONV-001", changed, tmp, at="2026-09-05")
+    data = read_project_manifest(corpus, "identity")
+    src = data["sources"][0]
+    check("I37a a changed message is a genuine source change: revision 2",
+          rc == 0 and "revision 2" in out
+          and [r["revision"] for r in src["revisions"]] == [1, 2], out.strip()[:600])
+    r1 = Path(corpus) / src["revisions"][0]["path"]
+    check("I37b the old raw revision survives, byte-identical",
+          r1.exists() and F.sha256_file(r1) == src["revisions"][0]["sha256"])
+    check("I37c the two revisions differ in SOURCE identity, not merely in file bytes",
+          src["revisions"][0]["source_sha256"] != src["revisions"][1]["source_sha256"])
+
+    # ---- I38: a changed speaker is a changed source — role labels are inside it.
+    corpus2 = sweep_project(Path(tmp) / "roles", "roles")
+    base = _delivery(SYFTE_R1)
+    capture(corpus2, "roles", "CONV-001", base, Path(tmp) / "roles", at="2026-08-31")
+    reroled = _delivery(SYFTE_R1, opener="ChatGPT (assistent)")
+    rc, out = capture(corpus2, "roles", "CONV-001", reroled, Path(tmp) / "roles",
+                      at="2026-08-31")
+    check("I38 a changed speaker role in the raw input IS a content revision — "
+          "role-aware provenance lives inside source identity",
+          rc == 0 and "revision 2" in out, out.strip()[:600])
+
+    # ---- legacy: a revision captured before source_sha256 existed still no-ops.
+    data = read_project_manifest(corpus, "identity")
+    for r in data["sources"][0]["revisions"]:
+        r.pop("source_sha256", None)
+    write_project_manifest(corpus, "identity", data)
+    rc, out = capture(corpus, "identity", "CONV-001", _delivery(SYFTE_R2,
+                      body="Vi bygger Evolution Radar, och den läser Aquarium varje "
+                           "timme."), tmp, at="2026-09-06")
+    check("I39 a legacy revision with no recorded source identity still reaches the "
+          "no-op — recomputed from the bytes on disk, no migration required",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+    rc, out = F.project(["validate", "--project", "identity"], corpus)
+    check("I40 and the corpus still validates with legacy revisions in it",
+          rc == 0, out.strip()[:600])
+
+    # ---- I41: a capture interrupted between writing the file and saving the
+    # manifest. The bytes are on disk, the manifest has not heard of them. The next
+    # attempt must not silently overwrite them into a phantom revision.
+    corpus3 = sweep_project(Path(tmp) / "crash", "crash")
+    crash_tmp = Path(tmp) / "crash"
+    capture(corpus3, "crash", "CONV-001", _delivery(SYFTE_R1), crash_tmp, at="2026-08-31")
+    data = read_project_manifest(corpus3, "crash")
+    orphan = _delivery(SYFTE_R1, body="Ett helt annat innehåll som aldrig bokfördes.")
+    (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md").write_text(
+        orphan, encoding="utf-8")            # file written, then the process died
+    rc, out = capture(corpus3, "crash", "CONV-001",
+                      _delivery(SYFTE_R1, body="Nytt riktigt innehåll."), crash_tmp,
+                      at="2026-09-01")
+    check("I41a an interrupted write is refused, never overwritten",
+          rc != 0 and "CAPTURE_REFUSED" in out and "never" in out, out.strip()[:600])
+    after = read_project_manifest(corpus3, "crash")
+    check("I41b and no phantom revision was booked into the manifest",
+          len(after["sources"][0]["revisions"])
+          == len(data["sources"][0]["revisions"]),
+          str(after["sources"][0]["revisions"]))
+    check("I41c the orphaned bytes survive on disk for the operator to resolve",
+          (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md"
+           ).read_text(encoding="utf-8") == orphan)
+
+
+# ======================== J. enumeration evidence (v3.1) ====================
+
+def _evidence(tmp, name, urls, **over):
+    """A discovery record in the shape scripts/project_discovery.js emits."""
+    rec = {"source": "project-discovery-cursor", "projectId": "g-p-demo",
+           "endpoint": "/backend-api/gizmos/g-p-demo/conversations",
+           "membership": {"scope": "path-scoped-project-endpoint",
+                          "established_by": "project id in the request PATH",
+                          "foreign_items": []},
+           "exhaustion": {"proven": True, "terminal_signal": "cursor-absent",
+                          "reason": "", "pages_walked": 2, "pages": []},
+           "count_oracle": "absent — this endpoint sends no total",
+           "collected": len(urls), "duplicates_dropped": 0, "verifiable": True,
+           "items": [{"url": u, "key": u.replace("https://", "").replace("/c/", "/"),
+                      "title": "t", "updated": None} for u in urls]}
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(rec.get(k), dict):
+            rec[k].update(v)
+        else:
+            rec[k] = v
+    path = Path(tmp) / ("evidence-%s.json" % name)
+    path.write_text(json.dumps(rec), encoding="utf-8")
+    return path
+
+
+def j_enumeration_evidence(tmp):
+    corpus = sweep_project(tmp, "enum")
+    inv = Path(tmp) / "inventory.json"          # the same 3 conversations
+    urls = [URL_1, URL_2, URL_3]
+
+    def declare(evidence=None, verified=True):
+        argv = ["declare", "--project", "enum", "--inventory", str(inv),
+                "--method", "data-layer", "--at", "2026-08-31"]
+        if verified:
+            argv.append("--verified")
+        if evidence:
+            argv += ["--evidence", str(evidence)]
+        return F.project(argv, corpus)
+
+    rc, out = declare(evidence=None)
+    check("J39 --verified with no evidence at all is REFUSED — v3.0's unearned boolean",
+          rc != 0 and "ENUMERATION_VERIFICATION_REFUSED" in out
+          and "requires --evidence" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "foreign", urls,
+                   membership={"foreign_items": ["someone-elses-chat"]},
+                   verifiable=False)
+    rc, out = declare(ev)
+    check("J40 evidence containing another project's conversation cannot verify "
+          "membership — the exact v3.0 unfiltered-endpoint defect",
+          rc != 0 and "belonging to another" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "unfiltered", urls,
+                   membership={"scope": "query-filtered"})
+    rc, out = declare(ev)
+    check("J41 a query-filtered endpoint can never establish membership, however "
+          "complete it claims to be",
+          rc != 0 and "in its PATH" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "unproven", urls,
+                   exhaustion={"proven": False, "reason": "cursor still outstanding"},
+                   verifiable=False)
+    rc, out = declare(ev)
+    check("J42 unproven exhaustion is PROJECT_ENUMERATION_UNVERIFIED, not a claim",
+          rc != 0 and "PROJECT_ENUMERATION_UNVERIFIED" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "othersett", [URL_1, URL_2])
+    rc, out = declare(ev)
+    check("J43 evidence about a DIFFERENT set of conversations proves nothing "
+          "about this inventory",
+          rc != 0 and "proves nothing about this one" in out, out.strip()[:700])
+
+    data = read_project_manifest(corpus, "enum")
+    check("J44a not one refused declaration promoted the enumeration",
+          data["enumeration"]["verified"] is False, str(data["enumeration"]))
+
+    ev = _evidence(tmp, "good", urls)
+    rc, out = declare(ev)
+    data = read_project_manifest(corpus, "enum")
+    check("J44b a path-scoped, cursor-exhausted record DOES verify the enumeration",
+          rc == 0 and "VERIFIED=YES" in out and "ENUMERATION_EVIDENCE=" in out,
+          out.strip()[:700])
+    check("J44c and the proof is recorded in the manifest for audit, not just trusted",
+          data["enumeration"]["verified"] is True
+          and data["enumeration"]["evidence"]["terminal_signal"] == "cursor-absent"
+          and len(data["enumeration"]["evidence"]["sha256"]) == 64,
+          str(data["enumeration"].get("evidence")))
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44d an evidence-backed verified enumeration validates clean, no warning",
+          rc == 0 and "ENUMERATION_EVIDENCE_LEGACY_ABSENT" not in out,
+          out.strip()[:700])
+
+    # Back-compat: a claim made before the evidence contract existed stays VALID,
+    # is reported as legacy, and is never silently promoted.
+    data["enumeration"].pop("evidence")
+    write_project_manifest(corpus, "enum", data)
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J45a a pre-v3.1 verified claim remains valid — no forced migration",
+          rc == 0, out.strip()[:700])
+    check("J45b but it is marked legacy, so trust is recorded and not promoted",
+          "ENUMERATION_EVIDENCE_LEGACY_ABSENT" in out
+          and "WARN" in out, out.strip()[:700])
+
+
 # ------------------------------------------------------------------ runner --
 
 def main():
     scenarios = [a_role_aware, b_approval_strength, c_source_model, d_coverage,
-                 e_idea_routing, f_mode_separation, g_audit_trust, h_side_effects]
+                 e_idea_routing, f_mode_separation, g_audit_trust, h_side_effects,
+                 i_source_identity, j_enumeration_evidence]
     for scenario in scenarios:
         tmp = tempfile.mkdtemp(prefix="intake-v3-")
         try:

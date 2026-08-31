@@ -210,20 +210,41 @@ through tool output (189k chars verified lossless in a real run):
    click with the `computer` tool on a blank margin area. The trusted click supplies the
    activation; the handler removes the textarea and itself.
 3. `pbpaste > raw_export.txt` in the shell. NOTE: the command sandbox silently no-ops
-   pbcopy/pbpaste (empty output, exit 0) — run the pbpaste/pbcopy steps sandbox-disabled.
-4. Wrap as a single slice (`printf 'S0|' ; cat raw_export.txt ; printf '#END#'`) and run
-   `reassemble_verify.py` with the exact `exportLen` — the same fail-closed checks apply.
+   pbcopy/pbpaste (empty output, exit 0) — run **only** the pbpaste/pbcopy steps
+   sandbox-disabled.
 
-Fallback if the relay fails: console transfer (log `S<i>|chunk#END#` in ~40k chunks and
-read them back with `read_console_messages`, pattern `S<i>\|` — verified intact at 40k),
-then the classic 700-char slice protocol as last resort. javascript_tool REPL note: an
+   SCOPE OF THAT EXCEPTION — it covers the clipboard commands and nothing else. Never
+   disable the sandbox to read Claude Code's own storage (`~/.claude/projects`,
+   `~/.claude/sessions`, `~/.claude/history`), and never to recover a truncated or
+   spilled tool result. A capture that overflowed tool output is a transport defect;
+   the answer is to re-cut the transfer inside the bound above, not to go around the
+   boundary and read the spill. Intake cannot enforce this — the sandbox and its
+   override belong to the runtime — which is exactly why it is written here as a
+   standing instruction, and why `contract_check.py` lints for it.
+4. Wrap as a single slice (`printf 'S0|' ; cat raw_export.txt ; printf '#END#'`) and run
+   `reassemble_verify.py` with the exact `exportLen`, `--transport file` (these bytes
+   never passed through tool output, so the chunk bound does not apply) and `--sha256
+   <the digest extract.js reported>` — the same fail-closed checks apply, plus the one
+   that catches a clipboard the trusted click never refreshed.
+
+Fallback if the relay fails: console transfer (log `S<i>|chunk#END#` in **24k** chunks
+and read them back with `read_console_messages`, pattern `S<i>\|`), then the classic
+700-char slice protocol as last resort. The 24k figure is a bound, not a preference:
+tool output tops out around 32 KB, and the proving run's 40k chunks overflowed it and
+spilled to disk — after which the agent went looking for its own spill outside the
+sandbox. `reassemble_verify.py` now enforces the bound (`TOOL_OUTPUT_CHUNK_MAX`) under
+`--transport tool-output`, so an oversized chunk fails the run instead of quietly
+producing a file somebody has to go and find. javascript_tool REPL note: an
 async IIFE must be prefixed with `await`, or the pending Promise serializes as `{}`.
 
 ## Step 4 — Verify (fail closed)
 
 In the workspace, before building any markdown:
 
-1. `len(raw)` equals the reported `len` exactly.
+1. `len(raw)` equals the reported `len` exactly, AND `sha256(raw)` equals the `sha256`
+   extract.js reported. Length alone is a weak oracle — pass the digest to
+   `reassemble_verify.py --sha256`. Declare the transport too: `--transport file` for
+   the clipboard/artifact relay, `--transport tool-output` for the console path.
 2. `json.loads(raw)` succeeds; message count and role sequence match the probe.
 3. Code fences: every message has an even number of lines starting with ```.
 4. First and last message text match the probe previews.
