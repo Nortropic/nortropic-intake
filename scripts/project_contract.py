@@ -675,8 +675,11 @@ def _validate_enumeration(proj, data, findings):
                 for r in refusals:
                     findings.append(Finding(
                         proj.name, "ENUMERATION_CLAIM_INVALID",
-                        "the archived proof %s does not carry the claim it backs: %s"
-                        % (rel, r)))
+                        "the archived proof %s does not carry the claim it backs: %s. "
+                        "If the project simply GREW since the proof was taken, this is "
+                        "not tampering and the remedy is not an edit: re-run discovery "
+                        "and declare again with the new record. A proof is about the "
+                        "set that existed when it was measured." % (rel, r)))
 
 
 def _validate_sources(proj, data, findings):
@@ -1119,10 +1122,18 @@ def cmd_init(proj, args):
     save(proj, data)
     print("Scaffolded %s" % proj.manifest)
     print("PROJECT=%s  PLATFORM=%s" % (proj.name, data["platform"]))
-    print("ENUMERATION=none/unverified — declare an inventory next:")
-    print("  project_contract.py declare --project %s --inventory <file.json> \\"
+    print("ENUMERATION=none/unverified — declare an inventory next.")
+    print("  # owner-declared list (no proof of exhaustion):")
+    print("  project_contract.py declare --project %s --inventory <list.json> \\"
           % proj.name)
-    print("      --method declared|data-layer [--verified]")
+    print("      --method declared")
+    print("  # or a proved data-layer enumeration — --verified REQUIRES --evidence,")
+    print("  # and the proof is bound to the project's origin:")
+    print("  project_contract.py declare --project %s \\" % proj.name)
+    print("      --inventory <discovery.json> --evidence <discovery.json> \\")
+    if not (data.get("origin") or "").strip():
+        print("      --origin https://chatgpt.com/g/g-p-…/project \\")
+    print("      --method data-layer --verified")
     return 0
 
 
@@ -1224,8 +1235,22 @@ def check_enumeration_evidence(path, inventory, origin=""):
         return None, ["%s %s" % (path, err or "must be a JSON object")]
 
     refusals = []
-    membership = record.get("membership") or {}
-    exhaustion = record.get("exhaustion") or {}
+    # `or {}` defends a falsy non-dict and nothing else: `"membership": true` sails
+    # through it and crashes on the first .get(). A validator that raises inside a
+    # corpus-wide sweep takes every project after it down with it, so every field this
+    # function reaches into is type-checked before it is read.
+    refusals_types = []
+    membership = record.get("membership")
+    if not isinstance(membership, dict):
+        if membership is not None:
+            refusals_types.append("membership=%r is not an object" % (membership,))
+        membership = {}
+    exhaustion = record.get("exhaustion")
+    if not isinstance(exhaustion, dict):
+        if exhaustion is not None:
+            refusals_types.append("exhaustion=%r is not an object" % (exhaustion,))
+        exhaustion = {}
+    refusals.extend(refusals_types)
 
     # A record describes itself; these checks read what it describes. `scope:
     # "path-scoped-project-endpoint"` is a label anyone can type — the endpoint it
@@ -1341,7 +1366,12 @@ def check_enumeration_evidence(path, inventory, origin=""):
                         "project id in its PATH establishes membership; a query "
                         "filter this platform may silently drop does not"
                         % membership.get("scope"))
-    foreign = membership.get("foreign_items") or []
+    foreign = membership.get("foreign_items")
+    if foreign is None:
+        foreign = []
+    elif not isinstance(foreign, list):
+        refusals.append("membership.foreign_items=%r is not a list" % (foreign,))
+        foreign = []
     if foreign:
         refusals.append("the listing returned %d conversation(s) belonging to another "
                         "project (%s) — that is not this project's membership"
@@ -1360,7 +1390,7 @@ def check_enumeration_evidence(path, inventory, origin=""):
         refusals.append("the record does not claim verifiable:true")
 
     ev_keys, unresolved = set(), 0
-    for item in record.get("items") or []:
+    for item in (items if isinstance(items, list) else []):
         key = (conversation_key(str(item.get("key") or item.get("url") or ""))
                if isinstance(item, dict) else None)
         if key is None:
@@ -1448,10 +1478,22 @@ def cmd_declare(proj, args):
     # verified path was permanently unreachable. It can be supplied here instead.
     if getattr(args, "origin", None):
         existing = str(data.get("origin") or "").strip()
-        if existing and existing != args.origin:
-            print("DECLARE_REFUSED — this project already records origin %r; changing "
-                  "which project a corpus is about is not a declare-time edit"
-                  % existing)
+        # Compare the project IDENTITY, not the URL text. `stable_project_id` exists so
+        # a rename — which rewrites the id's trailing slug, and with it the whole URL —
+        # is not read as a different project; applying it only inside the evidence
+        # check and not here would refuse the rename at the previous gate instead.
+        # A URL that carries no project id at all cannot be compared, so it is refused.
+        old_gid = stable_project_id(project_id_from_origin(existing))
+        new_gid = stable_project_id(project_id_from_origin(args.origin))
+        if existing and old_gid and new_gid and old_gid != new_gid:
+            print("DECLARE_REFUSED — this project already records origin %r (project "
+                  "%s); changing which project a corpus is about is not a declare-time "
+                  "edit" % (existing, old_gid))
+            return 1
+        if existing and (not old_gid or not new_gid) and existing != args.origin:
+            print("DECLARE_REFUSED — this project records origin %r and %r carries no "
+                  "comparable /g/g-p-… project id, so the two cannot be shown to be "
+                  "the same project" % (existing, args.origin))
             return 1
         data["origin"] = args.origin
 
@@ -1937,7 +1979,22 @@ def cmd_validate_all(args):
     all_findings = []
     for name in names:
         proj = Project(corpus, name)
-        findings, data = validate_project(proj)
+        # One malformed project must not take the sweep down with it. An uncaught
+        # exception here is worse than any finding it could have reported: every
+        # project sorted after the bad one is never validated at all, and the run
+        # LOOKS like it stopped rather than like it passed — but nothing says which
+        # projects were never reached. A crash is itself a finding, so it is recorded
+        # as one and the sweep continues.
+        try:
+            findings, data = validate_project(proj)
+        except Exception as exc:                                  # noqa: BLE001
+            findings = [Finding(name, "PROJECT_VALIDATION_CRASHED",
+                                "validating this project raised %s: %s — the manifest "
+                                "is malformed in a way the contract does not model. "
+                                "Treated as a failure, and the remaining projects were "
+                                "still validated."
+                                % (type(exc).__name__, exc))]
+            data = None
         all_findings.extend(findings)
         if not fails(findings):
             print("PASS  [%s]  sources=%d status=%s"

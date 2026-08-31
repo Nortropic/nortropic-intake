@@ -1412,6 +1412,43 @@ def j_enumeration_evidence(tmp):
               rc != 0 and "Traceback" not in out
               and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:700])
 
+    # ---- a TRUTHY non-dict is the shape `or {}` does not defend, and a validator
+    #      that raises inside the corpus sweep takes every later project with it ----
+    for label, mutate in (
+            ("membership", lambda r: r.__setitem__("membership", True)),
+            ("exhaustion", lambda r: r.__setitem__("exhaustion", True)),
+            ("foreign", lambda r: r["membership"].__setitem__("foreign_items", 5)),
+            ("items", lambda r: r.__setitem__("items", "two"))):
+        rec = real_discovery_record(urls)
+        mutate(rec)
+        ev = _evidence(tmp, "truthy-" + label, urls, _base=rec)
+        rc, out = declare(ev)
+        check("J46h[%s] a truthy non-object evidence field is a stated refusal, not a "
+              "traceback" % label,
+              rc != 0 and "Traceback" not in out
+              and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:600])
+
+    crashed = sweep_project(Path(tmp) / "crash-sweep", "aaa-broken")
+    import hashlib as _h
+    cdata = read_project_manifest(crashed, "aaa-broken")
+    bad = Path(crashed) / "_projects/aaa-broken/ev.json"
+    bad.write_text('{"membership": true, "exhaustion": true}', encoding="utf-8")
+    cdata["enumeration"] = {
+        "method": "data-layer", "verified": True, "declared_inventory_sha256": "x",
+        "evidence": {"record": "_projects/aaa-broken/ev.json",
+                     "sha256": _h.sha256(bad.read_bytes()).hexdigest(),
+                     "membership_scope": "path-scoped-project-endpoint",
+                     "terminal_signal": "cursor-absent"}}
+    write_project_manifest(crashed, "aaa-broken", cdata)
+    healthy = sweep_project(Path(tmp) / "healthy", "zzz-healthy")
+    shutil.copytree(Path(healthy) / "_projects/zzz-healthy",
+                    Path(crashed) / "_projects/zzz-healthy")
+    rc, out = F.project(["validate"], crashed)
+    check("J46i a malformed project cannot abort the corpus-wide sweep — the projects "
+          "sorted after it are still validated",
+          rc != 0 and "Traceback" not in out and "zzz-healthy" in out,
+          out.strip()[:800])
+
     # ---- MAT-2: the origin is reachable after init, and a rename is not a
     #      different project ------------------------------------------------
     late = sweep_project(Path(tmp) / "late", "late")
@@ -1433,6 +1470,26 @@ def j_enumeration_evidence(tmp):
                          "--at", "2026-08-31"], late)
     check("J47b but changing WHICH project a corpus is about is not a declare-time "
           "edit", rc != 0 and "already records origin" in out, out.strip()[:700])
+    # …and the rename tolerance has to reach this guard too, or it refuses a rename at
+    # the gate before the one that was written to accept it. A real ChatGPT project id
+    # is `g-p-<32 hex>-<slug>` and the slug follows the title, so use that shape.
+    HEX = "g-p-6a86d9dcb8488191b03ee843bb19eb6c"
+    ren = sweep_project(Path(tmp) / "ren-guard", "ren3")
+    F.project(["init", "--project", "ren4", "--title", "Rename guard", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s-improvements/project" % HEX], ren)
+    rc, out = F.project(["declare", "--project", "ren4", "--inventory", str(inv3),
+                         "--method", "declared", "--at", "2026-09-01", "--origin",
+                         "https://chatgpt.com/g/%s-forbattringar/project" % HEX], ren)
+    check("J47b2 re-passing the SAME project's origin after a rename is accepted — "
+          "the guard compares project identity, not URL text",
+          rc == 0, out.strip()[:700])
+    rc, out = F.project(["declare", "--project", "ren4", "--inventory", str(inv3),
+                         "--method", "declared", "--at", "2026-09-01", "--origin",
+                         "https://chatgpt.com/g/g-p-0000000000000000000000000000000a/project"],
+                        ren)
+    check("J47b3 while a genuinely different project id is still refused",
+          rc != 0 and "already records origin" in out, out.strip()[:700])
 
     # A ChatGPT project id is `g-p-<hex>-<slug>` and the slug follows the TITLE, so a
     # rename must not read as a different project.
@@ -1467,6 +1524,28 @@ def j_enumeration_evidence(tmp):
     rc, out = F.project(["validate", "--project", "one2"], onefile)
     check("J48b and what it produced validates clean",
           rc == 0 and "ENUMERATION_CLAIM_INVALID" not in out, out.strip()[:700])
+
+    # ---- M6: the first instruction an operator receives is init's own next step.
+    # It printed the v3.0 command, which v3.1 refuses — a wall at the exact moment the
+    # enumeration path is chosen.
+    hint = sweep_project(Path(tmp) / "hint", "hint")
+    rc, out = F.project(["init", "--project", "hint2", "--title", "Hint", "--platform",
+                         "chatgpt", "--at", "2026-09-01"], hint)
+    flat = " ".join(out.split())
+    check("J49a init's printed next step names --evidence with --verified, which the "
+          "tool now requires",
+          rc == 0 and "--verified REQUIRES --evidence" in flat
+          and "--evidence <discovery.json>" in flat, out.strip()[:700])
+    check("J49b and it names --origin, without which a verified enumeration cannot "
+          "bind — the project has none yet",
+          "--origin" in out, out.strip()[:700])
+    # Follow it verbatim: the declared path it prints must run.
+    inv4 = Path(tmp) / "inv-hint.json"
+    inv4.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    rc, out = F.project(["declare", "--project", "hint2", "--inventory", str(inv4),
+                         "--method", "declared", "--at", "2026-09-01"], hint)
+    check("J49c the declared command init prints actually runs",
+          rc == 0 and "PROJECT_ENUMERATION_UNVERIFIED" in out, out.strip()[:700])
 
     # Back-compat: a claim made before the evidence contract existed stays VALID,
     # is reported as legacy, and is never silently promoted.

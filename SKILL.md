@@ -798,11 +798,12 @@ approved plan and the brief stays `clarified`.
    record is exactly as durable as the corpus's commit state, which is precisely
    what the WEAK label is telling you.
 
-   It also carries the candidate's **context binding** across:
-
-       APPROVED_PLAN_SHA256=X
-       APPROVED_PLAN_CONTEXT_REVISION=4
-       APPROVED_PLAN_SOURCE_SET_SHA256=Y
+   It also carries the candidate's **context binding** across. That binding lives in
+   the approved plan's own frontmatter — `context_revision` and `source_set_sha256`,
+   copied from the candidate and re-checked by `plan_contract.py validate` — not in a
+   line the tool prints. What the tools DO print is the comparison:
+   `plan-impact` reports `APPROVED_PLAN_CONTEXT_REVISION` against
+   `CURRENT_CONTEXT_REVISION`, and `resume` surfaces `ACTIVE_APPROVED_PLAN_SHA256`.
 
    This does **not** make the context package execution authority. It is provenance:
    *this is the understanding against which this plan was approved*, so that when the
@@ -1502,6 +1503,14 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   measured rather than candidate, and its verified claim carries re-checkable evidence;
   what remains unprovable is whether the platform's listing endpoint is itself complete,
   which no client can establish from outside.
+- **The instruction pins match a vocabulary, not a meaning.** `test_transport_v31.py`
+  fingerprints every place Intake's own text names the runtime's directory or the
+  sandbox override, so a new or reworded one fails until a person looks at it. Three
+  successive reviews each got an instruction past an earlier version of that check —
+  by prose the negation-heuristic misread, by a same-count swap, and by wrapping the
+  path across a line break — and each hole is closed. What remains open is stated in the
+  check itself: an instruction written entirely around the vocabulary still passes. It
+  guards against drift in Intake's own wording; it is not a semantic firewall.
 - **Intake does not own the sandbox, and does not pretend to.** The command sandbox, the
   override that disables it, and the runtime's own private session storage all belong to
   Claude Code, not to this skill — which is why no path into that storage is written
@@ -1518,6 +1527,19 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   `--sha256` transport oracle is mandatory precisely so that becomes a hard failure
   rather than a plausible capture, which is as far as this layer can go — the flakiness
   itself lives in the browser tooling, and no retry framework was added for it.
+- **The framing is ambiguous, and the digest is what resolves it.** `#END#` is a marker,
+  not a reserved word, so a conversation ABOUT this protocol carries the tokens in its
+  own text. Three readings of the framing are tried and the digest picks the one that
+  reproduces it — which recovers an ambiguous frame, never a damaged payload. When no
+  reading reproduces the digest the transfer is reported broken, and at that point a
+  conversation that merely quotes the markers is indistinguishable from one that really
+  was cut. That is why the diagnosis is labelled a hint and the digest is the verdict.
+- **A proof is about the set that existed when it was measured.** Register a new
+  conversation into a project whose enumeration is evidence-backed and `validate` says
+  `ENUMERATION_CLAIM_INVALID` — correctly, because the archived record no longer
+  describes this inventory. The remedy is to re-run discovery and declare again, not to
+  edit anything; the finding says so, because read quickly it looks like tampering when
+  the truth is that the project grew.
 - **The chunk bound is a prescription; a separate check notices a spill.** The bound
   fires on an oversized chunk that arrived intact, which is what keeps the playbook from
   prescribing a size that spills. A chunk that actually got cut is a different shape: it

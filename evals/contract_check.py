@@ -284,8 +284,15 @@ CHECKS = [
         "**Plan-Mode owner decisions must never live only in the chat.**",
         "PLAN_OWNER_DELTA_UNCITED",
         "Do not rely on the Plan Mode\nconversation surviving"]),
+    # Pin the tokens the tools ACTUALLY emit. The earlier version of this lint required
+    # `APPROVED_PLAN_SOURCE_SET_SHA256=Y`, which no script prints — it passed on prose
+    # describing output that does not exist, which is the exact failure mode a contract
+    # lint is for.
     ("SKILL.md", "W11 the approved plan binds the context it was approved against", [
-        "APPROVED_PLAN_CONTEXT_REVISION=4", "APPROVED_PLAN_SOURCE_SET_SHA256=Y",
+        "`context_revision` and `source_set_sha256`",
+        "re-checked by `plan_contract.py validate`", "not in a line the tool prints",
+        "APPROVED_PLAN_CONTEXT_REVISION", "CURRENT_CONTEXT_REVISION",
+        "ACTIVE_APPROVED_PLAN_SHA256",
         "This does **not** make the context package execution authority"]),
     ("SKILL.md", "W12 stale is detected, and stale is not invalid", [
         "## Phase 5.5 — When context moves under an approved plan",
@@ -473,6 +480,11 @@ CHECKS = [
         "would be a false security claim",
         "**A trusted click may not land.**",
         "no retry framework was added for it",
+        "**The framing is ambiguous, and the digest is what resolves it.**",
+        "recovers an ambiguous frame, never a damaged payload",
+        "**A proof is about the set that existed when it was measured.**",
+        "**The instruction pins match a vocabulary, not a meaning.**",
+        "it is not a semantic firewall",
         "**The chunk bound is a prescription; a separate check notices a spill.**",
         "the header's own bytes are\n  outside source identity"]),
     # ---------------------------------------------------------------------
@@ -544,6 +556,22 @@ CHECKS = [
         "`--transport tool-output`",
         "Length alone is a weak oracle",
         "--sha256"]),
+    # The two files no lint covered — which is why four reviews in a row each found a
+    # doc still describing older behaviour. evals/README.md is what a maintainer reads
+    # to know what the evals prove; the workflow is what actually runs them.
+    ("evals/README.md", "PS19 the eval inventory matches what is actually there", [
+        "python3 evals/test_transport_v31.py", "node    evals/test_discovery_v31.mjs",
+        "## 10. v3.1 transport suite", "## 11. v3.1 discovery suite",
+        "| I32–I42 |", "| J39–J48 |",
+        "the SHIPPED `scripts/project_discovery.js`",
+        "`extract.js` and `data_capture.js` both report the sha256 Step 4 requires"]),
+    (".github/workflows/intake-contract.yml",
+     "PS20 CI runs every suite and guards every module it depends on", [
+        "python3 evals/test_transport_v31.py", "node evals/test_discovery_v31.mjs",
+        "actions/setup-node@v4",
+        "guard reassemble_verify test_transport_v31",
+        "for js in extract data_capture; do",
+        "MUTATION GUARD FAILED: v3 suite passed with the adapter stubbed"]),
     ("references/extraction.md", "PS18 the one sandbox exception carries a negative scope", [
         "run **only** the pbpaste/pbcopy steps",
         "SCOPE OF THAT EXCEPTION",

@@ -68,6 +68,10 @@ import argparse, hashlib, json, re, sys
 # S<i>| prefix, the #END# marker and the tool's own framing.
 TOOL_OUTPUT_CHUNK_MAX = 32768
 
+# A transfer never has more than a few hundred slices. Anything far above what arrived
+# is a corrupted marker, not a gap — and enumerating it is an unbounded allocation.
+MAX_INDEX_GAP = 10000
+
 
 def fail(message):
     print("FAIL: %s" % message)
@@ -85,6 +89,12 @@ def fail(message):
 # the end of the file, which is what actually terminates a slice.
 _SLICE_LOOSE = re.compile(r"S(\d+)\|(.*?)#END#", re.S)
 _SLICE_ANCHORED = re.compile(r"S(\d+)\|(.*?)#END#(?=\s*(?:S\d+\||\Z))", re.S)
+# The outermost reading: one slice running to the FINAL `#END#`. This is the parse that
+# recovers the clipboard relay — which frames the whole export as a single S0 — when the
+# conversation's own text contains `…#END#S1|…`. Prose about this protocol does exactly
+# that, and neither reading above survives it: the loose one stops at the inner marker,
+# and the anchored one accepts it precisely BECAUSE a marker follows.
+_SLICE_GREEDY = re.compile(r"S(\d+)\|(.*)#END#", re.S)
 
 
 def _collect(matches):
@@ -96,24 +106,49 @@ def _collect(matches):
     return idx, dupes
 
 
-def parse_slices(raw, expected):
-    """(matches, {index: payload}, duplicate-indexes) — prefer the parse that adds up.
+def parse_slices(raw, expected, digest=None):
+    """(matches, {index: payload}, duplicate-indexes) — the parse the DIGEST endorses.
 
-    Both readings are tried and the one whose total length equals what the extractor
-    declared wins; ties go to the anchored one. Nothing is trusted on that basis — the
-    digest still decides — this only stops a legitimate `#END#` inside a message from
-    being read as the end of a slice.
+    `#END#` is a marker, not a reserved word, and NO single reading of the framing is
+    correct in general: the loose one stops at a `#END#` inside a message, the anchored
+    one runs past the real terminator when the next marker follows immediately, and the
+    greedy one collapses genuinely separate slices. So all three are tried and the
+    digest picks the winner — that is what "the digest is the authority" has to mean at
+    the parse step too, or a framing heuristic decides the verdict after all.
+
+    Without a digest the tie-break falls back to the declared length, and failing that
+    to the loose reading, which is what the protocol originally specified. Be clear
+    about the limit: this recovers an ambiguous FRAMING, not a damaged payload. If none
+    of the three readings reproduces the digest, the transfer is reported broken — and
+    a conversation whose text contains the markers is then indistinguishable from one
+    that really was cut, which is why the diagnosis is a hint and the digest is the
+    verdict.
     """
-    for pattern in (_SLICE_ANCHORED, _SLICE_LOOSE):
+    want = (digest or "").strip().lower()
+    candidates = []
+    for name, pattern in (("anchored", _SLICE_ANCHORED), ("loose", _SLICE_LOOSE),
+                          ("greedy", _SLICE_GREEDY)):
         matches = pattern.findall(raw)
         if not matches:
             continue
         idx, dupes = _collect(matches)
-        if sum(len(v) for v in idx.values()) == expected:
+        joined = "".join(idx[k] for k in sorted(idx))
+        if want and hashlib.sha256(joined.encode("utf-8")).hexdigest() == want:
             return matches, idx, dupes
-    matches = _SLICE_LOOSE.findall(raw)
-    idx, dupes = _collect(matches)
-    return matches, idx, dupes
+        candidates.append((matches, idx, dupes, len(joined), name))
+    for matches, idx, dupes, length, _ in candidates:
+        if length == expected:
+            return matches, idx, dupes
+    # Nothing reproduced the digest or the length: the transfer is broken, and what is
+    # wanted now is the most diagnosable reading, not the most permissive one. That is
+    # the loose parse — the protocol's original semantics, under which a gap is a gap
+    # and a swallowed marker is visible.
+    loose = [c for c in candidates if c[0] is not None and c[4] == "loose"]
+    chosen = loose[0] if loose else (candidates[0] if candidates else None)
+    if chosen:
+        matches, idx, dupes, _, _ = chosen
+        return matches, idx, dupes
+    return [], {}, set()
 
 
 def diagnose(raw, idx, found, got_len, expected):
@@ -137,7 +172,17 @@ def diagnose(raw, idx, found, got_len, expected):
               "that are still valid" % (markers, len(found), swallowed, min(swallowed)))
         return
 
-    missing = [k for k in range(max(idx) + 1) if k not in idx]
+    # The index comes out of untrusted transfer text. `range(max+1)` over a corrupted
+    # one allocates until the process is killed — a hang with no output, in the gate
+    # whose whole job is to fail loudly. Bound it against what actually arrived.
+    top = max(idx)
+    if top > len(idx) + MAX_INDEX_GAP:
+        print("TRANSPORT_INDEX_IMPLAUSIBLE — the highest slice index is S%d but only "
+              "%d slice(s) arrived. That is not a gap, it is a corrupted marker; "
+              "re-run the transfer rather than trying to fill it" % (top, len(idx)))
+        return
+
+    missing = [k for k in range(top + 1) if k not in idx]
     if missing:
         print("TRANSPORT_INCOMPLETE — %d slice(s) never arrived. Re-fetch exactly "
               "index(es) %s; the arrived slices are still valid"
@@ -170,6 +215,14 @@ def diagnose(raw, idx, found, got_len, expected):
               "index %d onward) or one that did was itself truncated without losing its "
               "#END#; re-fetching the tail settles which"
               % (expected - got_len, max(idx), max(idx), max(idx) + 1))
+        return
+    if got_len == expected:
+        # Reached only from the digest path: the size is right and the bytes are not.
+        # Calling that a length problem would send the operator after the wrong thing.
+        print("TRANSPORT_CONTENT_WRONG — the transfer is intact and exactly the "
+              "expected length, so nothing was lost: these are simply different bytes. "
+              "Re-run the capture; on the clipboard path this is what an undelivered "
+              "click looks like")
         return
     print("TRANSPORT_LENGTH_UNEXPLAINED — %d char(s) too long with no gap, no merge and "
           "no duplicate. The payload is not what the extractor reported; re-run the "
@@ -206,7 +259,7 @@ def main():
     raw = open(args.slices, encoding="utf-8").read()
     expected = args.expected_len
 
-    found, idx, dupes = parse_slices(raw, expected)
+    found, idx, dupes = parse_slices(raw, expected, args.digest)
 
     if not idx:
         fail("no S<i>|...#END# slices found")
@@ -234,18 +287,27 @@ def main():
     s = "".join(idx[k] for k in sorted(idx))
     actual = hashlib.sha256(s.encode("utf-8")).hexdigest()
 
-    if len(s) != expected:
+    if args.digest:
+        # The digest decides, and it decides FIRST. Checking the framing-derived length
+        # ahead of it would hand the verdict back to the framing heuristic, which is
+        # exactly what this module says it does not do.
+        if actual.lower() != args.digest.strip().lower():
+            if len(s) == expected:
+                print("TRANSPORT_DIGEST_MISMATCH — these are not the bytes that were "
+                      "extracted (same length, different content: a stale clipboard "
+                      "from an undelivered click looks exactly like this)")
+            diagnose(raw, idx, found, len(s), expected)
+            fail("sha256 %s != expected %s" % (actual, args.digest.strip().lower()))
+    elif len(s) != expected:
         diagnose(raw, idx, found, len(s), expected)
         fail("reassembled length %d != expected %d" % (len(s), expected))
 
-    if args.digest:
-        if actual.lower() != args.digest.strip().lower():
-            print("TRANSPORT_DIGEST_MISMATCH — these are not the bytes that were "
-                  "extracted (same length, different content: a stale clipboard from "
-                  "an undelivered click looks exactly like this)")
-            diagnose(raw, idx, found, len(s), expected)
-            fail("sha256 %s != expected %s" % (actual, args.digest.strip().lower()))
-    else:
+    if len(s) != expected:
+        fail("reassembled length %d != expected %d — the digest matched, so the "
+             "extractor's reported length is the thing that is wrong; re-read it"
+             % (len(s), expected))
+
+    if not args.digest:
         print("TRANSPORT_DIGEST_UNVERIFIED — --digest-unavailable was passed, so only "
               "the LENGTH of this payload was checked. Two different conversations of "
               "equal length are indistinguishable here. Record this downgrade wherever "

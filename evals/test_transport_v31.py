@@ -148,6 +148,14 @@ def t_bound(tmp):
     fits = "z" * room
     rc, out, _ = verify(tmp, ["S0|" + fits + "#END#"], len(fits), "tool-output",
                         sha(fits), name="fits.txt")
+    # M3: the index comes out of untrusted text. `range(max+1)` over a corrupted one
+    # allocates until the process dies — a hang with no output, in the gate whose whole
+    # job is to fail loudly.
+    rc2, out2, _ = verify(tmp, ["S99999999999999999999|x#END#"], 50, "file",
+                          None, name="huge-index.txt", no_digest=True)
+    check("T4f a corrupted slice index is refused, not enumerated — the gate must "
+          "never hang instead of failing",
+          rc2 != 0 and "TRANSPORT_INDEX_IMPLAUSIBLE" in out2, out2.strip()[:400])
     # This payload is deliberately not JSON — it fails later, on parsing. What is
     # under test here is only the bound, and that one char of headroom clears it.
     check("T4e one char of headroom clears the bound — it is exact, not approximate",
@@ -236,27 +244,50 @@ def t_resumable(tmp):
     short = payload[:len(payload) - 90]
     rc, out, _ = verify(tmp, ["S0|" + short + "#END#"], len(payload), "file",
                         digest, name="short-single.txt")
-    check("T7h a single framed slice that is short says the PAYLOAD was partial — it "
+    check("T7j a single framed slice that is short says the PAYLOAD was partial — it "
           "does not send the operator after a slice that never existed",
           rc != 0 and "TRANSPORT_PAYLOAD_SHORT" in out
           and "re-fetch from index 1" not in out, out.strip()[:700])
 
     dup = list(parts) + [parts[1]]
     rc, out, _ = verify(tmp, dup, len(payload), "tool-output", digest, name="dup.txt")
-    check("T7i a slice that arrived twice is reported, not silently overridden",
+    check("T7k a slice that arrived twice is reported, not silently overridden",
           rc == 0 and "TRANSPORT_SLICE_REFETCHED" in out and "[1]" in out,
           out.strip()[:700])
 
     # And the digest is the authority: a conversation whose own text contains the
-    # framing tokens must not be diagnosed as a broken transfer.
-    tricky = export_payload([
-        {"role": "user", "text": "Slice-protokollet: skicka S12|nyttolast#END# per bit."},
-        {"role": "assistant", "text": "Ja — och #END# avslutar varje bit."}])
-    rc, out, _ = verify(tmp, ["S0|" + tricky + "#END#"], len(tricky), "file",
-                        sha(tricky), name="tokens-in-text.txt")
-    check("T7g a conversation that quotes S<i>| and #END# in its own text still "
-          "verifies — the digest decides, framing heuristics never overrule it",
-          rc == 0 and "TRANSPORT_SLICE" not in out, out.strip()[:700])
+    # framing tokens must not be diagnosed as a broken transfer. The arrangement
+    # matters — an earlier version of this check put ordinary words after every
+    # `#END#`, which is exactly the shape the anchored parse survives, so it passed
+    # without testing its own claim. These are the five arrangements a review measured,
+    # including the two that made a conversation ABOUT this protocol untransportable.
+    quoted = [
+        ("adjacent", "Skicka S0|body#END#S1|more#END# per bit."),
+        ("spaced", "Skicka S0|a#END# S1|b#END# i tur och ordning."),
+        ("wrapped", "Skicka S0|a#END#\nS1|b#END#"),
+        ("worded", "Varje bit slutar med #END# och sedan nasta."),
+        ("trailing", "Varje bit slutar med #END#"),
+    ]
+    for label, text in quoted:
+        tricky = export_payload([{"role": "user", "text": text},
+                                 {"role": "assistant", "text": "Ja."}])
+        rc, out, dest = verify(tmp, ["S0|" + tricky + "#END#"], len(tricky), "file",
+                               sha(tricky), name="tokens-%s.txt" % label)
+        got = json.loads(dest.read_text(encoding="utf-8")) if dest.exists() else []
+        check("T7g[%s] a conversation that quotes S<i>| and #END# in its own text "
+              "still verifies, and arrives verbatim" % label,
+              rc == 0 and "TRANSPORT_SLICE" not in out
+              and got and got[0]["text"] == text.replace("\n", "\n"),
+              out.strip()[:400])
+
+    # …and that recovery must not become an excuse: a genuinely damaged payload has no
+    # reading that reproduces the digest, so it still fails.
+    real = export_payload([{"role": "user", "text": "Bygg Evolution Radar."},
+                           {"role": "assistant", "text": "Beslutat."}])
+    rc, out, _ = verify(tmp, ["S0|" + real[:len(real) - 12] + "#END#"], len(real),
+                        "file", sha(real), name="damaged.txt")
+    check("T7h no framing reading rescues a payload that really was damaged",
+          rc != 0, out.strip()[:400])
 
     # And a payload that parses as JSON but is not a transcript stops cleanly.
     rc, out, _ = verify(tmp, ['S0|{"a": 1}#END#'], len('{"a": 1}'), "file",

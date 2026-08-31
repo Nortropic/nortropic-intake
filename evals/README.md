@@ -4,9 +4,10 @@ Eleven checks, all repeatable. Zero regression = all eleven pass. The first five
 skill's own suites against real files and real git repositories; the two v3.1 suites
 drive the shipped scripts directly — one under node against a fake platform, one against
 `reassemble_verify.py` in temp directories; the last three execute the real validators
-against the real corpus. The numbers in the block below are the section numbers further
-down, which is why they do not start at 1 — sections 1–5 cover the trigger eval, the
-capture goldens and the rubrics, which are judged rather than run.
+against the real corpus. The numbers in the command block below are the section
+numbers further down, which is why they start at 1 for the contract lint and then jump:
+sections 2–5 cover the trigger eval, the capture goldens and the rubrics, which are
+judged rather than run.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
@@ -297,3 +298,31 @@ The J-family fixtures are produced by running the SHIPPED `scripts/project_disco
 under node (`evals/discovery_record.mjs`), so the checker is fed what the adapter really
 writes rather than a hand-built record that would only prove the two agree with a
 fixture.
+
+## 10. v3.1 transport suite (`test_transport_v31.py`)
+
+Drives `scripts/reassemble_verify.py` directly, in temp directories. Nothing here reads
+or writes a real user file, and T12 proves that by comparing `$HOME` and the repo root
+before and after — not by asserting that a `mkdtemp()` path is under the temp dir, which
+is what it used to do and which could not fail.
+
+| | Family | Proves |
+|---|---|---|
+| T1–T3 | large source | a conversation far past the tool-output ceiling transports in bounded chunks, byte-exact, hash intact, fences balanced |
+| T4–T5 | the bound is real | an oversized FRAMED chunk is refused; the file/clipboard relay is not bounded by it; an undeclared transport defaults to the bounded reading; a corrupted slice index is refused rather than enumerated |
+| T6–T7 | broken transfers | a mid-transfer gap, a truncated slice that swallowed the next, a truncated LAST slice, a missing tail and a short single slice each get their own named diagnosis and a resume point; a duplicate index is reported; a conversation quoting `S<i>\|` and `#END#` in its own text still verifies, in all five arrangements; and a genuinely damaged payload is not rescued by any of it |
+| T8–T9 | length is not identity | the equal-length stale-clipboard payload is caught by the digest; the digest is mandatory and waiving it is a deliberate, loud act |
+| T10–T13 | the trust boundary | every mention of the runtime's own directory and every sandbox-bypass phrase in Intake's own text matches a pinned wording, across the rubrics and the workflow too; the pins fire on a new occurrence, a paraphrase inside the vocabulary, and a same-count swap; this suite writes nothing outside its temp directory |
+
+## 11. v3.1 discovery suite (`test_discovery_v31.mjs`)
+
+Runs the three SHIPPED browser scripts under node against fake platforms. Needs `node`;
+the workflow declares it with `setup-node`.
+
+| | Family | Proves |
+|---|---|---|
+| A1–A3 | cursor walk | two pages then exhaustion gives the exact union; a duplicate across pages is one source; same title with different ids stays two |
+| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its 800-chat listing cannot be reached |
+| A5–A8 | exhaustion | an outstanding cursor, a cursor that never advances, and a disagreeing total each block the claim; an empty project with an exhausted cursor is a valid zero-membership result; a rerun is byte-identical |
+| A9–A10 | guards | an unknown host and a missing project id fail closed; the adapter builds a path-scoped URL and never a `gizmo_id` query |
+| A11–A12 | capture digests | `extract.js` and `data_capture.js` both report the sha256 Step 4 requires, of exactly the bytes they stored, and both keep their load-bearing leading `await` |
