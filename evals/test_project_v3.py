@@ -24,9 +24,10 @@ run through the real validators — no mocks:
   I32–I38 source identity vs builder metadata (v3.1, from the proving run): a
           re-worded purpose line or a later export date is DERIVED and never mints a
           revision; a changed message or a changed speaker still does.
-  J39–J44 enumeration evidence (v3.1, from the proving run): a verified claim must
-          carry a re-checkable proof of membership scope and cursor exhaustion, and a
-          pre-v3.1 claim stays valid as legacy without being promoted.
+  J39–J48 enumeration evidence (v3.1, from the proving run): a verified claim must
+          carry a proof of membership scope and cursor exhaustion that `declare` AND
+          `validate` both re-read from its bytes, bound to the project's own origin;
+          a pre-v3.1 claim stays valid as legacy without being promoted.
 
 All real Improvements sweeping is out of scope here BY CONSTRUCTION: every project
 in this suite is synthetic, in a temp directory, and torn down after the run.
@@ -1341,6 +1342,131 @@ def j_enumeration_evidence(tmp):
     ev = _evidence(tmp, "good2", urls, _base=real)
     declare(ev)
     data = read_project_manifest(corpus, "enum")
+
+    # ---- the archived proof is re-CHECKED, not merely counted --------------
+    # Verifying only the digest would make the claim answerable to whatever bytes were
+    # archived — the same asymmetry this contract refuses for transcripts.
+    archived = Path(corpus) / data["enumeration"]["evidence"]["record"]
+    archived.write_text('{"this": "is not a discovery record at all"}', encoding="utf-8")
+    d2 = read_project_manifest(corpus, "enum")
+    d2["enumeration"]["evidence"]["sha256"] = F.sha256_file(archived)
+    write_project_manifest(corpus, "enum", d2)
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J46a a hand-written manifest cannot verify by archiving junk and recording "
+          "its digest — validate re-reads the proof itself",
+          rc != 0 and "ENUMERATION_CLAIM_INVALID" in out
+          and "does not carry the claim it backs" in out, out.strip()[:800])
+    ev = _evidence(tmp, "good3", urls, _base=real)
+    declare(ev)
+
+    # ---- the checks nothing exercised -------------------------------------
+    unproven = real_discovery_record(urls)
+    unproven["exhaustion"]["proven"] = False        # verifiable stays true
+    ev = _evidence(tmp, "provenonly", urls, _base=unproven)
+    rc, out = declare(ev)
+    check("J46b exhaustion.proven is checked on its own, not only via verifiable",
+          rc != 0 and "exhaustion.proven is not true" in out, out.strip()[:700])
+
+    notver = real_discovery_record(urls)
+    notver["verifiable"] = False                    # exhaustion stays proven
+    ev = _evidence(tmp, "verifiableonly", urls, _base=notver)
+    rc, out = declare(ev)
+    check("J46c and verifiable is checked on its own too — neither of the pair is "
+          "green because of the other",
+          rc != 0 and "does not claim verifiable:true" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "freetextsignal", urls,
+                   exhaustion={"terminal_signal": "trust me, it ended"})
+    rc, out = declare(ev)
+    check("J46d a terminal signal the adapter cannot emit is an assertion in free "
+          "text, not a measurement",
+          rc != 0 and "is not one of" in out, out.strip()[:700])
+
+    badwalk = real_discovery_record(urls)
+    badwalk["exhaustion"]["pages_walked"] = 7
+    ev = _evidence(tmp, "walkcount", urls, _base=badwalk)
+    rc, out = declare(ev)
+    check("J46e a pages_walked that disagrees with the ledger is refused",
+          rc != 0 and "the ledger holds" in out, out.strip()[:700])
+
+    junkitem = real_discovery_record(urls)
+    junkitem["items"].append({"title": "no url and no key"})
+    junkitem["collected"] = len(junkitem["items"])
+    junkitem["exhaustion"]["pages"][-1]["items"] += 1
+    ev = _evidence(tmp, "junkitem", urls, _base=junkitem)
+    rc, out = declare(ev)
+    check("J46f an item with no resolvable conversation identity is not a member",
+          rc != 0 and "no resolvable conversation" in out, out.strip()[:700])
+
+    # ---- MAT-4: every malformed shape is a refusal, never a traceback ------
+    for label, mutate in (
+            ("strpages", lambda r: r["exhaustion"].__setitem__("pages", ["p1", "p2"])),
+            ("strcollected", lambda r: r.__setitem__("collected", "3")),
+            ("strdupes", lambda r: r.__setitem__("duplicates_dropped", "0"))):
+        rec = real_discovery_record(urls)
+        mutate(rec)
+        ev = _evidence(tmp, label, urls, _base=rec)
+        rc, out = declare(ev)
+        check("J46g[%s] a malformed evidence field is a stated refusal, not a "
+              "traceback" % label,
+              rc != 0 and "Traceback" not in out
+              and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:700])
+
+    # ---- MAT-2: the origin is reachable after init, and a rename is not a
+    #      different project ------------------------------------------------
+    late = sweep_project(Path(tmp) / "late", "late")
+    F.project(["init", "--project", "late2", "--title", "Origin came later",
+               "--platform", "chatgpt", "--at", "2026-08-31"], late)
+    inv3 = Path(tmp) / "inv-late.json"
+    inv3.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    ev = _evidence(tmp, "late", urls)
+    rc, out = F.project(["declare", "--project", "late2", "--inventory", str(inv3),
+                         "--evidence", str(ev), "--method", "data-layer", "--verified",
+                         "--origin", "https://chatgpt.com/g/%s/project" % GID,
+                         "--at", "2026-08-31"], late)
+    check("J47a a project scaffolded without --origin is not stuck: declare can "
+          "record it, and then the proof binds",
+          rc == 0 and "VERIFIED=YES" in out, out.strip()[:800])
+    rc, out = F.project(["declare", "--project", "late2", "--inventory", str(inv3),
+                         "--method", "declared", "--origin",
+                         "https://chatgpt.com/g/g-p-something-else/project",
+                         "--at", "2026-08-31"], late)
+    check("J47b but changing WHICH project a corpus is about is not a declare-time "
+          "edit", rc != 0 and "already records origin" in out, out.strip()[:700])
+
+    # A ChatGPT project id is `g-p-<hex>-<slug>` and the slug follows the TITLE, so a
+    # rename must not read as a different project.
+    renamed = sweep_project(Path(tmp) / "renamed", "renamed")
+    hexgid = "g-p-6a86d9dcb8488191b03ee843bb19eb6c"
+    F.project(["init", "--project", "ren2", "--title", "Renamed", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s-improvements/project" % hexgid], renamed)
+    ev = _evidence(tmp, "renamed", urls,
+                   _base=real_discovery_record(urls, gid=hexgid + "-forbattringar"))
+    rc, out = F.project(["declare", "--project", "ren2", "--inventory", str(inv3),
+                         "--evidence", str(ev), "--method", "data-layer", "--verified",
+                         "--at", "2026-08-31"], renamed)
+    check("J47c renaming the project on the platform rewrites the id's slug, not its "
+          "identity — the proof still binds",
+          rc == 0 and "VERIFIED=YES" in out, out.strip()[:800])
+
+    # ---- MAT-3: the documented single-file command actually runs -----------
+    onefile = sweep_project(Path(tmp) / "onefile", "onefile")
+    F.project(["init", "--project", "one2", "--title", "One file", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s/project" % GID], onefile)
+    rec_path = Path(tmp) / "discovery.json"
+    rec_path.write_text(json.dumps(real_discovery_record(urls)), encoding="utf-8")
+    rc, out = F.project(["declare", "--project", "one2", "--inventory", str(rec_path),
+                         "--evidence", str(rec_path), "--method", "data-layer",
+                         "--verified", "--at", "2026-08-31"], onefile)
+    check("J48 the documented command — the SAME discovery record as --inventory and "
+          "--evidence — actually runs; a record's items ARE the inventory",
+          rc == 0 and "VERIFIED=YES" in out and "%d new" % len(urls) in out,
+          out.strip()[:800])
+    rc, out = F.project(["validate", "--project", "one2"], onefile)
+    check("J48b and what it produced validates clean",
+          rc == 0 and "ENUMERATION_CLAIM_INVALID" not in out, out.strip()[:700])
 
     # Back-compat: a claim made before the evidence contract existed stays VALID,
     # is reported as legacy, and is never silently promoted.

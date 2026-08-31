@@ -77,6 +77,9 @@ PROJECTS_DIR = "_projects"
 SOURCE_STATES = ("DISCOVERED", "CAPTURED", "VERIFIED", "EXTRACTED", "ROUTED",
                  "COMPLETE", "FAILED")
 ENUM_METHODS = ("none", "declared", "data-layer", "mixed")
+# The only endings scripts/project_discovery.js can report. A terminal signal is a
+# measurement, so free text in that field is an assertion wearing its clothes.
+TERMINAL_SIGNALS = ("cursor-absent", "cursor-absent-empty-page")
 PROJECT_END_STATES = ("COMPLETE", "COMPLETE_WITH_OPEN_REVIEW", "INCOMPLETE_HARD_GAPS")
 
 CONV_ID_RE = re.compile(r"^CONV-\d{3,}$")
@@ -658,6 +661,22 @@ def _validate_enumeration(proj, data, findings):
                     proj.name, "ENUMERATION_EVIDENCE_TAMPERED",
                     "%s no longer hashes to the digest recorded with the claim — the "
                     "proof was edited after it was accepted" % rel))
+            else:
+                # And the archived bytes are re-checked, not merely counted. Verifying
+                # only the digest would make the claim answerable to whatever was
+                # archived — the same asymmetry this file refuses for transcripts,
+                # where the verdict is recomputed from the content every sweep. The
+                # manifest is a file the writing agent controls; the bytes are not.
+                _, refusals = check_enumeration_evidence(
+                    target,
+                    [{"key": s.get("conversation_key"), "url": s.get("url")}
+                     for s in (data.get("sources") or []) if isinstance(s, dict)],
+                    origin=str(data.get("origin") or ""))
+                for r in refusals:
+                    findings.append(Finding(
+                        proj.name, "ENUMERATION_CLAIM_INVALID",
+                        "the archived proof %s does not carry the claim it backs: %s"
+                        % (rel, r)))
 
 
 def _validate_sources(proj, data, findings):
@@ -1153,6 +1172,23 @@ def cmd_register(proj, args):
     return 0
 
 
+# A ChatGPT project id is `g-p-<32 hex>` plus a slug derived from the CURRENT title:
+# `g-p-6a86d9dc…-improvements`. Renaming the project on the platform rewrites the slug
+# and nothing else, so identity lives in the hex — comparing the whole token would make
+# a rename look like a different project and refuse the next verified enumeration.
+_STABLE_GID_RE = re.compile(r"^(g-p-[0-9a-f]{16,})(?:-.*)?$", re.I)
+
+
+def stable_project_id(gid):
+    m = _STABLE_GID_RE.match(str(gid or "").strip())
+    return (m.group(1).lower() if m else str(gid or "").strip().lower())
+
+
+def project_id_from_origin(origin):
+    m = re.search(r"/g/(g-p-[A-Za-z0-9-]+)", str(origin or ""))
+    return m.group(1) if m else ""
+
+
 def check_enumeration_evidence(path, inventory, origin=""):
     """(summary, refusals) — re-check a discovery record; never take its word for it.
 
@@ -1211,19 +1247,31 @@ def check_enumeration_evidence(path, inventory, origin=""):
     # …and it has to be a proof about THIS project. Everything above is internal
     # consistency: a record that names someone else's project consistently would sail
     # through it and verify an inventory it never enumerated.
-    want_gid = (re.search(r"/g/(g-p-[A-Za-z0-9-]+)", str(origin or "")) or [None, ""])[1]
+    want_gid = project_id_from_origin(origin)
     if not want_gid:
         refusals.append("this project's manifest records no origin containing a "
-                        "/g/g-p-… project id, so the evidence cannot be bound to it — "
-                        "set --origin at init; an unbindable proof is not one")
-    elif pid and pid != want_gid:
+                        "/g/g-p-… project id, so the evidence cannot be bound to it. "
+                        "Pass --origin <project URL> on this declare (or set it at "
+                        "init); an unbindable proof is not one")
+    elif pid and stable_project_id(pid) != stable_project_id(want_gid):
         refusals.append("the evidence enumerates project %r but this project's origin "
                         "is %r — a proof about another project proves nothing here"
                         % (pid, want_gid))
 
     # The cursor ledger has to show a walk that actually happened and actually ended.
+    for field in ("collected", "duplicates_dropped"):
+        if field in record and not isinstance(record.get(field), int):
+            refusals.append("%s=%r is not a whole number — a count that is not a number "
+                            "cannot be reconciled with anything"
+                            % (field, record.get(field)))
+            record = dict(record, **{field: 0})
+
     pages = exhaustion.get("pages")
     walked = exhaustion.get("pages_walked")
+    if isinstance(pages, list) and not all(isinstance(pg, dict) for pg in pages):
+        refusals.append("the page ledger contains entries that are not objects — a "
+                        "ledger that cannot be read cannot demonstrate a walk")
+        pages = []
     if not isinstance(pages, list) or not pages:
         refusals.append("exhaustion records no page ledger — a walk nobody can inspect "
                         "is not a demonstrated walk")
@@ -1303,9 +1351,11 @@ def check_enumeration_evidence(path, inventory, origin=""):
                         "cannot demonstrate the cursor ran out is "
                         "PROJECT_ENUMERATION_UNVERIFIED"
                         % (exhaustion.get("reason") or "no reason recorded"))
-    if not exhaustion.get("terminal_signal"):
-        refusals.append("no terminal_signal recorded — exhaustion must name the "
-                        "signal that ended the walk, never merely assert it")
+    if exhaustion.get("terminal_signal") not in TERMINAL_SIGNALS:
+        refusals.append("terminal_signal=%r is not one of %s — exhaustion must name a "
+                        "signal the adapter can actually emit, not an assertion in "
+                        "free text"
+                        % (exhaustion.get("terminal_signal"), list(TERMINAL_SIGNALS)))
     if record.get("verifiable") is not True:
         refusals.append("the record does not claim verifiable:true")
 
@@ -1360,9 +1410,16 @@ def cmd_declare(proj, args):
             print(f)
         return 1
     inventory, err = read_json(Path(args.inventory))
+    # A discovery record IS an inventory — its `items` list is the enumeration. The
+    # documented v3.1 command passes the same file to --inventory and --evidence, so
+    # accept either shape rather than making the only worked example impossible to run.
+    if isinstance(inventory, dict) and isinstance(inventory.get("items"), list):
+        inventory = inventory["items"]
     if err or not isinstance(inventory, list):
         print("DECLARE_REFUSED — %s %s" % (args.inventory,
-                                           err or "must be a JSON list"))
+                                           err or "must be a JSON list of "
+                                           "{url|key,title}, or a discovery record "
+                                           "whose `items` is one"))
         return 1
     at = args.at or today()
     created = known = refused = 0
@@ -1384,6 +1441,20 @@ def cmd_declare(proj, args):
             known += 1
     method = args.method or "declared"
     verified = bool(args.verified)
+
+    # The project's origin is an OWNER declaration of which project this is; the
+    # evidence then proves enumeration WITHIN it. `init` takes it, but a project
+    # scaffolded without one had no way back — and `init` refuses to run twice — so the
+    # verified path was permanently unreachable. It can be supplied here instead.
+    if getattr(args, "origin", None):
+        existing = str(data.get("origin") or "").strip()
+        if existing and existing != args.origin:
+            print("DECLARE_REFUSED — this project already records origin %r; changing "
+                  "which project a corpus is about is not a declare-time edit"
+                  % existing)
+            return 1
+        data["origin"] = args.origin
+
     evidence = None
     if getattr(args, "evidence", None):
         evidence, refusals = check_enumeration_evidence(
@@ -1911,7 +1982,11 @@ def main(argv=None):
                         "--evidence; DO NOT FAKE IT")
     p.add_argument("--evidence",
                    help="the enumeration evidence record written by "
-                        "scripts/project_discovery.js — re-checked here, not trusted")
+                        "scripts/project_discovery.js — re-checked here, not trusted. "
+                        "May be the same file as --inventory")
+    p.add_argument("--origin",
+                   help="the project URL, when init did not record one — evidence is "
+                        "bound to it, so a verified enumeration needs it")
     p.add_argument("--note")
     p.add_argument("--at")
 

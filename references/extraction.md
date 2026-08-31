@@ -245,8 +245,9 @@ async IIFE must be prefixed with `await`, or the pending Promise serializes as `
 
 In the workspace, before building any markdown:
 
-1. `len(raw)` equals the reported `len` exactly, AND `sha256(raw)` equals the `sha256`
-   extract.js reported. Length alone is a weak oracle — pass the digest to
+1. `len(raw)` equals the length the capture script reported (`exportLen` from
+   data_capture.js, `len` from extract.js), AND `sha256(raw)` equals the `sha256` it
+   reported. Length alone is a weak oracle — pass the digest to
    `reassemble_verify.py --sha256`. Declare the transport too: `--transport file` for
    the clipboard/artifact relay, `--transport tool-output` for the console path.
 2. `json.loads(raw)` succeeds; message count and role sequence match the probe.
@@ -315,14 +316,22 @@ count or total**. The rules are fail-closed, and they are the whole point:
    Save the WHOLE record to a file. Declare with **both** flags:
 
    ```bash
+   # The record IS the inventory — its `items` list is the enumeration — so the same
+   # file goes to both flags. --origin is what the proof gets bound to: pass it here
+   # if `init` did not record one, because nothing else can set it afterwards.
    python3 scripts/project_contract.py declare --project P \
      --inventory discovery.json --evidence discovery.json \
+     --origin https://chatgpt.com/g/g-p-…/project \
      --method data-layer --verified
    ```
 
    `--verified` **requires** `--evidence`, and `project_contract.py` re-reads that
-   record instead of taking its word: endpoint shape, project id, membership scope,
-   foreign items, the page ledger, and an item set matching the inventory. A record
+   record instead of taking its word: endpoint shape, project id (against this
+   project's own origin — renaming the project on the platform rewrites the id's slug,
+   not its identity), membership scope, foreign items, the page ledger, and an item set
+   matching the inventory. `validate` then re-reads the ARCHIVED record the same way on
+   every sweep, so the claim answers to the proof's bytes rather than to the manifest
+   entry beside it. A record
    that does not carry its proof is refused with `ENUMERATION_VERIFICATION_REFUSED`
    and nothing is declared — go to rule 2 rather than trying to satisfy the checker.
    (Before v3.1 this adapter called `conversations?…&gizmo_id=`, an endpoint that

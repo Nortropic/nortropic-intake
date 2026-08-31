@@ -230,6 +230,23 @@ def t_resumable(tmp):
           rc != 0 and "TRANSPORT_SLICE_TRUNCATED" in out and "?" not in out,
           out.strip()[:700])
 
+    # MAT-5: the preferred relay frames S0 itself, so a partial clipboard arrives
+    # perfectly framed and short. Telling that operator to re-fetch slice 1 would name
+    # a slice that never existed.
+    short = payload[:len(payload) - 90]
+    rc, out, _ = verify(tmp, ["S0|" + short + "#END#"], len(payload), "file",
+                        digest, name="short-single.txt")
+    check("T7h a single framed slice that is short says the PAYLOAD was partial — it "
+          "does not send the operator after a slice that never existed",
+          rc != 0 and "TRANSPORT_PAYLOAD_SHORT" in out
+          and "re-fetch from index 1" not in out, out.strip()[:700])
+
+    dup = list(parts) + [parts[1]]
+    rc, out, _ = verify(tmp, dup, len(payload), "tool-output", digest, name="dup.txt")
+    check("T7i a slice that arrived twice is reported, not silently overridden",
+          rc == 0 and "TRANSPORT_SLICE_REFETCHED" in out and "[1]" in out,
+          out.strip()[:700])
+
     # And the digest is the authority: a conversation whose own text contains the
     # framing tokens must not be diagnosed as a broken transfer.
     tricky = export_payload([
@@ -315,7 +332,10 @@ def t_digest(tmp):
 # followable recovery instruction past the enumerated version using `~/.claude/todos`
 # and `~/.claude/shell-snapshots`. The skill's own files live under `.claude/skills/`,
 # so that one prefix is excluded — everything else there belongs to the runtime.
-PRIVATE_STORAGE_RE = r"\.claude/(?!skills\b)[A-Za-z0-9_-]+"
+# The SLASH is the trigger, not the directory name after it: a review evaded the
+# name-matching version by writing ``.claude/`` and naming the subdirectory in the next
+# clause. This skill's own tree is the one legitimate exception.
+PRIVATE_STORAGE_RE = r"\.claude/(?!skills\b)"
 SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSandbox"
                      r"|dangerously-skip-permissions|disable the sandbox"
                      r"|disabling the sandbox|turn off sandbox|sandbox bypassed"
@@ -325,25 +345,25 @@ SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSa
 # entry below was read before it was pinned: each is a PROHIBITION, or a lint/fixture
 # that enforces one. Not one of them grants access to anything.
 PINNED_MENTIONS = {
-    # references/extraction.md — the pbcopy/pbpaste exception and the SCOPE paragraph
-    # that bounds it. Four fingerprints because the forbidding sentence names all three
-    # stores and the override, and each match carries its own window.
-    "7a9df1e9": "extraction.md:214 — 'run **only** the pbpaste/pbcopy steps sandbox-disabled'",
-    "ff3a92f6": "extraction.md:217 — 'Never disable the sandbox to read Claude Code's own storage'",
-    "ac6824f0": "extraction.md:217 — that sentence naming ~/.claude/projects",
-    "0cb1beca": "extraction.md:218 — …sessions, inside the same prohibition",
-    "a89ed01a": "extraction.md:218 — …history, inside the same prohibition",
-    # evals/contract_check.py — PS18, the lint that requires the SCOPE paragraph above
-    # to keep saying what it says.
-    "1fed3718": "contract_check.py:550 — PS18's required substrings for that paragraph",
-    # evals/test_plan_contract.py — case 14's three patterns: the lint that keeps these
-    # paths out of SKILL.md and the scripts entirely.
-    "3676c87e": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/projects'",
-    "22dd89c9": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/sessions'",
-    "e746053c": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/history'",
-    # evals/test_context_v2.py — the M13 mutation: a manifest claiming such a path, which
-    # the validator must reject.
-    "aa37feda": "test_context_v2.py:764 — M13 mutation '../../.claude/projects/x.jsonl'",
+    # references/extraction.md:216-221 — the pbcopy/pbpaste exception and the SCOPE
+    # paragraph that bounds it. Five fingerprints: the forbidding sentence names all
+    # three stores plus the override, and each match carries its own window.
+    "a4af8658": "extraction.md:217 — 'run **only** the pbpaste/pbcopy steps sandbox-disabled'",
+    "2a63eb8c": "extraction.md:220 — 'Never disable the sandbox to read Claude Code's own storage'",
+    "09fed415": "extraction.md:220 — that sentence naming ~/.claude/projects",
+    "1a76876c": "extraction.md:221 — …sessions, inside the same prohibition",
+    "fc148f27": "extraction.md:221 — …history, inside the same prohibition",
+    # evals/contract_check.py:550 — PS18, the lint that requires the SCOPE paragraph
+    # above to keep saying what it says.
+    "82807cba": "contract_check.py:550 — PS18's required substrings for that paragraph",
+    # evals/test_plan_contract.py:525 — case 14's three patterns: the lint that keeps
+    # these paths out of SKILL.md and the scripts entirely.
+    "f5ffadbb": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/projects'",
+    "190cd16a": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/sessions'",
+    "3babad07": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/history'",
+    # evals/test_context_v2.py:764 — the M13 mutation: a manifest claiming such a path,
+    # which the validator must reject.
+    "84d7b36d": "test_context_v2.py:764 — M13 mutation '../../.claude/projects/x.jsonl'",
 }
 
 
@@ -354,10 +374,14 @@ def _fingerprint(text, m):
 
 
 def _mentions(paths):
-    """{fingerprint: 'file: …excerpt…'} for every pinned-vocabulary occurrence."""
+    """{fingerprint: 'file: …excerpt…'} for every pinned-vocabulary occurrence.
+
+    Whitespace is collapsed BEFORE matching, so an instruction cannot slip past by
+    wrapping the path across a line break — a shape a review demonstrated.
+    """
     found = {}
     for path in paths:
-        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"[ \t]*\n[ \t#/]*", " ", path.read_text(encoding="utf-8"))
         for m in re.finditer("(?:%s)|(?:%s)" % (PRIVATE_STORAGE_RE, SANDBOX_BYPASS_RE),
                              text):
             excerpt = re.sub(r"\s+", " ",

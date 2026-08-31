@@ -240,8 +240,10 @@ Svenska eller engelska fungerar.
 ## Principerna bakom bygget
 
 - **Fail-closed.** Hellre stopp och en fråga än en tyst ofullständig leverans. Varje
-  capture verifieras: antal meddelanden, exakt längd, första/sista meddelandet,
-  balanserade kodstaket.
+  capture verifieras: antal meddelanden, exakt längd, sha256 av de överförda byten,
+  första/sista meddelandet, balanserade kodstaket. Längden ensam räcker inte — två olika
+  samtal kan ha samma längd, och ett klippbord som aldrig uppdaterades ser precis ut som
+  en korrekt infångst av rätt storlek.
 - **WYSIWYG.** Exporten innehåller bara det användaren faktiskt såg i chatten — inte
   modellens interna resonemang eller verktygsmaskineri.
 - **Evidens före antaganden.** API-format och DOM-selektorer verifieras mot den riktiga

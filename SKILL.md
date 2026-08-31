@@ -1036,9 +1036,12 @@ graph database.
                          pointer --slug S --workstream W --into F --retire --reason R
                          hash F [--body]
 
-    project_contract.py  init --project P --title T | declare --project P --inventory F
-                                 [--method declared|data-layer|mixed]
-                                 [--verified --evidence D]   # --verified REQUIRES it
+    project_contract.py  init --project P --title T [--platform P] [--origin U]
+                         declare --project P --inventory F
+                                 [--method declared|data-layer|mixed] [--origin U]
+                                 [--verified --evidence D]   # --verified REQUIRES it,
+                                 # and REQUIRES an --origin carrying /g/g-p-… to bind
+                                 # it to; --inventory may BE the discovery record
                          register --project P --url U | capture --project P --source ID --file F
                          mark-extracted --project P --source ID (--ideas s1,s2 | --no-ideas --note …)
                          mark-routed --project P --source ID | mark-failed … --stage … --detail …
@@ -1321,7 +1324,9 @@ PROJECT_SWEEP checklist (replaces steps 0–9 above; the SINGLE checklist never 
 inside a sweep):
 
 ```
-[ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run
+[ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run WITH
+        --origin <project URL> (the evidence in P1 is bound to it; declare --origin
+        can still supply it later, but nothing else can)
 [ ] P1. Inventory declared honestly: data-layer --verified ONLY with --evidence, a
         discovery record whose membership is path-scoped and whose cursor was walked
         to its own terminal signal (an operator's word is not a completion signal);

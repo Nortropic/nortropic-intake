@@ -2,9 +2,11 @@
 
 Eleven checks, all repeatable. Zero regression = all eleven pass. The first five run the
 skill's own suites against real files and real git repositories; the two v3.1 suites
-(6–7 below) drive the shipped scripts directly — one under node against a fake platform,
-one against `reassemble_verify.py` in temp directories; the last three execute the real
-validators against the real corpus.
+drive the shipped scripts directly — one under node against a fake platform, one against
+`reassemble_verify.py` in temp directories; the last three execute the real validators
+against the real corpus. The numbers in the block below are the section numbers further
+down, which is why they do not start at 1 — sections 1–5 cover the trigger eval, the
+capture goldens and the rubrics, which are judged rather than run.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
@@ -30,8 +32,23 @@ previous nine could not have caught:
   transport digest against a minimal DOM. It needs `node`; the workflow declares it with
   `setup-node` rather than relying on the runner image happening to have one.
 * `test_transport_v31.py` exercises `scripts/reassemble_verify.py`, which no suite
-  covered either: the >32 KB chunk that spilled during the proving run, and the
-  equal-length stale-clipboard payload that a missed trusted click leaves behind.
+  covered either: the >32 KB chunk that spilled during the proving run, the
+  equal-length stale-clipboard payload a missed trusted click leaves behind, the
+  framing shapes a broken transfer actually makes (T1–T9), and the trust-boundary
+  family (T10–T13) that pins Intake's own vocabulary about the runtime's storage and
+  the sandbox override.
+
+The discovery suite also executes BOTH capture scripts — `data_capture.js` (preferred)
+and `extract.js` (DOM fallback) — against minimal fakes, because the transport digest
+that closes finding D is theirs to produce, and a digest wired to only one of them is
+exactly the defect that shipped in this release's first draft.
+
+Every code the tools can print is a contract surface. The transport ones:
+`TRANSPORT_CHUNK_OVERSIZE`, `TRANSPORT_DIGEST_MISMATCH`, `TRANSPORT_DIGEST_UNVERIFIED`,
+`TRANSPORT_SLICE_MERGED`, `TRANSPORT_SLICE_TRUNCATED`, `TRANSPORT_SLICE_REFETCHED`,
+`TRANSPORT_INCOMPLETE`, `TRANSPORT_TAIL_MISSING`, `TRANSPORT_PAYLOAD_SHORT`,
+`TRANSPORT_LENGTH_UNEXPLAINED`. The capture one that says the manifest is out of step
+with the bytes: `SOURCE_IDENTITY_RECORD_STALE`.
 
 (`project_contract.py validate` legitimately fails with "contains no project
 manifests" until the first real sweep has run — that is the mis-pathed-corpus guard
@@ -48,7 +65,10 @@ local gate, overridable with `--no-verify`.
 
 CI additionally runs a **mutation guard**: it stubs out each of the five modules
 (`plan_contract`, `context_contract`, `project_contract`, `intake_common`,
-`reassemble_verify`) in turn — plus the shipped `project_discovery.js` — and requires
+`reassemble_verify`) in turn — plus all three shipped browser scripts
+(`project_discovery.js`, against both the discovery suite and the v3 suite whose
+enumeration-evidence fixtures are its real output; `extract.js`; `data_capture.js`) —
+and requires
 the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
 `SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
 is why every suite also asserts a floor (`MIN_CHECKS`) on checks actually executed.
@@ -261,16 +281,16 @@ git, the real validators, control fixtures, MIN_CHECKS floor):
 
 | | Family | Proves |
 |---|---|---|
-| A1–A6 | role-aware provenance | an assistant "decision" never passes as owner-backed; a real owner message does; mixed ranges resolve to the part carrying authority; external text confers nothing; legacy role-less transcripts report UNKNOWN honestly |
-| B5–B8 | approval strength | WEAK is persisted and reported; STRONG stays STRONG; a pre-v3 plan is LEGACY_UNKNOWN, never promoted; a post-commit WEAK→STRONG flip fails |
+| A1–A7 | role-aware provenance | an assistant "decision" never passes as owner-backed; a real owner message does; mixed ranges resolve to the part carrying authority; external text confers nothing; legacy role-less transcripts report UNKNOWN honestly |
+| B5–B9 | approval strength | WEAK is persisted and reported; STRONG stays STRONG; a pre-v3 plan is LEGACY_UNKNOWN, never promoted; a post-commit WEAK→STRONG flip fails |
 | C8–C12 | project source model | stable CONV identities from platform ids; same-title conversations stay separate; reruns upsert; updates become traceable revisions; old raw survives byte-identically |
-| D13–D16 | project coverage | capture failures are hard gaps; manifest ↔ tree in both directions; interrupted sweeps resume from the manifest; a hand-asserted COMPLETE fails |
-| E17–E20 | idea routing | one chat → many ideas; many chats → one idea; ambiguity queues without blocking; duplicate INDEX rows fail |
+| D13–D17 | project coverage | capture failures are hard gaps; manifest ↔ tree in both directions; interrupted sweeps resume from the manifest; a hand-asserted COMPLETE fails |
+| E17–E21 | idea routing | one chat → many ideas; many chats → one idea; ambiguity queues without blocking; duplicate INDEX rows fail |
 | F21–F24 | mode separation | a full synthetic sweep produces no plans and no interviews, lands ideas at `status: idea`, and completes unattended via CLI alone |
 | G25–G29 | audit & trust | dangling/hash-unlinked provenance; self-closed audit findings; owner-less dismissals; tampered hashes; mutated raw; assistant proposals refused downstream of a sweep |
 | H30–H31 | side effects | the tooling never commits the corpus; every command runs against a tmp `--corpus` |
 | I32–I42 | source identity vs builder metadata (v3.1) | the CONV-012 reproducer: byte-identical messages under a re-worded `**Syfte:**` line mint NO revision, and neither does a later `**Exportdatum:**`; a changed message or a changed speaker still does; the old raw survives; an interrupted write is refused rather than overwritten; a legacy revision with no recorded identity reaches the same no-op without migration; and a `source_sha256` the bytes cannot back is caught by both `capture` and `validate` |
-| J39–J45 | enumeration evidence (v3.1) | `--verified` without `--evidence` is refused; so are a record naming the v3.0 query endpoint, one describing another project, an all-null or unbalanced cursor ledger, a padded item count, and the adapter's own reported count disagreement; a real record from the shipped adapter DOES verify, is archived in-corpus, and is re-checked for tampering; a pre-v3.1 claim stays valid as legacy without being promoted |
+| J39–J48 | enumeration evidence (v3.1) | `--verified` without `--evidence` is refused; so are a record naming the v3.0 query endpoint, one describing another project, an all-null or unbalanced cursor ledger, a padded item count, and the adapter's own reported count disagreement; a real record from the shipped adapter DOES verify, is archived in-corpus, and is re-checked for tampering; a pre-v3.1 claim stays valid as legacy without being promoted |
 
 No real project is ever swept by the evals — every fixture is synthetic and torn down.
 The J-family fixtures are produced by running the SHIPPED `scripts/project_discovery.js`

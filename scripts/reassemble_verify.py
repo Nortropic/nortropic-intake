@@ -3,16 +3,19 @@
 
 Usage:
   python3 reassemble_verify.py <slices_file> <expected_len> <out_messages.json>
-                               [--transport file|tool-output] [--sha256 <digest>]
+                               [--transport file|tool-output]
+                               (--sha256 <digest> | --digest-unavailable)
 
 <slices_file>: a text file containing ALL slice outputs pasted in any order —
 each slice must look like  S<i>|<payload>#END#  (junk between slices is fine).
 <expected_len>: the `len` reported by extract.js.
---sha256:      the `sha256` reported by extract.js, of the same bytes. Length is a
-               weak oracle; this is the strong one, and it is REQUIRED. extract.js
-               always reports it, so its absence means the payload did not come from
-               there — say that deliberately with --digest-unavailable rather than by
-               leaving the flag off.
+--sha256:      the `sha256` reported by the capture script, of the same bytes. Length
+               is a weak oracle; this is the strong one, and it is REQUIRED. BOTH
+               capture scripts report it — data_capture.js (preferred) alongside
+               `exportLen`, extract.js (DOM fallback) alongside `len` — so its absence
+               means the payload did not come from either, and that has to be said
+               deliberately with --digest-unavailable rather than by leaving the flag
+               off.
 --transport:   how the bytes reached this file. Defaults to the conservative answer.
 
 Two things the Improvements proving run taught this script:
@@ -147,12 +150,26 @@ def diagnose(raw, idx, found, got_len, expected):
               "Re-fetch from index %d onward" % (markers, len(found), max(idx) + 1))
         return
 
-    # Short, with no gap and no merge: the tail simply never arrived. A missing-index
-    # scan is structurally blind to this — there is no index above the highest received.
+    # Short, with no gap and no merge. A missing-index scan is structurally blind here:
+    # there is no index above the highest one received. Two different causes, and the
+    # single-slice case is the preferred clipboard relay's own failure mode — it always
+    # frames S0 itself (`printf 'S0|'; cat …; printf '#END#'`), so the frame is intact
+    # even when the clipboard held a partial export. Telling that operator to re-fetch
+    # slice 1 would name a slice that never existed.
     if got_len < expected:
+        if len(idx) == 1:
+            print("TRANSPORT_PAYLOAD_SHORT — the single slice S%d is framed correctly "
+                  "but its payload is %d char(s) short. Nothing was lost in transit: "
+                  "what was handed over was already partial. Re-run the capture and the "
+                  "relay — on the clipboard path this is what a trusted click that "
+                  "never landed, or a copy that raced the paste, looks like"
+                  % (max(idx), expected - got_len))
+            return
         print("TRANSPORT_TAIL_MISSING — short by %d char(s) with every index up to S%d "
-              "present and intact. Slices after S%d never arrived; re-fetch from index "
-              "%d onward" % (expected - got_len, max(idx), max(idx), max(idx) + 1))
+              "present and framed. Either slices after S%d never arrived (re-fetch from "
+              "index %d onward) or one that did was itself truncated without losing its "
+              "#END#; re-fetching the tail settles which"
+              % (expected - got_len, max(idx), max(idx), max(idx) + 1))
         return
     print("TRANSPORT_LENGTH_UNEXPLAINED — %d char(s) too long with no gap, no merge and "
           "no duplicate. The payload is not what the extractor reported; re-run the "
