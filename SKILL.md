@@ -300,7 +300,10 @@ incomplete understanding):
 
 - Message count and role sequence captured and stated.
 - First and last message verifiably present in the assembled export.
-- No truncation: reassembled transfer passes the length + JSON-parse checks from the playbook.
+- No truncation: the reassembled transfer hashes to the `sha256` the capture script
+  reported, and passes the length + JSON-parse checks from the playbook. Length alone
+  cannot tell two conversations apart — a clipboard the trusted click never refreshed
+  looks exactly like a correct capture of the right size.
 - Code fences balanced in every message.
 - Attachments (pasted-text/file chips) inventoried — on the data-layer path from message
   metadata, on the DOM path from the chips; contents captured best-effort with a strict
@@ -1034,7 +1037,7 @@ graph database.
                          hash F [--body]
 
     project_contract.py  init --project P --title T | declare --project P --inventory F
-                                 [--method declared|data-layer]
+                                 [--method declared|data-layer|mixed]
                                  [--verified --evidence D]   # --verified REQUIRES it
                          register --project P --url U | capture --project P --source ID --file F
                          mark-extracted --project P --source ID (--ideas s1,s2 | --no-ideas --note …)
@@ -1200,7 +1203,10 @@ matters, and skipped steps are exactly where past runs went wrong:
         time-boxed attempt each, extract (scripts/extract.js; on DLP block: masked
         secret scan FIRST)
 [ ] 3.  Slice transfer complete, every slice ends with #END#
-[ ] 4.  Verification (scripts/reassemble_verify.py): length, JSON, roles, fences
+[ ] 4.  Verification (scripts/reassemble_verify.py --transport file|tool-output
+        --sha256 <the digest the capture script reported>): digest, length, JSON,
+        roles, fences. The digest is REQUIRED — waiving it needs --digest-unavailable
+        and downgrades the capture to length-only
 [ ] 5.  Truncation smell check: no code block starts/ends mid-construct — else back to 2
 [ ] 6.  full-chat.md built (metadata, attachment list, messages verbatim)
 [ ] 7.  idea-<slug>.md per references/brief-template.md (decisions with "because" and
@@ -1316,8 +1322,10 @@ inside a sweep):
 
 ```
 [ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run
-[ ] P1. Inventory declared honestly: data-layer --verified ONLY on a provable
-        completion signal, else owner-declared WITHOUT --verified
+[ ] P1. Inventory declared honestly: data-layer --verified ONLY with --evidence, a
+        discovery record whose membership is path-scoped and whose cursor was walked
+        to its own terminal signal (an operator's word is not a completion signal);
+        else owner-declared WITHOUT --verified and WITHOUT --evidence
         (PROJECT_ENUMERATION_UNVERIFIED); identity by conversation id, never title
 [ ] P2. Every conversation captured via the Phase 1 pipeline + `capture` verified;
         failures recorded (CAPTURED+error or mark-failed) — never silent
@@ -1376,9 +1384,12 @@ inside a sweep):
   SINGLE-mode ones except for their episode provenance.
 - Repeatable evals live in `evals/` (trigger queries, golden capture signature,
   brief rubric, rationale rubric, contract lint, approved-plan falsification suite,
-  context suites, and the v3 suite `test_project_v3.py` covering role-aware
-  provenance, approval strength and the project contract) — run them after any change
-  to this skill; see `evals/README.md`.
+  context suites, the v3 suite `test_project_v3.py` covering role-aware provenance,
+  approval strength, the project contract, source identity vs builder metadata and
+  enumeration evidence, plus two v3.1 suites: `test_transport_v31.py` for bounded
+  digest-verified transport and the trust boundary, and `test_discovery_v31.mjs`,
+  which runs the SHIPPED browser adapters under node against a fake platform) — run
+  them after any change to this skill; see `evals/README.md`.
 
 ## Architecture freeze — read this before changing the skill
 
@@ -1511,10 +1522,12 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   handed over at all.
 - **The source region begins at the first message header, so the header's own bytes are
   outside source identity.** That is the point — it is what makes a re-worded purpose
-  line a no-op — but it also means the attachment inventory and the URL line, both of
-  which the playbook puts in the metadata header, can be corrected without producing a
-  revision. Neither is a claim about what was said; both are recoverable by re-reading
-  the current delivery. A transcript that quotes a `## Meddelande N` line inside its own
+  line a no-op — but it also means a correction confined to the metadata header, such
+  as a fuller attachment inventory or a fixed URL line, is a no-op too: the corrected
+  delivery is DISCARDED, not merged, and the corpus keeps the header it first stored.
+  Neither field is a claim about what was said, and both can be re-derived from the
+  platform, so nothing about the conversation is lost — but a header correction has to
+  be made by capturing a genuinely changed conversation or not at all. A transcript that quotes a `## Meddelande N` line inside its own
   header would move the region boundary upward, which `verify_transcript_format` then
   rejects as non-contiguous numbering — fail-closed, but worth knowing for a corpus whose
   subject matter is this very format.

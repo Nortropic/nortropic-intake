@@ -24,7 +24,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'scripts/project_discovery.js'), 'ut
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 
 // A suite that exits 0 having run nothing reports success it did not earn.
-const MIN_CHECKS = 24;
+const MIN_CHECKS = 28;
 const RESULTS = [];
 function check(name, cond, detail = '') {
   RESULTS.push([name, !!cond]);
@@ -257,6 +257,48 @@ await scenario('A11', async () => {
         `${out.sha256} vs ${expected}`);
   check('A11d two different conversations do not share a digest',
         out.sha256 !== 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+});
+
+// ---- A12: data_capture.js — the PREFERRED capture path -------------------
+// Step 4 requires --sha256. The DOM fallback got that digest in v3.1 and the preferred
+// path did not, which would have stopped the next real run dead on its primary route
+// and nudged the operator into waiving the very check finding D exists for. So run the
+// real file against the real ChatGPT response shape.
+await scenario('A12', async () => {
+  const CAP = fs.readFileSync(path.join(ROOT, 'scripts/data_capture.js'), 'utf8');
+  check('A12a data_capture.js is async and keeps its load-bearing leading `await`',
+        /^await \(async function\(\)\{/m.test(CAP));
+
+  const node = (id, role, text, parent) => [id, {
+    parent, message: {author: {role}, content: {content_type: 'text', parts: [text]},
+                      metadata: {}}}];
+  const mapping = Object.fromEntries([
+    node('n1', 'user', 'Bygg Evolution Radar.', null),
+    node('n2', 'assistant', 'Beslutat: radarn läser Aquarium.', 'n1'),
+  ]);
+  const fetchImpl = (url) => url.startsWith('/api/auth/session')
+    ? J({accessToken: 'tok'})
+    : J({title: 'Nortropic Evolution Radar', current_node: 'n2', mapping});
+
+  const win = {};
+  const run = new AsyncFunction('location', 'fetch', 'window', 'crypto', 'TextEncoder',
+                                CAP.replace(/^await /m, 'return await '));
+  const out = JSON.parse(await run(
+    {hostname: 'chatgpt.com', pathname: '/c/aaaaaaaa-1111-2222-3333-000000000001'},
+    fetchImpl, win, globalThis.crypto, globalThis.TextEncoder));
+
+  check('A12b the preferred path captured the conversation',
+        out.source === 'data-layer' && out.msgCount === 2 && out.roles === 'ua',
+        JSON.stringify(out).slice(0, 240));
+  check('A12c and it reports the sha256 Step 4 requires — the same field extract.js '
+        + 'reports, so neither capture path can reach --digest-unavailable honestly',
+        typeof out.sha256 === 'string' && out.sha256.length === 64, String(out.sha256));
+  const expected = [...new Uint8Array(await crypto.subtle.digest(
+    'SHA-256', new TextEncoder().encode(win.__nxExport)))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  check('A12d of exactly the bytes it stored on window.__nxExport',
+        out.sha256 === expected && out.exportLen === win.__nxExport.length,
+        `${out.sha256} vs ${expected}`);
 });
 
 const failed = RESULTS.filter(([, ok]) => !ok);

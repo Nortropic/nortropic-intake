@@ -1153,7 +1153,7 @@ def cmd_register(proj, args):
     return 0
 
 
-def check_enumeration_evidence(path, inventory):
+def check_enumeration_evidence(path, inventory, origin=""):
     """(summary, refusals) — re-check a discovery record; never take its word for it.
 
     v3.0 made `--verified` an operator assertion with nothing behind it, and the
@@ -1166,8 +1166,12 @@ def check_enumeration_evidence(path, inventory):
         platform may drop, and no item may belong to another project;
       * exhaustion is the cursor's own terminal signal, walked page by page — not
         arithmetic against a `total` this endpoint never sends;
+      * the record must be about THIS project — the id in the endpoint has to be the
+        one the manifest's own origin names, or a self-consistent record about some
+        other project would verify this one;
       * the page ledger must describe a walk that adds up: pages that account for the
-        items collected, cursors that chain, and a last page that ends;
+        items collected, cursors that chain and are actually PRESENT on every page but
+        the last, and a last page that ends;
       * and the evidence must describe THIS inventory, item for item, or it is
         evidence about something else.
 
@@ -1204,6 +1208,19 @@ def check_enumeration_evidence(path, inventory):
                         "accepts that filter and then answers with the whole account; "
                         "that is the v3.0 defect, not a verification")
 
+    # …and it has to be a proof about THIS project. Everything above is internal
+    # consistency: a record that names someone else's project consistently would sail
+    # through it and verify an inventory it never enumerated.
+    want_gid = (re.search(r"/g/(g-p-[A-Za-z0-9-]+)", str(origin or "")) or [None, ""])[1]
+    if not want_gid:
+        refusals.append("this project's manifest records no origin containing a "
+                        "/g/g-p-… project id, so the evidence cannot be bound to it — "
+                        "set --origin at init; an unbindable proof is not one")
+    elif pid and pid != want_gid:
+        refusals.append("the evidence enumerates project %r but this project's origin "
+                        "is %r — a proof about another project proves nothing here"
+                        % (pid, want_gid))
+
     # The cursor ledger has to show a walk that actually happened and actually ended.
     pages = exhaustion.get("pages")
     walked = exhaustion.get("pages_walked")
@@ -1223,6 +1240,13 @@ def check_enumeration_evidence(path, inventory):
             refusals.append("the first page was fetched WITH a cursor (%r) — a walk "
                             "that starts mid-stream has not enumerated the beginning"
                             % (pages[0] or {}).get("cursor_in"))
+        for a in pages[:-1]:
+            if (a or {}).get("cursor_out") is None:
+                refusals.append("page %r ends the walk (no cursor) but is not the last "
+                                "page — an all-null ledger is what a record written "
+                                "from memory looks like, not one a cursor walk produced"
+                                % (a or {}).get("page"))
+                break
         for a, b in zip(pages, pages[1:]):
             if (a or {}).get("cursor_out") != (b or {}).get("cursor_in"):
                 refusals.append("the cursor chain breaks between page %r and %r "
@@ -1231,14 +1255,23 @@ def check_enumeration_evidence(path, inventory):
                                           (a or {}).get("cursor_out"),
                                           (b or {}).get("cursor_in")))
                 break
-        seen_items = sum(int((pg or {}).get("items") or 0) for pg in pages)
-        want = (record.get("collected") or 0) + (record.get("duplicates_dropped") or 0)
-        if seen_items != want:
-            refusals.append("the ledger saw %d item(s) across its pages but the record "
-                            "claims %d collected + %d duplicate(s) dropped — the walk "
-                            "does not account for the result"
-                            % (seen_items, record.get("collected") or 0,
-                               record.get("duplicates_dropped") or 0))
+        try:
+            seen_items = sum(int((pg or {}).get("items") or 0) for pg in pages)
+        except (TypeError, ValueError):
+            seen_items = None
+            refusals.append("a page records a non-numeric item count — a ledger that "
+                            "cannot be added up cannot demonstrate anything")
+        if seen_items is None:
+            pass
+        else:
+            want = ((record.get("collected") or 0)
+                    + (record.get("duplicates_dropped") or 0))
+            if seen_items != want:
+                refusals.append("the ledger saw %d item(s) across its pages but the "
+                                "record claims %d collected + %d duplicate(s) dropped "
+                                "— the walk does not account for the result"
+                                % (seen_items, record.get("collected") or 0,
+                                   record.get("duplicates_dropped") or 0))
 
     # The adapter's own extra oracle, when it fired, is not allowed to be ignored.
     oracle = str(record.get("count_oracle") or "")
@@ -1287,6 +1320,11 @@ def check_enumeration_evidence(path, inventory):
     if unresolved:
         refusals.append("%d evidence item(s) carry no resolvable conversation "
                         "identity — an unreadable item is not a member" % unresolved)
+    if isinstance(items, list) and len(ev_keys) + unresolved != len(items):
+        refusals.append("the record lists %d item(s) but only %d distinct "
+                        "conversation(s) — the comparison below is a set, so a "
+                        "duplicated item would otherwise pad the count"
+                        % (len(items), len(ev_keys)))
     inv_keys = set()
     for item in inventory:
         if isinstance(item, dict):
@@ -1348,7 +1386,8 @@ def cmd_declare(proj, args):
     verified = bool(args.verified)
     evidence = None
     if getattr(args, "evidence", None):
-        evidence, refusals = check_enumeration_evidence(args.evidence, inventory)
+        evidence, refusals = check_enumeration_evidence(
+            args.evidence, inventory, origin=str(data.get("origin") or ""))
         if refusals:
             print("ENUMERATION_VERIFICATION_REFUSED — the evidence does not carry the "
                   "proof it is offered for:")

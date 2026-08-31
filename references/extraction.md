@@ -1,7 +1,8 @@
 # Chat extraction playbook (ChatGPT & Claude)
 
 Battle-tested against chatgpt.com (Aug 2026). The canonical code lives in `scripts/`
-(`data_capture.js`, `probe.js`, `render_pass.js`, `extract.js`, `reassemble_verify.py`) —
+(`data_capture.js`, `probe.js`, `render_pass.js`, `extract.js`, `project_discovery.js`,
+`reassemble_verify.py`) —
 use those files verbatim instead of rewriting the snippets; every line in them exists
 because a naive version failed. This document explains why they look the way they do.
 
@@ -34,11 +35,13 @@ misses messages. `scripts/data_capture.js` bypasses all of it:
    metadata. Attachments are inventoried (names from `metadata.attachments` + non-text
    multimodal parts), not inlined.
 5. **Evidence, fail closed**: the script prints message count, role sequence, first/last
-   message previews and total visible chars, and stores the ASCII-escaped export on
-   `window.__nxExport`. Sanity-check the size — if a naive dump is many times larger
-   than the visible chat plausibly is, you captured the raw model, not the text: fix it,
-   never deliver it. Then run the standard slice transfer (Step 3) and verification
-   (Step 4) unchanged.
+   message previews, total visible chars, `exportLen` and the **`sha256`** of the
+   escaped export, and stores that export on `window.__nxExport`. Sanity-check the size
+   — if a naive dump is many times larger than the visible chat plausibly is, you
+   captured the raw model, not the text: fix it, never deliver it. Then run the standard
+   slice transfer (Step 3) and verification (Step 4) unchanged — including
+   `--sha256 <that digest>`, which Step 4 requires. Both capture scripts report it, so
+   there is no path on which it is legitimately unavailable.
 
 **Fallback**: if the endpoint fails (401/403, network error, schema change) or yields
 non-text, fall back to the DOM playbook below (probe → render pass → extract). It stays
@@ -217,7 +220,8 @@ through tool output (189k chars verified lossless in a real run):
    disable the sandbox to read Claude Code's own storage (`~/.claude/projects`,
    `~/.claude/sessions`, `~/.claude/history`), and never to recover a truncated or
    spilled tool result. A capture that overflowed tool output is a transport defect;
-   the answer is to re-cut the transfer inside the bound above, not to go around the
+   the answer is to re-cut the transfer inside the bound stated under Step 3b, not to
+   go around the
    boundary and read the spill. Intake cannot enforce this — the sandbox and its
    override belong to the runtime — which is exactly why it is written here as a
    standing instruction, and why `contract_check.py` lints for it.

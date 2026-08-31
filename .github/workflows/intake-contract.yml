@@ -99,6 +99,19 @@ jobs:
           # The v3 suite depends on it too: its enumeration-evidence fixtures are the
           # adapter's own output, which is the point — a hand-written record would only
           # have proved the checker agrees with the fixture.
+          # Both capture scripts carry the transport digest Step 4 requires; the
+          # discovery suite executes both, so each is its own mutation target.
+          for js in extract data_capture; do
+            cp "scripts/$js.js" "/tmp/real-$js.js"
+            printf 'await (async function(){return JSON.stringify({});})()\n' > "scripts/$js.js"
+            if node evals/test_discovery_v31.mjs > /tmp/mutjs.log 2>&1; then
+              echo "MUTATION GUARD FAILED: discovery suite passed with $js.js stubbed"
+              fail=1
+            else
+              echo "ok: discovery suite fails with $js.js stubbed"
+            fi
+            cp "/tmp/real-$js.js" "scripts/$js.js"
+          done
           cp scripts/project_discovery.js /tmp/real-discovery.js
           printf 'await (async function(){return JSON.stringify({});})()\n' > scripts/project_discovery.js
           if node evals/test_discovery_v31.mjs > /tmp/mutjs.log 2>&1; then

@@ -184,7 +184,7 @@ def t_resumable(tmp):
     check("T6b the incomplete state is stated, not inferred",
           "TRANSPORT_INCOMPLETE" in out, out.strip()[:600])
     check("T6c and it is RESUMABLE: it names exactly which slice to re-fetch",
-          re.search(r"missing slice indexes: \[%d\]" % lost, out) is not None,
+          re.search(r"Re-fetch exactly index\(es\) \[%d\]" % lost, out) is not None,
           out.strip()[:600])
 
     rc, out, dest = verify(tmp, partial + [parts[lost]], len(payload),
@@ -198,16 +198,48 @@ def t_resumable(tmp):
     # missing, so this used to surface as a bare length mismatch with nothing named.
     cut = list(parts)
     cut[1] = cut[1][:len(cut[1]) // 2]                 # truncated: no #END#
-    rc, out, dest = verify(tmp, cut, len(payload), "tool-output", digest,
-                           name="merged.txt")
-    check("T7b a truncated slice that swallowed the next one is detected as such, "
-          "not reported as a length mismatch",
-          rc != 0 and "TRANSPORT_SLICE_MERGED" in out
-          and "length" not in out.split("TRANSPORT_SLICE_MERGED")[1].split("\n")[0],
+    # Declared as file transport: merging two chunks makes the survivor exceed the
+    # tool-output bound, and that check fires first (correctly). What is under test
+    # here is the framing diagnosis, not the bound.
+    rc, out, dest = verify(tmp, cut, len(payload), "file", digest, name="merged.txt")
+    check("T7b a truncated slice that swallowed the next one is diagnosed as a merge, "
+          "not left as a bare length mismatch",
+          rc != 0 and "TRANSPORT_SLICE_MERGED" in out, out.strip()[:700])
+    check("T7c and it names where to resume — the resumable property holds for a "
+          "mid-transfer truncation",
+          re.search(r"Re-fetch from index 1 onward", out) is not None,
           out.strip()[:700])
-    check("T7c and it names which slice to re-fetch — the resumable property holds "
-          "for the failure it was written for",
-          re.search(r"Re-fetch slice\(s\) \[1\]", out) is not None, out.strip()[:700])
+
+    # The tail shapes a missing-index scan is structurally blind to: there is no index
+    # above the highest one that arrived, so 'missing' is empty and the only symptom
+    # used to be a bare length mismatch with nothing to re-fetch.
+    rc, out, _ = verify(tmp, parts[:-2], len(payload), "tool-output", digest,
+                        name="tail-gone.txt")
+    check("T7e slices lost off the END are diagnosed and named, not reported as an "
+          "unexplained short read",
+          rc != 0 and "TRANSPORT_TAIL_MISSING" in out
+          and re.search(r"re-fetch from index %d onward" % (len(parts) - 2), out)
+          is not None, out.strip()[:700])
+
+    cut_tail = list(parts)
+    cut_tail[-1] = cut_tail[-1][:len(cut_tail[-1]) // 2]
+    rc, out, _ = verify(tmp, cut_tail, len(payload), "tool-output", digest,
+                        name="tail-cut.txt")
+    check("T7f a truncated LAST slice says so — nothing swallowed it, and the old "
+          "message would have named '?' as the slice to re-fetch",
+          rc != 0 and "TRANSPORT_SLICE_TRUNCATED" in out and "?" not in out,
+          out.strip()[:700])
+
+    # And the digest is the authority: a conversation whose own text contains the
+    # framing tokens must not be diagnosed as a broken transfer.
+    tricky = export_payload([
+        {"role": "user", "text": "Slice-protokollet: skicka S12|nyttolast#END# per bit."},
+        {"role": "assistant", "text": "Ja — och #END# avslutar varje bit."}])
+    rc, out, _ = verify(tmp, ["S0|" + tricky + "#END#"], len(tricky), "file",
+                        sha(tricky), name="tokens-in-text.txt")
+    check("T7g a conversation that quotes S<i>| and #END# in its own text still "
+          "verifies — the digest decides, framing heuristics never overrule it",
+          rc == 0 and "TRANSPORT_SLICE" not in out, out.strip()[:700])
 
     # And a payload that parses as JSON but is not a transcript stops cleanly.
     rc, out, _ = verify(tmp, ['S0|{"a": 1}#END#'], len('{"a": 1}'), "file",
@@ -272,14 +304,22 @@ def t_digest(tmp):
 # one, or move one to another file and the fingerprint set changes and this fails.
 #
 # What it still cannot do — say it plainly, because a guard named better than it behaves
-# is worse than no guard: it matches literal strings. An instruction that says "the agent
-# runtime's project log directory" and "turn off sandboxing for that one command", using
-# none of these tokens, passes. This pins Intake's own vocabulary against drift; it is
-# not a semantic firewall, and nothing here claims to stop a determined agent — that
-# boundary belongs to the runtime (see SKILL.md, residual risks).
-PRIVATE_STORAGE_RE = r"\.claude/(?:projects|sessions|history)"
-SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox disabled|dangerouslyDisableSandbox"
-                     r"|dangerously-skip-permissions|disable the sandbox")
+# is worse than no guard: it matches a VOCABULARY. The storage pattern covers any
+# `.claude/<dir>` except this skill's own, and the bypass pattern covers the phrasings
+# actually in use, but an instruction written entirely around them — "the agent runtime's
+# project log directory", "run that one command unconfined" — still passes. This pins
+# Intake's own wording against drift. It is not a semantic firewall, and nothing here
+# claims to stop a determined agent: that boundary belongs to the runtime (see SKILL.md,
+# residual risks).
+# ANY path into the runtime's own directory, not an enumerated three: a review got a
+# followable recovery instruction past the enumerated version using `~/.claude/todos`
+# and `~/.claude/shell-snapshots`. The skill's own files live under `.claude/skills/`,
+# so that one prefix is excluded — everything else there belongs to the runtime.
+PRIVATE_STORAGE_RE = r"\.claude/(?!skills\b)[A-Za-z0-9_-]+"
+SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSandbox"
+                     r"|dangerously-skip-permissions|disable the sandbox"
+                     r"|disabling the sandbox|turn off sandbox|sandbox bypassed"
+                     r"|bypass(?:ing)? the sandbox|without the sandbox")
 
 # fingerprint -> the occurrence it pins, and why that one is allowed to exist. Every
 # entry below was read before it was pinned: each is a PROHIBITION, or a lint/fixture
@@ -352,8 +392,9 @@ def t_boundary(tmp):
 
     added = {k: v for k, v in got.items() if k not in PINNED_MENTIONS}
     gone = {k: v for k, v in PINNED_MENTIONS.items() if k not in got}
-    check("T10 every mention of the runtime's private storage or of disabling the "
-          "sandbox, anywhere in Intake's own text, matches a pinned wording",
+    check("T10 every path into the runtime's own directory, and every phrase from the "
+          "sandbox-bypass vocabulary, anywhere in Intake's own text, matches a pinned "
+          "wording",
           not added and not gone,
           "UNPINNED: %s | MISSING (reworded, moved or deleted): %s"
           % (added or "none", gone or "none"))

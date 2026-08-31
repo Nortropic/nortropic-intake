@@ -158,6 +158,7 @@ SWEEP_CHAT_2B = SWEEP_CHAT_2 + """
 Tillägg: grinden ska också logga varje beslut.
 """
 
+GID = "g-p-demo"
 URL_1 = "https://chatgpt.com/c/aaaaaaaa-1111-2222-3333-000000000001"
 URL_2 = "https://chatgpt.com/c/bbbbbbbb-1111-2222-3333-000000000002"
 URL_3 = "https://chatgpt.com/c/cccccccc-1111-2222-3333-000000000003"
@@ -216,7 +217,8 @@ def sweep_project(tmp, name="demo-sweep"):
         {"url": URL_3, "title": "Kvalitetsgrinden"},   # same TITLE, different id
     ]), encoding="utf-8")
     rc, out = F.project(["init", "--project", name, "--title", "Demo sweep",
-                         "--platform", "chatgpt", "--at", "2026-08-30"], corpus)
+                         "--platform", "chatgpt", "--at", "2026-08-30",
+                         "--origin", "https://chatgpt.com/g/%s/project" % GID], corpus)
     assert rc == 0, out
     rc, out = F.project(["declare", "--project", name, "--inventory", str(inv),
                          "--method", "declared", "--at", "2026-08-30"], corpus)
@@ -1096,9 +1098,6 @@ def i_source_identity(tmp):
 
 # ======================== J. enumeration evidence (v3.1) ====================
 
-GID = "g-p-demo"
-
-
 def real_discovery_record(urls, gid=GID):
     """The record the SHIPPED adapter actually emits for these conversations.
 
@@ -1183,10 +1182,49 @@ def j_enumeration_evidence(tmp):
           "refused — the label is not the proof, the request path is",
           rc != 0 and "gizmo_id QUERY filter" in out, out.strip()[:700])
 
-    ev = _evidence(tmp, "wrongproject", urls, projectId="g-p-somewhere-else")
+    ev = _evidence(tmp, "selfinconsistent", urls, projectId="g-p-somewhere-else")
     rc, out = declare(ev)
-    check("J43c a record whose endpoint belongs to another project is refused",
+    check("J43c a record whose endpoint disagrees with its own projectId is refused",
           rc != 0 and "the request path is" in out, out.strip()[:700])
+
+    # And the harder one the name above used to imply but never tested: a record that
+    # is perfectly self-consistent about a DIFFERENT project.
+    other = real_discovery_record(urls, gid="g-p-someone-elses-project")
+    ev = _evidence(tmp, "otherproject", urls, _base=other)
+    rc, out = declare(ev)
+    check("J43c2 a self-consistent proof about ANOTHER project cannot verify this one "
+          "— the evidence is bound to the project's own origin",
+          rc != 0 and "proves nothing here" in out, out.strip()[:700])
+
+    # An all-null ledger is what a record written from memory looks like: every check
+    # that compares cursors to each other passes, because they are all None.
+    amnesiac = real_discovery_record(urls)
+    for pg in amnesiac["exhaustion"]["pages"]:
+        pg["cursor_in"] = None
+        pg["cursor_out"] = None
+    ev = _evidence(tmp, "amnesiac", urls, _base=amnesiac)
+    rc, out = declare(ev)
+    check("J43c3 an all-null cursor ledger is refused — a page that ends the walk "
+          "before the last page never happened",
+          rc != 0 and "not the last page" in out, out.strip()[:700])
+
+    dup = real_discovery_record(urls)
+    dup["items"].append(dict(dup["items"][0]))
+    dup["collected"] = len(dup["items"])
+    dup["exhaustion"]["pages"][-1]["items"] += 1
+    ev = _evidence(tmp, "paddeditems", urls, _base=dup)
+    rc, out = declare(ev)
+    check("J43c4 a duplicated item cannot pad the count past a set comparison",
+          rc != 0 and "only %d distinct" % len(urls) in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "badcount", urls)
+    rec = json.loads(ev.read_text(encoding="utf-8"))
+    rec["exhaustion"]["pages"][0]["items"] = "two"
+    ev.write_text(json.dumps(rec), encoding="utf-8")
+    rc, out = declare(ev)
+    check("J43c5 a non-numeric page count is a stated refusal, not a traceback",
+          rc != 0 and "cannot be added up" in out and "Traceback" not in out,
+          out.strip()[:700])
 
     ev = _evidence(tmp, "noledger", urls,
                    exhaustion={"pages": [], "pages_walked": 2})
@@ -1243,6 +1281,21 @@ def j_enumeration_evidence(tmp):
     data = read_project_manifest(corpus, "enum")
     check("J44a not one refused declaration promoted the enumeration",
           data["enumeration"]["verified"] is False, str(data["enumeration"]))
+
+    # A project whose manifest never recorded a project origin has nothing to bind a
+    # proof to. Fail closed rather than fall back to the record's own word.
+    unbound = sweep_project(Path(tmp) / "unbound", "unbound")
+    F.project(["init", "--project", "unbound2", "--title", "No origin",
+               "--platform", "chatgpt", "--at", "2026-08-31"], unbound)
+    inv2 = Path(tmp) / "inv-unbound.json"
+    inv2.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    ev = _evidence(tmp, "unbound", urls)
+    rc, out = F.project(["declare", "--project", "unbound2", "--inventory", str(inv2),
+                         "--evidence", str(ev), "--method", "data-layer",
+                         "--verified", "--at", "2026-08-31"], unbound)
+    check("J43c6 a project with no recorded origin cannot bind any proof, so it "
+          "cannot claim a verified enumeration",
+          rc != 0 and "cannot be bound to it" in out, out.strip()[:700])
 
     real = real_discovery_record(urls)
     check("J44a2 the shipped adapter's own output is what the checker is fed — the "

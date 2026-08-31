@@ -42,10 +42,21 @@ Two things the Improvements proving run taught this script:
    length passes every check this script used to run, and the wrong conversation is
    delivered as a verified capture. `--sha256` closes that; nothing else here can.
 
-Checks: chunk bound (per transport), no truncated/merged slice, every index present
-exactly once, exact total length, exact digest when given, JSON parses, U+2060 stripped (restores neutralized
-words), no empty messages, balanced code fences per message. Exits non-zero on any
-failure — do NOT build the markdown from unverified data.
+Order matters here. The DIGEST is the authority: if the reassembled bytes hash to what
+the extractor reported, the transfer is correct and no framing heuristic gets a vote —
+which is what keeps a conversation that happens to contain `#END#` or `S12|` in its own
+text from being diagnosed as a broken transfer. Only when the length or the digest
+fails, or the digest was explicitly waived, do the framing diagnostics run, and then
+their whole job is to say WHAT to re-fetch: a gap in the middle, a slice truncated so
+the next merged into it, or a transfer simply short at the tail — the shape a
+missing-index scan cannot see, because there is no index above the highest that arrived.
+
+Checks: chunk bound (per transport), slice framing (a literal `#END#` inside a message
+is not a slice terminator), exact total length, exact digest unless waived,
+duplicate indexes reported, framing diagnosis on failure, JSON parses and is a list of
+{role,text}, U+2060 stripped (restores neutralized words), no empty messages, balanced
+code fences per message. Exits non-zero on any failure — do NOT build the markdown from
+unverified data.
 """
 import argparse, hashlib, json, re, sys
 
@@ -58,6 +69,94 @@ TOOL_OUTPUT_CHUNK_MAX = 32768
 def fail(message):
     print("FAIL: %s" % message)
     raise SystemExit(1)
+
+
+# `#END#` is a marker, not a reserved word: the extractors escape non-ASCII only, so a
+# conversation that DISCUSSES this protocol carries the literal tokens in its text. With
+# a plain non-greedy match the first such `#END#` ends the slice early and the transfer
+# dies on a length mismatch — and on the preferred clipboard relay, which wraps the whole
+# export as one slice, that makes such a conversation untransportable. This corpus's
+# subject matter is this protocol, so that is not a hypothetical.
+#
+# The anchored pattern only accepts an `#END#` that is followed by the next marker or by
+# the end of the file, which is what actually terminates a slice.
+_SLICE_LOOSE = re.compile(r"S(\d+)\|(.*?)#END#", re.S)
+_SLICE_ANCHORED = re.compile(r"S(\d+)\|(.*?)#END#(?=\s*(?:S\d+\||\Z))", re.S)
+
+
+def _collect(matches):
+    idx, dupes = {}, set()
+    for i, payload in matches:
+        if int(i) in idx:
+            dupes.add(int(i))    # a re-fetch: the later copy wins, and it is reported
+        idx[int(i)] = payload
+    return idx, dupes
+
+
+def parse_slices(raw, expected):
+    """(matches, {index: payload}, duplicate-indexes) — prefer the parse that adds up.
+
+    Both readings are tried and the one whose total length equals what the extractor
+    declared wins; ties go to the anchored one. Nothing is trusted on that basis — the
+    digest still decides — this only stops a legitimate `#END#` inside a message from
+    being read as the end of a slice.
+    """
+    for pattern in (_SLICE_ANCHORED, _SLICE_LOOSE):
+        matches = pattern.findall(raw)
+        if not matches:
+            continue
+        idx, dupes = _collect(matches)
+        if sum(len(v) for v in idx.values()) == expected:
+            return matches, idx, dupes
+    matches = _SLICE_LOOSE.findall(raw)
+    idx, dupes = _collect(matches)
+    return matches, idx, dupes
+
+
+def diagnose(raw, idx, found, got_len, expected):
+    """Say what to re-fetch. Only ever called once the transfer is already known bad.
+
+    Three shapes, and the first two are the ones a length mismatch alone cannot tell
+    apart. Nothing here decides correctness — the digest did that — so a conversation
+    whose text legitimately contains `S12|` or `#END#` can at worst get an imperfect
+    hint about a transfer that was broken anyway.
+    """
+    # Merge first: a payload that contains another slice's marker is positive evidence
+    # that the slice before it was cut, and it means the ABSORBING slice is corrupt too
+    # — so this must not be reported as a plain gap with "the arrived slices are still
+    # valid", which would be false.
+    markers = len(re.findall(r"S\d+\|", raw))
+    swallowed = sorted(k for k, v in idx.items() if re.search(r"S\d+\|", v))
+    if swallowed:
+        print("TRANSPORT_SLICE_MERGED — %d marker(s) in the file but %d slice(s) "
+              "parsed; slice(s) %s were cut mid-payload and absorbed the next one, so "
+              "they are corrupt as well. Re-fetch from index %d onward; slices before "
+              "that are still valid" % (markers, len(found), swallowed, min(swallowed)))
+        return
+
+    missing = [k for k in range(max(idx) + 1) if k not in idx]
+    if missing:
+        print("TRANSPORT_INCOMPLETE — %d slice(s) never arrived. Re-fetch exactly "
+              "index(es) %s; the arrived slices are still valid"
+              % (len(missing), missing))
+        return
+
+    if markers > len(found):
+        print("TRANSPORT_SLICE_TRUNCATED — %d marker(s) in the file but %d slice(s) "
+              "parsed, and none absorbed another: the LAST slice lost its #END#. "
+              "Re-fetch from index %d onward" % (markers, len(found), max(idx) + 1))
+        return
+
+    # Short, with no gap and no merge: the tail simply never arrived. A missing-index
+    # scan is structurally blind to this — there is no index above the highest received.
+    if got_len < expected:
+        print("TRANSPORT_TAIL_MISSING — short by %d char(s) with every index up to S%d "
+              "present and intact. Slices after S%d never arrived; re-fetch from index "
+              "%d onward" % (expected - got_len, max(idx), max(idx), max(idx) + 1))
+        return
+    print("TRANSPORT_LENGTH_UNEXPLAINED — %d char(s) too long with no gap, no merge and "
+          "no duplicate. The payload is not what the extractor reported; re-run the "
+          "extraction rather than the transfer" % (got_len - expected))
 
 
 def main():
@@ -90,27 +189,10 @@ def main():
     raw = open(args.slices, encoding="utf-8").read()
     expected = args.expected_len
 
-    found = re.findall(r"S(\d+)\|(.*?)#END#", raw, re.S)
-    idx = {}
-    for i, p in found:
-        idx[int(i)] = p  # later re-fetches of a slice override earlier ones
+    found, idx, dupes = parse_slices(raw, expected)
 
     if not idx:
         fail("no S<i>|...#END# slices found")
-
-    # A slice that got cut mid-payload lost its `#END#`, so the non-greedy match ran on
-    # and ate the next slice's marker with it. Two slices arrive as one, no index looks
-    # missing, and the only symptom would otherwise be a bare length mismatch with
-    # nothing to re-fetch. Count the markers that are actually in the text.
-    markers = len(re.findall(r"S\d+\|", raw))
-    if markers != len(found):
-        swallowed = sorted(k for k, v in idx.items() if re.search(r"S\d+\|", v))
-        print("TRANSPORT_SLICE_MERGED — %d marker(s) in the file but %d slice(s) "
-              "parsed; slice(s) %s carry another slice's marker inside them"
-              % (markers, len(found), swallowed or "?"))
-        fail("a slice lost its #END# — it was truncated in transit, and the one after "
-             "it was absorbed into the gap. Re-fetch slice(s) %s and everything after "
-             "them; the earlier slices are still valid." % (swallowed or "?"))
 
     if args.transport == "tool-output":
         # Measure what the tool actually carried: the framed chunk, not the payload
@@ -128,24 +210,23 @@ def main():
                  "relay and declare --transport file. Never read a spill back out of "
                  "the runtime's own storage.")
 
-    missing = [k for k in range(max(idx) + 1) if k not in idx]
-    if missing:
-        # An honest incomplete state, and a resumable one: it names exactly what to
-        # re-fetch rather than delivering a short archive that parses.
-        print("TRANSPORT_INCOMPLETE — %d slice(s) never arrived" % len(missing))
-        fail("missing slice indexes: %s — re-fetch exactly these and re-run; the "
-             "arrived slices are still valid" % missing)
+    if dupes:
+        print("TRANSPORT_SLICE_REFETCHED — index(es) %s arrived more than once; the "
+              "LAST copy of each was used" % sorted(dupes))
 
     s = "".join(idx[k] for k in sorted(idx))
+    actual = hashlib.sha256(s.encode("utf-8")).hexdigest()
+
     if len(s) != expected:
+        diagnose(raw, idx, found, len(s), expected)
         fail("reassembled length %d != expected %d" % (len(s), expected))
 
-    actual = hashlib.sha256(s.encode("utf-8")).hexdigest()
     if args.digest:
         if actual.lower() != args.digest.strip().lower():
             print("TRANSPORT_DIGEST_MISMATCH — these are not the bytes that were "
                   "extracted (same length, different content: a stale clipboard from "
                   "an undelivered click looks exactly like this)")
+            diagnose(raw, idx, found, len(s), expected)
             fail("sha256 %s != expected %s" % (actual, args.digest.strip().lower()))
     else:
         print("TRANSPORT_DIGEST_UNVERIFIED — --digest-unavailable was passed, so only "

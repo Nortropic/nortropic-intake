@@ -11,9 +11,11 @@
 // The data layer is lossless, instant, and immune to virtualization.
 //
 // Both adapters return the SAME evidence JSON {msgCount, roles, firstPreview,
-// lastPreview, totalChars, exportLen, attachments} and store the ASCII-escaped message
-// array on window.__nxExport for the standard slice transfer + reassemble_verify.py
-// (Steps 3–4 of references/extraction.md). Fail closed: any {error: ...} result or a
+// lastPreview, totalChars, exportLen, sha256, attachments} and store the ASCII-escaped
+// message array on window.__nxExport for the standard slice transfer +
+// reassemble_verify.py (Steps 3–4 of references/extraction.md). The sha256 is of those
+// exact bytes and Step 4 REQUIRES it: length cannot tell two conversations apart, and a
+// clipboard relay whose trusted click never landed hands back the previous export. Fail closed: any {error: ...} result or a
 // suspiciously bloated totalChars means fall back to the DOM playbook — never deliver
 // a capture whose size you cannot explain against the visible chat.
 // NOTE: javascript_tool has REPL semantics — a bare async IIFE returns a pending
@@ -23,15 +25,19 @@ await (async function(){
   // Escape to ASCII so the slice transfer can never split a character (same contract
   // as extract.js) and reassemble_verify.py's exact-length check stays meaningful.
   const esc=s=>s.replace(/[^\x20-\x7e]/g,ch=>'\\u'+ch.charCodeAt(0).toString(16).padStart(4,'0'));
-  const finish=(msgs,meta)=>{
+  const finish=async(msgs,meta)=>{
     const totalChars=msgs.reduce((s,m)=>s+m.text.length,0);
     window.__nxExport=esc(JSON.stringify(msgs));
+    const buf=await crypto.subtle.digest('SHA-256',
+      new TextEncoder().encode(window.__nxExport));
+    const sha256=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    window.__nxExportSha256=sha256;
     return JSON.stringify(Object.assign({source:'data-layer'},meta,{
       msgCount:msgs.length,
       roles:msgs.map(m=>m.role==='user'?'u':'a').join(''),
       firstPreview:msgs[0]?msgs[0].text.slice(0,140):null,
       lastPreview:msgs.length?msgs[msgs.length-1].text.slice(0,140):null,
-      totalChars,exportLen:window.__nxExport.length}));
+      totalChars,exportLen:window.__nxExport.length,sha256}));
   };
 
   if(host==='chatgpt.com'||host==='chat.openai.com'){
@@ -72,7 +78,7 @@ await (async function(){
       if(!text.trim()) continue;
       msgs.push({role,text});
     }
-    return finish(msgs,{convId,title:data.title||null,attachments});
+    return await finish(msgs,{convId,title:data.title||null,attachments});
   }
 
   if(host==='claude.ai'){
@@ -134,7 +140,7 @@ await (async function(){
     }
     // A message whose blocks were ALL placeholders (tool-only turn) drops out entirely —
     // verified correct against the rendered DOM: such turns show cards, no chat text.
-    return finish(msgs,{convId,title:data.name||null,attachments});
+    return await finish(msgs,{convId,title:data.name||null,attachments});
   }
 
   return JSON.stringify({error:'no data-layer adapter for '+host+' — fall back to the DOM playbook'});

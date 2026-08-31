@@ -43,6 +43,7 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
   //   }
   // },
   "project_status": "",
+  "finalized_at": null,          // set by `finalize` once the end state is derived
   "inventory_revision": 3,
   "inventory_sha256": "<deterministic identity of the source inventory>",
   "inventory_history": [
@@ -59,7 +60,9 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
       "state": "ROUTED",
       "revisions": [
         {"revision": 1, "path": "_projects/improvements/sources/CONV-001/conversation.md",
-         "sha256": "…", "captured_at": "2026-09-01", "message_count": 75,
+         "sha256": "…",           // the WHOLE delivered file — tamper + immutability
+         "source_sha256": "…",    // the CONVERSATION alone — what a revision answers to
+         "captured_at": "2026-09-01", "message_count": 75,
          "adapter": "data-layer", "verified": true, "verify_detail": ""}
       ],
       "extracted_revision": 1,
@@ -77,6 +80,18 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
 - **Identity before ideas.** `conversation_key` is `host/<platform-conversation-id>`
   — never a title. Two conversations with the same title are two sources; a rerun
   upserts by key and can never duplicate one (`DUPLICATE_SOURCE_IDENTITY`).
+- **A revision answers to the conversation, not to the header written about it.**
+  `source_sha256` hashes the source region — everything from the first
+  `## Meddelande N — <roll>` line onward, role labels included. Everything above it is
+  DERIVED builder metadata: title, source project, URL, export date, message count,
+  the one-line purpose, the "Innehåll i korthet" paragraph, the citation-chip note. So
+  a re-worded purpose line or a later export date is a true no-op, while a changed
+  message or a changed speaker is revision N+1. `capture` recomputes this from the
+  bytes on disk rather than reading the field, and `validate` does the same
+  (`PROJECT_SOURCE_IDENTITY_MISMATCH`) — a manifest value the bytes cannot back would
+  otherwise make a real change look unchanged and swallow the revision. Revisions
+  written before this field existed simply have nothing to cross-check and need no
+  migration.
 - **Raw survives.** Every revision's bytes stay on disk exactly as captured
   (`SOURCE_FILE_MISSING`, `PROJECT_SOURCE_HASH_MISMATCH`); once committed, git is the
   witness (`PROJECT_SOURCE_MUTATED`). An updated conversation is a NEW revision file
