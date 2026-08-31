@@ -803,7 +803,9 @@ approved plan and the brief stays `clarified`.
    copied from the candidate and re-checked by `plan_contract.py validate` — not in a
    line the tool prints. What the tools DO print is the comparison:
    `plan-impact` reports `APPROVED_PLAN_CONTEXT_REVISION` against
-   `CURRENT_CONTEXT_REVISION`, and `resume` surfaces `ACTIVE_APPROVED_PLAN_SHA256`.
+   `CURRENT_CONTEXT_REVISION`. `ACTIVE_APPROVED_PLAN_SHA256` is a pointer FIELD, not a
+   printed line: `pointer` writes it into the workstream's CLAUDE.md block and `resume`
+   reads it back to detect drift — no command prints that token.
 
    This does **not** make the context package execution authority. It is provenance:
    *this is the understanding against which this plan was approved*, so that when the

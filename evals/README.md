@@ -48,7 +48,8 @@ Every code the tools can print is a contract surface. The transport ones:
 `TRANSPORT_CHUNK_OVERSIZE`, `TRANSPORT_DIGEST_MISMATCH`, `TRANSPORT_DIGEST_UNVERIFIED`,
 `TRANSPORT_SLICE_MERGED`, `TRANSPORT_SLICE_TRUNCATED`, `TRANSPORT_SLICE_REFETCHED`,
 `TRANSPORT_INCOMPLETE`, `TRANSPORT_TAIL_MISSING`, `TRANSPORT_PAYLOAD_SHORT`,
-`TRANSPORT_LENGTH_UNEXPLAINED`. The capture one that says the manifest is out of step
+`TRANSPORT_LENGTH_UNEXPLAINED`, `TRANSPORT_INDEX_IMPLAUSIBLE`, `TRANSPORT_CONTENT_WRONG`,
+`TRANSPORT_SLICE_REFETCHED` (informational). The capture one that says the manifest is out of step
 with the bytes: `SOURCE_IDENTITY_RECORD_STALE`.
 
 (`project_contract.py validate` legitimately fails with "contains no project
@@ -189,7 +190,8 @@ first rationale delivered by a real run becomes the known-good example.
 ## 6. Approved-plan falsification (`test_plan_contract.py`)
 
 Executes `scripts/plan_contract.py` against corpora built on disk — no mocks. Weighted
-towards falsification: three happy-path cases against ~20 ways a plan can be unprovable
+towards falsification: a minority of happy-path cases against the many ways a plan can
+be unprovable
 (missing, unbound, wrong hash, wrong slug, unapproved, superseded pointer, broken
 supersession, orphaned version, escaped path, section summarized away, plan bound at the
 wrong lifecycle state, filename/version drift, pointer to an unproven plan).
@@ -211,8 +213,9 @@ case (`R8`) runs the same scenario with no durable plan and asserts it fails clo
 `LEGACY_PLAN_ARTIFACT_MISSING` rather than guessing.
 
 The suite also guards a negative property that is easy to lose (`case 14`): nothing in
-the scripts, SKILL.md, README or the templates may require a private conversation or
-session path. The mechanism must work for a fresh agent that has only repository +
+the scripts, SKILL.md, README, the approved-plan template or the brief template may
+require a private conversation or session path. (Those two templates are the ones case
+14 reads; the transport suite's T10 pin covers references/ in full, by fingerprint.) The mechanism must work for a fresh agent that has only repository +
 intake access.
 
 ## 7. Context continuity (`test_context_v2.py`)
@@ -266,7 +269,7 @@ packages, real git repositories, the real validators, no mocks.
 | C15 | pointer retirement | the named block goes, the other stays byte-identical, no intake artifact changes, wrong/ambiguous retirement removes nothing |
 | T1–T8 | source trust | injection-shaped page stays evidence; foreign README gains no authority; an attachment cannot forge owner approval; source text cannot switch the workstream; owner adoption is the legitimate path; a declared target keeps canonical authority; ambiguity fails closed; the auditor has a code for source→decision escalation |
 
-It ends with an **18-case mutation matrix** covering both families: altered source-set
+It ends with a **19-case mutation matrix** covering both families: altered source-set
 identity, a source appended without a revision, duplicate episode ids, an overwritten raw
 episode, rewritten/truncated revision history, a manifest downgraded out of revision
 tracking, a fabricated owner delta, stripped external provenance, a suppressed audit
@@ -291,7 +294,7 @@ git, the real validators, control fixtures, MIN_CHECKS floor):
 | G25–G29 | audit & trust | dangling/hash-unlinked provenance; self-closed audit findings; owner-less dismissals; tampered hashes; mutated raw; assistant proposals refused downstream of a sweep |
 | H30–H31 | side effects | the tooling never commits the corpus; every command runs against a tmp `--corpus` |
 | I32–I42 | source identity vs builder metadata (v3.1) | the CONV-012 reproducer: byte-identical messages under a re-worded `**Syfte:**` line mint NO revision, and neither does a later `**Exportdatum:**`; a changed message or a changed speaker still does; the old raw survives; an interrupted write is refused rather than overwritten; a legacy revision with no recorded identity reaches the same no-op without migration; and a `source_sha256` the bytes cannot back is caught by both `capture` and `validate` |
-| J39–J48 | enumeration evidence (v3.1) | `--verified` without `--evidence` is refused; so are a record naming the v3.0 query endpoint, one describing another project, an all-null or unbalanced cursor ledger, a padded item count, and the adapter's own reported count disagreement; a real record from the shipped adapter DOES verify, is archived in-corpus, and is re-checked for tampering; a pre-v3.1 claim stays valid as legacy without being promoted |
+| J39–J49 | enumeration evidence (v3.1) | `--verified` without `--evidence` is refused; so are a record naming the v3.0 query endpoint, one describing another project, an all-null or unbalanced cursor ledger, a padded item count, and the adapter's own reported count disagreement; a real record from the shipped adapter DOES verify, is archived in-corpus, and is re-checked for tampering; a pre-v3.1 claim stays valid as legacy without being promoted; a manifest malformed beyond what the contract models becomes PROJECT_VALIDATION_CRASHED instead of aborting the sweep; and init's printed next step is a command that actually runs |
 
 No real project is ever swept by the evals — every fixture is synthetic and torn down.
 The J-family fixtures are produced by running the SHIPPED `scripts/project_discovery.js`
@@ -322,7 +325,8 @@ the workflow declares it with `setup-node`.
 | | Family | Proves |
 |---|---|---|
 | A1–A3 | cursor walk | two pages then exhaustion gives the exact union; a duplicate across pages is one source; same title with different ids stays two |
-| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its 800-chat listing cannot be reached |
+| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its account-wide listing (an 80-chat
+fixture standing in for the real run's 800) cannot be reached |
 | A5–A8 | exhaustion | an outstanding cursor, a cursor that never advances, and a disagreeing total each block the claim; an empty project with an exhausted cursor is a valid zero-membership result; a rerun is byte-identical |
 | A9–A10 | guards | an unknown host and a missing project id fail closed; the adapter builds a path-scoped URL and never a `gizmo_id` query |
 | A11–A12 | capture digests | `extract.js` and `data_capture.js` both report the sha256 Step 4 requires, of exactly the bytes they stored, and both keep their load-bearing leading `await` |

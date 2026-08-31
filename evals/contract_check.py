@@ -292,7 +292,8 @@ CHECKS = [
         "`context_revision` and `source_set_sha256`",
         "re-checked by `plan_contract.py validate`", "not in a line the tool prints",
         "APPROVED_PLAN_CONTEXT_REVISION", "CURRENT_CONTEXT_REVISION",
-        "ACTIVE_APPROVED_PLAN_SHA256",
+        "is a pointer FIELD, not a\n   printed line",
+        "no command prints that token",
         "This does **not** make the context package execution authority"]),
     ("SKILL.md", "W12 stale is detected, and stale is not invalid", [
         "## Phase 5.5 — When context moves under an approved plan",
@@ -559,10 +560,12 @@ CHECKS = [
     # The two files no lint covered — which is why four reviews in a row each found a
     # doc still describing older behaviour. evals/README.md is what a maintainer reads
     # to know what the evals prove; the workflow is what actually runs them.
+    # PS19 pins the STRUCTURE of the eval inventory. It must not pin the check-id
+    # ranges: pinning the README's own words means a README that drifts together with
+    # its lint stays green — PS21 derives the ranges from the suite source instead.
     ("evals/README.md", "PS19 the eval inventory matches what is actually there", [
         "python3 evals/test_transport_v31.py", "node    evals/test_discovery_v31.mjs",
         "## 10. v3.1 transport suite", "## 11. v3.1 discovery suite",
-        "| I32–I42 |", "| J39–J48 |",
         "the SHIPPED `scripts/project_discovery.js`",
         "`extract.js` and `data_capture.js` both report the sha256 Step 4 requires"]),
     (".github/workflows/intake-contract.yml",
@@ -625,6 +628,32 @@ def normalize(text):
     return re.sub(r"\s+", " ", text)
 
 
+def check_readme_ranges():
+    """The README's v3-suite table must match the check ids the suite really emits.
+
+    A phrase-presence lint cannot do this: it pins the README's own words, so a README
+    that drifts TOGETHER WITH its lint stays green — which is exactly how a stale
+    `J39–J48` survived the introduction of J49. Derive the truth from the suite source
+    and compare.
+    """
+    root = Path(__file__).resolve().parent
+    suite = (root / "test_project_v3.py").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    ids = sorted({(m.group(1), int(m.group(2)))
+                  for m in re.finditer(r"check\(\s*[\"']([A-Z])(\d+)", suite)})
+    failures = []
+    for family in sorted({f for f, _ in ids}):
+        nums = [n for f, n in ids if f == family]
+        want = ("%s%d–%s%d" % (family, min(nums), family, max(nums))
+                if min(nums) != max(nums) else "%s%d" % (family, min(nums)))
+        row = "| %s |" % want
+        if row not in readme:
+            failures.append("README lacks a row for the range the suite emits: %s "
+                            "(family %s runs %d..%d)"
+                            % (row, family, min(nums), max(nums)))
+    return failures
+
+
 def main():
     failures = 0
     cache = {}
@@ -656,7 +685,15 @@ def main():
             failures += 1
         else:
             print(f"PASS  {label}")
-    total = len(CHECKS)
+    for miss in check_readme_ranges():
+        print(f"FAIL  PS21 the README's v3-suite ranges are derived, not asserted  "
+              f"[{miss}]")
+        failures += 1
+    else:
+        if not check_readme_ranges():
+            print("PASS  PS21 the README's v3-suite ranges match the ids the suite "
+                  "actually emits")
+    total = len(CHECKS) + 1
     print(f"\n{total - failures}/{total} contract checks passed")
     sys.exit(1 if failures else 0)
 

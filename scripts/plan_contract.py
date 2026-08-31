@@ -956,7 +956,16 @@ def cmd_validate(args):
         return 1
     all_findings = []
     for slug in slugs:
-        findings, facts = validate_slug(corpus, slug)
+        # Same rule as the other two corpus-wide sweeps: one malformed package is a
+        # finding, never an abort that silently skips every later package.
+        try:
+            findings, facts = validate_slug(corpus, slug)
+        except Exception as exc:                                  # noqa: BLE001
+            findings, facts = [Finding(
+                slug, "PACKAGE_VALIDATION_CRASHED",
+                "validating this package raised %s: %s — a file is malformed in a way "
+                "the contract does not model. Treated as a failure, and the remaining "
+                "packages were still validated." % (type(exc).__name__, exc))], {}
         all_findings.extend(findings)
         if not fails(findings):
             print("PASS  [%s]  status=%s  plan=%s" % (

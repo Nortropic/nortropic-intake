@@ -1428,25 +1428,24 @@ def j_enumeration_evidence(tmp):
               rc != 0 and "Traceback" not in out
               and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:600])
 
+    # The fixture must actually CRASH validate_project, or the try/except this check
+    # exists for never runs — an earlier version used the M1 shape, which the M1 fix
+    # itself turned into an ordinary refusal, leaving the guard green but unexercised.
+    # A review proved that by deleting the guard with the check still passing. A
+    # non-dict SOURCE is a shape the validator's own typing does not model.
     crashed = sweep_project(Path(tmp) / "crash-sweep", "aaa-broken")
-    import hashlib as _h
     cdata = read_project_manifest(crashed, "aaa-broken")
-    bad = Path(crashed) / "_projects/aaa-broken/ev.json"
-    bad.write_text('{"membership": true, "exhaustion": true}', encoding="utf-8")
-    cdata["enumeration"] = {
-        "method": "data-layer", "verified": True, "declared_inventory_sha256": "x",
-        "evidence": {"record": "_projects/aaa-broken/ev.json",
-                     "sha256": _h.sha256(bad.read_bytes()).hexdigest(),
-                     "membership_scope": "path-scoped-project-endpoint",
-                     "terminal_signal": "cursor-absent"}}
-    write_project_manifest(crashed, "aaa-broken", cdata)
+    cdata["sources"][0]["ideas"] = [1]        # a non-string idea slug: TypeError in
+    write_project_manifest(crashed, "aaa-broken", cdata)   # the idea-link resolution
     healthy = sweep_project(Path(tmp) / "healthy", "zzz-healthy")
     shutil.copytree(Path(healthy) / "_projects/zzz-healthy",
                     Path(crashed) / "_projects/zzz-healthy")
     rc, out = F.project(["validate"], crashed)
-    check("J46i a malformed project cannot abort the corpus-wide sweep — the projects "
+    check("J46i a manifest malformed beyond what the contract models cannot abort the "
+          "corpus-wide sweep — it becomes PROJECT_VALIDATION_CRASHED and the projects "
           "sorted after it are still validated",
-          rc != 0 and "Traceback" not in out and "zzz-healthy" in out,
+          rc != 0 and "Traceback" not in out
+          and "PROJECT_VALIDATION_CRASHED" in out and "zzz-healthy" in out,
           out.strip()[:800])
 
     # ---- MAT-2: the origin is reachable after init, and a rename is not a

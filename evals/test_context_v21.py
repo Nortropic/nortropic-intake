@@ -1249,6 +1249,39 @@ def _omit_new_source(folder, corpus, targets):
 
 # ------------------------------------------------------------------ main ---
 
+def sweep_survives_crash(tmp):
+    """One malformed package is a finding, never an abort that skips every later one.
+
+    The `or []` idiom defends a FALSY non-list and nothing else, so a manifest carrying
+    `"episodes": true` used to raise a bare TypeError inside the corpus-wide sweep —
+    and every package sorted after the bad one was never validated at all, with nothing
+    saying which. project_contract got this guard first; a review then found the same
+    crash in this module (and the same structural exposure in plan_contract), which is
+    exactly the this-project failure mode of fixing one instance of a property and
+    declaring the class closed.
+    """
+    corpus, folder, targets = living(Path(tmp) / "a")
+    # A second package that sorts AFTER the poisoned one. It only needs to be reached
+    # and reported — its own findings are its own business — so a bare brief suffices.
+    after = Path(corpus) / "zzz-after"
+    after.mkdir()
+    (after / "idea-zzz-after.md").write_text("# after\n", encoding="utf-8")
+    (folder / (SLUG + "-context-manifest.json")).write_text(
+        '{"episodes": true}', encoding="utf-8")
+
+    rc, out = F.context(["validate"], corpus)
+    check("V6a a manifest malformed beyond what the contract models becomes "
+          "PACKAGE_VALIDATION_CRASHED, not a traceback",
+          rc != 0 and "Traceback" not in out
+          and "PACKAGE_VALIDATION_CRASHED" in out, out.strip()[:700])
+    check("V6b and the packages sorted after it are still validated",
+          "zzz-after" in out, out.strip()[:700])
+
+    rc, out = F.plan(["validate"], corpus)
+    check("V6c the plan sweep survives the same package without a traceback",
+          "Traceback" not in out, out.strip()[:700])
+
+
 SCENARIOS = [
     ("C1  same idea, second brainstorm", c1_second_brainstorm),
     ("C2  second brainstorm reverses a decision", c2_reversed_decision),
@@ -1262,6 +1295,7 @@ SCENARIOS = [
     ("C13 ChatGPT independence", c13_chatgpt_independence),
     ("C14/C15 two workstreams, pointer retirement", c14_c15_two_workstreams_and_pointer_gc),
     ("T1–T8 source trust / instruction authority", trust_boundary),
+    ("V6  a malformed package cannot abort the sweep", sweep_survives_crash),
     ("R   the independent reviews' own repros", r_review_repros),
 ]
 

@@ -39,6 +39,21 @@ RESULTS = []
 MIN_CHECKS = 18
 
 
+def _entries(directory):
+    """Top-level names in a directory — the before/after snapshot T12 compares."""
+    try:
+        return {e.name for e in directory.iterdir()}
+    except OSError:
+        return set()
+
+
+# Captured at import, before any scenario runs, so T12 answers to what actually appeared
+# on disk rather than to where the temp directory happens to be.
+HOME_BEFORE = _entries(Path.home())
+REPO_BEFORE = _entries(ROOT)
+WORK_BEFORE = _entries(Path.home() / "nortropic")
+
+
 def check(name, condition, detail=""):
     RESULTS.append((name, bool(condition), detail))
     print("%s  %s%s" % ("PASS " if condition else "FAIL ", name,
@@ -363,10 +378,16 @@ def t_digest(tmp):
 # followable recovery instruction past the enumerated version using `~/.claude/todos`
 # and `~/.claude/shell-snapshots`. The skill's own files live under `.claude/skills/`,
 # so that one prefix is excluded — everything else there belongs to the runtime.
-# The SLASH is the trigger, not the directory name after it: a review evaded the
-# name-matching version by writing ``.claude/`` and naming the subdirectory in the next
-# clause. This skill's own tree is the one legitimate exception.
-PRIVATE_STORAGE_RE = r"\.claude/(?!skills\b)"
+# `.claude` ITSELF is the trigger — slash or no slash, directory named or not. Requiring
+# the slash left `~/.claude` with the subdirectory in the next clause outside a check
+# whose name says "every path into the runtime's own directory"; requiring the directory
+# name left `~/.claude/` plus the name in the next clause outside it. The lookbehind
+# keeps it to PATH position, so the docs URL `code.claude.com` is not a runtime path.
+# This skill's own tree is the one legitimate exception — and only while the path stays
+# inside it: `.claude/skills/../projects/x` climbs straight back out, so the exemption
+# is withdrawn the moment a `..` appears after it.
+PRIVATE_STORAGE_RE = (r"(?<![A-Za-z0-9_-])\.claude\b"
+                      r"(?!/skills(?![^\s\)\]`\"']*\.\.))")
 SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSandbox"
                      r"|dangerously-skip-permissions|disable the sandbox"
                      r"|disabling the sandbox|turn off sandbox|sandbox bypassed"
@@ -381,20 +402,20 @@ PINNED_MENTIONS = {
     # three stores plus the override, and each match carries its own window.
     "a4af8658": "extraction.md:217 — 'run **only** the pbpaste/pbcopy steps sandbox-disabled'",
     "2a63eb8c": "extraction.md:220 — 'Never disable the sandbox to read Claude Code's own storage'",
-    "09fed415": "extraction.md:220 — that sentence naming ~/.claude/projects",
+    "9cd9ff4d": "extraction.md:220 — that sentence naming ~/.claude/projects",
     "1a76876c": "extraction.md:221 — …sessions, inside the same prohibition",
-    "fc148f27": "extraction.md:221 — …history, inside the same prohibition",
+    "5b8dafc8": "extraction.md:221 — …history, inside the same prohibition",
     # evals/contract_check.py:550 — PS18, the lint that requires the SCOPE paragraph
     # above to keep saying what it says.
     "82807cba": "contract_check.py:550 — PS18's required substrings for that paragraph",
     # evals/test_plan_contract.py:525 — case 14's three patterns: the lint that keeps
     # these paths out of SKILL.md and the scripts entirely.
-    "f5ffadbb": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/projects'",
-    "190cd16a": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/sessions'",
-    "3babad07": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/history'",
+    "13977b17": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/projects'",
+    "adb5f2ad": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/sessions'",
+    "12fb08b4": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/history'",
     # evals/test_context_v2.py:764 — the M13 mutation: a manifest claiming such a path,
     # which the validator must reject.
-    "84d7b36d": "test_context_v2.py:764 — M13 mutation '../../.claude/projects/x.jsonl'",
+    "94aa001c": "test_context_v2.py:764 — M13 mutation '../../.claude/projects/x.jsonl'",
 }
 
 
@@ -402,6 +423,17 @@ def _fingerprint(text, m):
     """A short, stable hash of the normalized wording around one occurrence."""
     window = re.sub(r"\s+", " ", text[max(0, m.start() - 90):m.end() + 90]).strip()
     return hashlib.sha256(window.encode("utf-8")).hexdigest()[:8]
+
+
+def _unwrap(text):
+    """Join wrapped lines so a path split across a line break still reads as one.
+
+    The continuation prefix must NOT swallow a leading `/`. An earlier version stripped
+    `[ \t#/]*`, so an instruction wrapping as `~/.claude` + newline + `/projects/…`
+    normalized to `~/.claude projects/…` — destroying the very token being searched for.
+    A review demonstrated exactly that, twice.
+    """
+    return re.sub(r"[ \t]*\n[ \t]*(?:(?://+|\#+|\*+|>+|--+)[ \t]*)?", " ", text)
 
 
 def _mentions(paths):
@@ -412,7 +444,7 @@ def _mentions(paths):
     """
     found = {}
     for path in paths:
-        text = re.sub(r"[ \t]*\n[ \t#/]*", " ", path.read_text(encoding="utf-8"))
+        text = _unwrap(path.read_text(encoding="utf-8"))
         for m in re.finditer("(?:%s)|(?:%s)" % (PRIVATE_STORAGE_RE, SANDBOX_BYPASS_RE),
                              text):
             excerpt = re.sub(r"\s+", " ",
@@ -496,9 +528,17 @@ def t_boundary(tmp):
           "owns it — no enforcement is claimed that Intake cannot deliver",
           "Intake cannot enforce this" in playbook)
 
-    # T12: this suite's own hygiene — everything it touched is under a temp dir.
-    check("T12 every path this suite wrote is inside its temp directory",
-          str(tmp).startswith(tempfile.gettempdir()), str(tmp))
+    # T12: this suite's own hygiene. The previous version asserted
+    # `str(tmp).startswith(gettempdir())` — but `tmp` always comes from mkdtemp(), so it
+    # was a tautology that tracked no write at all. Two reviews proved it by planting a
+    # real write outside the temp tree with T12 still green. Compare actual directory
+    # contents against the snapshot taken before any scenario ran.
+    leaked = sorted((HOME_BEFORE ^ _entries(Path.home()))
+                    | (REPO_BEFORE ^ _entries(ROOT))
+                    | (WORK_BEFORE ^ _entries(Path.home() / "nortropic")))
+    check("T12 this suite created nothing outside its temp directory — not in $HOME, "
+          "not in the repo, not in the work tree",
+          not leaked, "appeared or vanished: %s" % leaked[:10])
 
     # T13: and no eval in the repo reads or writes the runtime's real storage.
     real_hits = []

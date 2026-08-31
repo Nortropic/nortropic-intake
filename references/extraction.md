@@ -233,12 +233,15 @@ through tool output (189k chars verified lossless in a real run):
 
 Fallback if the relay fails: console transfer (log `S<i>|chunk#END#` in **24k** chunks
 and read them back with `read_console_messages`, pattern `S<i>\|`), then the classic
-700-char slice protocol as last resort. The 24k figure is a bound, not a preference:
-tool output tops out around 32 KB, and the proving run's 40k chunks overflowed it and
-spilled to disk — after which the agent went looking for its own spill outside the
-sandbox. `reassemble_verify.py` now enforces the bound (`TOOL_OUTPUT_CHUNK_MAX`) under
-`--transport tool-output`, so an oversized chunk fails the run instead of quietly
-producing a file somebody has to go and find. javascript_tool REPL note: an
+700-char slice protocol as last resort. Be precise about the two numbers: **24k is the
+prescribed cut** — tool output tops out around 32 KB, the proving run's 40k chunks
+overflowed it and spilled to disk (after which the agent went looking for its own spill
+outside the sandbox), and cutting at 24k leaves comfortable room for the `S<i>|`/`#END#`
+framing. **32 768 is the enforced ceiling**: `reassemble_verify.py` refuses any FRAMED
+chunk above `TOOL_OUTPUT_CHUNK_MAX` under `--transport tool-output`, so a chunk cut too
+close to the limit fails the run instead of quietly producing a spill file somebody has
+to go and find. A 30k chunk therefore passes the verifier while still being a bad idea;
+cut at 24k. javascript_tool REPL note: an
 async IIFE must be prefixed with `await`, or the pending Promise serializes as `{}`.
 
 ## Step 4 — Verify (fail closed)
@@ -341,7 +344,8 @@ count or total**. The rules are fail-closed, and they are the whole point:
 2. **Anything less provable → declared inventory.** Take an owner-provided/exported
    conversation list (URLs or `host/<id>` keys), write it as JSON, and
    `project_contract.py declare --method declared` WITHOUT `--verified` (and without
-   `--evidence`). The manifest then carries `PROJECT_ENUMERATION_UNVERIFIED`, and
+   `--evidence`). The manifest then records `verified: false`, every coverage/status
+   report prints `PROJECT_ENUMERATION_UNVERIFIED` from it, and
    coverage answers for the declared inventory only. **DO NOT FAKE IT** — the
    architecture would rather say "unverified" than claim 100% coverage it cannot
    prove. Never hand-write an evidence record to get past the checker: the point of

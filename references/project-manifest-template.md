@@ -1,9 +1,14 @@
 # Project manifest — `_projects/<project>/project-manifest.json`
 
 The coverage contract of one PROJECT_SWEEP: which conversations exist, in what
-lifecycle state, with what identity and what enumeration honesty. Everything here is
-recomputed and re-validated from plain files by `scripts/project_contract.py`;
-"Claude thinks it read everything" is never the evidence.
+lifecycle state, with what identity and what enumeration honesty. Every INTEGRITY
+claim here — hashes, source identity, states, the enumeration evidence, tree↔manifest
+agreement — is recomputed and re-validated from plain files by
+`scripts/project_contract.py`; "Claude thinks it read everything" is never the
+evidence. Descriptive fields (`message_count`, `captured_at`, `adapter`,
+`discovered_at`) are recorded at capture time and NOT re-derived on later sweeps: they
+are testimony about the capture, useful for audit, and nothing downstream treats them
+as proof.
 
 ## The shape
 
