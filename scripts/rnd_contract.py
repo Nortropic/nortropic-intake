@@ -155,13 +155,34 @@ def _key_segments(key):
     return [seg for seg in _SEGMENT_SPLIT_RE.split(s.lower()) if seg]
 
 
+def _lemmas(seg):
+    """The segment plus its light inflectional variants, so the forbidden set can be
+    the BASE words and still catch plurals/gerunds — an independent review showed a
+    hardcoded plural list missed `importances`, `urgencies`, `statuses`, `weightings`,
+    `implementing`, `recencies`. Cheap, deterministic, no NLP: strip the common
+    English suffixes and add the base back."""
+    forms = {seg}
+    if seg.endswith("ies") and len(seg) > 4:      # priorities -> priority
+        forms.add(seg[:-3] + "y")
+    if seg.endswith("es") and len(seg) > 3:       # statuses -> status; urgencies->urgenci (ignored)
+        forms.add(seg[:-2])
+    if seg.endswith("s") and len(seg) > 2:        # ranks -> rank; importances->importance
+        forms.add(seg[:-1])
+    if seg.endswith("ing") and len(seg) > 4:      # weighting -> weight; implementing->implement
+        forms.add(seg[:-3])
+        forms.add(seg[:-3] + "e")                 # scoring -> score
+    return forms
+
+
 def _forbidden_key(key):
-    """(code, matched-segment) if any segment of `key` IS a forbidden word (across
-    `_`/`-`/space and camelCase boundaries), else (None, None)."""
+    """(code, matched-segment) if any segment of `key` — or a light inflection of it —
+    IS a forbidden base word (across `_`/`-`/space and camelCase boundaries), else
+    (None, None)."""
     for seg in _key_segments(key):
-        code = _FORBIDDEN_SEGMENTS.get(seg)
-        if code:
-            return code, seg
+        for form in _lemmas(seg):
+            code = _FORBIDDEN_SEGMENTS.get(form)
+            if code:
+                return code, seg
     return None, None
 
 # Referenced, never copied: the IR points into the corpus and must not become a
@@ -406,9 +427,41 @@ def bind_sources(corpus, ir):
     return out
 
 
+# The derived layer, matched anywhere in a normalized relative path. A source that
+# resolves through `_rnd/` is agent-authored output, never captured input.
+_RND_PATH_RE = re.compile(r"(?:^|/)%s(?:/|$)" % re.escape(RND_DIRNAME))
+
+
+def _manifest_witness(manifest):
+    """{source_id: {path, source_sha256, message_count}} from the LATEST revision of
+    each manifest source — the authoritative, swept, immutable record a compile's
+    sources must match. Read from the manifest, never from the IR."""
+    out = {}
+    for s in (manifest.get("sources") or []):
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("source_id", "")).strip()
+        revs = [r for r in (s.get("revisions") or []) if isinstance(r, dict)]
+        if not sid or not revs:
+            continue
+        last = revs[-1]
+        out[sid] = {
+            "path": str(last.get("path", "")).strip(),
+            "source_sha256": str(last.get("source_sha256", "")).strip().lower(),
+            "message_count": last.get("message_count"),
+        }
+    return out
+
+
 def project_review_queue_owner_answers(corpus, project):
-    """{RQ id: owner_answer text} for entries that carry the owner's exact words."""
+    """{RQ id: owner_answer text} for entries that carry the owner's exact words.
+
+    The caller validates `project` against PROJECT_RE first, so this path can only
+    ever resolve inside `_projects/<slug>/` — the IR cannot steer it elsewhere.
+    """
     answers = {}
+    if not PROJECT_RE.match(project or ""):
+        return answers
     path = Path(corpus) / "_projects" / project / "review-queue.md"
     if not path.exists():
         return answers
@@ -444,11 +497,11 @@ _MESSAGES = {
 }
 # A pure priority TOKEN encoded into a free-text list value — the tags-as-backlog
 # smell an independent review flagged. Kept narrow so a real tag like
-# "ranking-algorithms" is untouched: only a bare rank token (`P0`, `p3`) or a
-# `key:number` micro-record is refused as an ordering smuggled past the key guard.
+# "ranking-algorithms" or "24/7" is untouched: only a bare rank token (`P0`, `p3`),
+# a `key:number` micro-record, or a `#<n>` position is refused as an ordering
+# smuggled past the key guard. Ratios like `24/7` and `1/2` are NOT rank tokens.
 _PRIORITY_TOKEN_RE = re.compile(
-    r"^(?:p\d+|prio(?:rity)?\s*[:=-]?\s*\d+|rank\s*[:=-]?\s*\d+|"
-    r"#\d+|\d+/\d+)$", re.I)
+    r"^(?:p\d+|prio(?:rity)?\s*[:=-]?\s*\d+|rank\s*[:=-]?\s*\d+|#\d+)$", re.I)
 
 
 def scan_forbidden_keys(node, path, findings, compile_id, in_tags=False):
@@ -523,25 +576,44 @@ def validate_compile(corpus, compile_id):
             findings.append(Finding(cid, "RND_SOURCE_SET_INVALID",
                                     "%s carries no source_sha256 — an unbound "
                                     "source cannot witness anything" % sid))
+        # The derived layer is OUTPUT, never INPUT. A source path under `_rnd/` is
+        # an agent-writable file masquerading as captured evidence — an independent
+        # review minted a phantom owner turn exactly this way. The compile consumes
+        # only already-captured material, never its own products.
+        if not b.excluded and _RND_PATH_RE.search(b.rel.replace("\\", "/")):
+            findings.append(Finding(
+                cid, "RND_SOURCE_IN_DERIVED_LAYER",
+                "%s binds %r under the derived layer _rnd/ — the compile consumes "
+                "captured evidence, never its own output" % (sid, b.rel)))
+
     if str(src.get("kind", "")) == "project":
         project = str(src.get("project", "")).strip()
-        if not project:
-            findings.append(Finding(cid, "RND_SOURCE_SET_INVALID",
-                                    "project-bound source_set names no project"))
+        # The project is a corpus-relative SLUG, re-validated HERE (not only at init):
+        # an independent review read this raw field at validate time and traversed to
+        # an agent-writable review-queue (`../_rnd/…`) to launder an owner decision.
+        if not PROJECT_RE.match(project):
+            findings.append(Finding(
+                cid, "RND_SOURCE_SET_INVALID",
+                "project-bound source_set names %r, which is not a project slug — "
+                "the review queue and manifest are read from _projects/<slug>/, "
+                "never a path the IR can steer outside it" % project))
         else:
             rq_answers = project_review_queue_owner_answers(corpus, project)
             manifest, err = read_json(Path(corpus) / "_projects" / project
                                       / "project-manifest.json")
-            if err:
+            if err or not isinstance(manifest, dict):
+                # A project compile whose manifest cannot be read cannot witness its
+                # sources at all — unverifiable, not merely stale.
                 findings.append(Finding(cid, "RND_SOURCE_SET_INVALID",
-                                        "bound project %r: manifest %s"
-                                        % (project, err), level="WARN"))
-            elif isinstance(manifest, dict):
+                                        "bound project %r: manifest %s — sources "
+                                        "cannot be witnessed" % (project,
+                                                                 err or "invalid")))
+            else:
+                rev = manifest.get("inventory_revision")
+                sha = str(manifest.get("inventory_sha256", "")).strip()
                 # A proof is about the set that existed when it was measured: a
                 # project that has since grown makes the compile STALE (recompile
                 # against the new revision), never invalid.
-                rev = manifest.get("inventory_revision")
-                sha = str(manifest.get("inventory_sha256", "")).strip()
                 if (rev != src.get("inventory_revision")
                         or (sha and sha != str(src.get("inventory_sha256", "")).strip())):
                     findings.append(Finding(
@@ -550,6 +622,33 @@ def validate_compile(corpus, compile_id):
                         "compile describes the set it measured; recompile to "
                         "describe today's" % (src.get("inventory_revision"), rev),
                         level="WARN"))
+                # Every bound source must be WITNESSED by the manifest: same
+                # source_id, same path, same source_sha256, same message_count as a
+                # recorded revision. This is what makes a compile a reading of the
+                # SWEPT corpus and not of anything the agent could author. The count
+                # oracle now reads from the manifest — genuinely independent of the IR.
+                witness = _manifest_witness(manifest)
+                for sid, b in sources.items():
+                    if b.excluded:
+                        continue
+                    w = witness.get(sid)
+                    if w is None:
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_NOT_WITNESSED",
+                            "%s is not a source the project manifest witnesses — a "
+                            "compile reads only swept, captured conversations" % sid))
+                        continue
+                    if (b.rel != w["path"]
+                            or (b.recorded_sha and w["source_sha256"]
+                                and b.recorded_sha != w["source_sha256"])):
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_NOT_WITNESSED",
+                            "%s does not match its manifest revision (path/sha) — the "
+                            "bound bytes are not the witnessed capture" % sid))
+                    # Trust the manifest's recorded count, not the IR's self-report.
+                    if isinstance(w["message_count"], int):
+                        b.recorded_count = w["message_count"]
+
     for b in sources.values():
         b.verify(cid, findings)
 
@@ -1149,6 +1248,11 @@ def cmd_init(args):
             except ValueError:
                 print("FAIL: --source %s escapes the corpus root (%s) — a compile "
                       "binds only captured material under the corpus" % (rel, base))
+                return 1
+            if _RND_PATH_RE.search(str(rel_norm).replace("\\", "/")):
+                print("FAIL: --source %s is under the derived layer _rnd/ — the "
+                      "compile consumes captured evidence, never its own output"
+                      % rel)
                 return 1
             if not resolved.exists():
                 print("FAIL: explicit source %s does not exist under the corpus"

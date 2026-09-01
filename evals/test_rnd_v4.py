@@ -584,6 +584,30 @@ def scenario_e_no_priority_vocabulary(tmp):
     check("E11 a bare rank token in tags is refused",
           rc == 1 and expect_code(out, "RND_PRIORITIZATION_FORBIDDEN",
                                   "case-tag-token"), out)
+    # E12: plural/inflection forms of the forbidden words — the third review found a
+    # hardcoded-plural list missed these; segment lemmatization must catch them.
+    plural_cases = [("importances", "RND_PRIORITIZATION_FORBIDDEN"),
+                    ("urgencies", "RND_PRIORITIZATION_FORBIDDEN"),
+                    ("recencies", "RND_PRIORITIZATION_FORBIDDEN"),
+                    ("weightings", "RND_PRIORITIZATION_FORBIDDEN"),
+                    ("statuses", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+                    ("roadmaps", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+                    ("implementations", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+                    ("implementing", "RND_LIFECYCLE_FIELD_FORBIDDEN")]
+    for i, (key, code) in enumerate(plural_cases):
+        cid = "case-plural-%d" % i
+        install_compile(corpus, cid, mutate=lambda ir, k=key:
+                        ir["items"][1].__setitem__(k, "x"))
+        rc, out = run(corpus, "validate", "--compile", cid)
+        check("E12.%d plural/inflection %r is refused" % (i, key),
+              rc == 1 and expect_code(out, code, cid), out)
+    # E13: an innocent compound whose segment merely resembles a stem is allowed
+    install_compile(corpus, "case-legit-keys",
+                    mutate=lambda ir: ir["items"][1].__setitem__(
+                        "planning_notes", "commentary, not a plan field"))
+    rc, out = run(corpus, "validate", "--compile", "case-legit-keys")
+    check("E13 an innocent 'planning_notes' key is allowed (no false positive)",
+          rc == 0, out)
     # disposition is Recompile's, not Intake's
     install_compile(corpus, "case-disposition",
                     mutate=lambda ir: ir["items"][1].__setitem__(
@@ -1063,8 +1087,72 @@ def scenario_init_honesty(tmp):
           "gap absorbed")
 
 
+def scenario_validate_time_hardening(tmp):
+    """The third review's blocking findings: the IR's own fields (project, source
+    paths) must be re-verified at VALIDATE time against the witnessed manifest —
+    an agent that can write only _rnd/ must not be able to launder owner authority."""
+    corpus = mk_corpus(tmp)
+    install_compile(corpus, "control-ok")
+    rc, out = run(corpus, "validate", "--compile", "control-ok")
+    check("VH0 the honest project compile still validates", rc == 0, out)
+
+    # VH1: project field steered to a traversal path is refused at validate time
+    install_compile(corpus, "case-proj-traversal",
+                    mutate=lambda ir: ir["source_set"].__setitem__(
+                        "project", "../../evil-project"))
+    rc, out = run(corpus, "validate", "--compile", "case-proj-traversal")
+    check("VH1 a traversal in source_set.project is refused at validate",
+          rc == 1 and expect_code(out, "RND_SOURCE_SET_INVALID",
+                                  "case-proj-traversal"), out)
+    # VH2: project steered into the agent-writable derived layer is refused
+    install_compile(corpus, "case-proj-rnd",
+                    mutate=lambda ir: ir["source_set"].__setitem__(
+                        "project", "../_rnd/case-proj-rnd"))
+    rc, out = run(corpus, "validate", "--compile", "case-proj-rnd")
+    check("VH2 project pointing at _rnd/ is refused (not a slug)",
+          rc == 1 and expect_code(out, "RND_SOURCE_SET_INVALID",
+                                  "case-proj-rnd"), out)
+    # VH3: a source path under the derived layer is refused
+    def _rnd_source(ir):
+        ir["source_set"]["sources"][0]["path"] = "_rnd/case-rnd-src/self.md"
+    install_compile(corpus, "case-rnd-src", mutate=_rnd_source)
+    rc, out = run(corpus, "validate", "--compile", "case-rnd-src")
+    check("VH3 a source path under _rnd/ is refused",
+          rc == 1 and expect_code(out, "RND_SOURCE_IN_DERIVED_LAYER",
+                                  "case-rnd-src"), out)
+    # VH4: a source the manifest does not witness is refused
+    def _ghost(ir):
+        ir["source_set"]["sources"].append(
+            {"source_id": "CONV-GHOST", "revision": 1,
+             "path": "_projects/demo/sources/CONV-001/conversation.md",
+             "source_sha256": ir["source_set"]["sources"][0]["source_sha256"],
+             "message_count": 5})
+    install_compile(corpus, "case-ghost", mutate=_ghost)
+    rc, out = run(corpus, "validate", "--compile", "case-ghost")
+    check("VH4 a source not witnessed by the manifest is refused",
+          rc == 1 and expect_code(out, "RND_SOURCE_NOT_WITNESSED",
+                                  "case-ghost"), out)
+    # VH5: a witnessed source whose bound sha is swapped is refused
+    def _shaswap(ir):
+        ir["source_set"]["sources"][0]["source_sha256"] = "0" * 64
+    install_compile(corpus, "case-shaswap", mutate=_shaswap)
+    rc, out = run(corpus, "validate", "--compile", "case-shaswap")
+    check("VH5 a bound sha not matching the witnessed capture is refused",
+          rc == 1 and expect_code(out, "RND_SOURCE_NOT_WITNESSED",
+                                  "case-shaswap"), out)
+    # VH6: a project compile whose manifest is unreadable cannot witness — refused
+    def _badproj(ir):
+        ir["source_set"]["project"] = "nonexistent-project"
+    install_compile(corpus, "case-nomanifest", mutate=_badproj)
+    rc, out = run(corpus, "validate", "--compile", "case-nomanifest")
+    check("VH6 a project compile with no manifest is unverifiable, not merely stale",
+          rc == 1 and expect_code(out, "RND_SOURCE_SET_INVALID",
+                                  "case-nomanifest"), out)
+
+
 def main():
     scenarios = [
+        scenario_validate_time_hardening,
         scenario_a_seven_kinds_no_collapse,
         scenario_bc_owner_provenance,
         scenario_d_external_stays_evidence,
