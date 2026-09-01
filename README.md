@@ -12,7 +12,7 @@ och kör kod från terminalen. En **skill** är ett instruktionspaket i vanliga 
 som Claude Code läser in när en viss sorts uppgift dyker upp: en checklista och
 spelregler för just den uppgiften.
 
-Sedan v3.0 har skillen **två uttryckliga lägen** — aldrig gissade, alltid begärda:
+Sedan v4.0 har skillen **tre uttryckliga lägen** — aldrig gissade, alltid begärda:
 
 - **SINGLE** (standard): en brainstorm-chatt → den kontext en kodagent behöver för att
   implementera idén. Det är hela flödet nedan.
@@ -27,6 +27,22 @@ Sedan v3.0 har skillen **två uttryckliga lägen** — aldrig gissade, alltid be
   "komplett". Se Project sweep-avsnittet i SKILL.md samt
   `_projects/<projekt>/`-artefakterna (manifest, källor, granskningskö, oberoende
   svepaudit).
+- **RND_COMPILE** ("kör rnd compile", "kompilera R&D-korpusen"): redan infångat och
+  verifierat material — ett svept projektkorpus eller en uttrycklig källmängd — →
+  en **typad, härledd, återuppbyggbar** förståelse av vad materialet faktiskt
+  innehåller, plus dess negativa rymd (vad korpusen INTE täcker, i en tolvradig
+  diagnostisk täckningslins där en rad utan underlag är UNKNOWN — aldrig struken,
+  aldrig "löst"). Sju kärntyper: observation, ägarbeslut, härledd bedömning,
+  hypotes, krav, option, okänt — var och en med exakt proveniens in i källorna och
+  rollmedvetet ägarstöd: en assistent-tur som säger "Johnny bestämde X" kan aldrig
+  bli ett ägarbeslut. Det härledda lagret bär ingen exekveringsauktoritet, har inga
+  prioriteter, ingen livscykel och ingen disposition — intake är **aldrig en
+  backlog**: en option är inget åtagande, frekvens är inte viktighet, aktivering
+  hör till Executive Function och exekvering till Autonomy Kernel. Lagret kan
+  raderas och byggas om ur samma källmängd utan att en byte evidens går förlorad.
+  Se R&D compile-avsnittet i SKILL.md samt `_rnd/<compile>/`-artefakterna
+  (kanonisk `rnd-ir.json`, genererad `RND-COVERAGE.md`, append-only
+  `compile-audit.md`).
 
 ## Problemet
 
@@ -234,7 +250,8 @@ Svenska eller engelska fungerar.
 | [references/project-manifest-template.md](references/project-manifest-template.md) | Projektmanifestet: stabila källidentiteter, orörliga versioner, mekanisk täckning, ärlig enumerering |
 | [references/review-queue-template.md](references/review-queue-template.md) | Granskningskön: registrera → köa → fortsätt; ett capture-glapp kan aldrig gömmas här |
 | [references/sweep-audit-template.md](references/sweep-audit-template.md) | Svepauditen: oberoende falsifiering på projektnivå, append-only rundor |
-| [scripts/](scripts/) | Capture-, discovery- och verifieringsskripten samt de tre kontrakten: `plan_contract.py`, `context_contract.py`, `project_contract.py` |
+| [references/rnd-compile-template.md](references/rnd-compile-template.md) | R&D-kompileringen: typad IR (sju kärntyper), tolvradig täckningslins, kompileringsaudit, lagarna |
+| [scripts/](scripts/) | Capture-, discovery- och verifieringsskripten samt de fyra kontrakten: `plan_contract.py`, `context_contract.py`, `project_contract.py`, `rnd_contract.py` |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 
 ## Principerna bakom bygget

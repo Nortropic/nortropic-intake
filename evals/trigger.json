@@ -1,7 +1,7 @@
 {
   "purpose": "Regression test for the SKILL.md trigger description: these queries must (or must not) activate nortropic-intake.",
   "method": "Give a FRESH judge (subagent with no other context) ONLY the SKILL.md frontmatter description and the bare queries — never the expect labels. Ask for a trigger/no-trigger verdict per query, then diff verdicts against expect. Any mismatch is a failure; fix the description or the query set, never the judge.",
-  "pass_criterion": "20/20 verdicts match expect.",
+  "pass_criterion": "24/24 verdicts match expect.",
   "queries": [
     { "id": "t01", "query": "kör intake", "expect": "trigger" },
     { "id": "t02", "query": "arkivera vårt samtal", "expect": "trigger" },
@@ -22,6 +22,10 @@
     { "id": "t17", "query": "svep hela Improvements-projektet in i idébanken", "expect": "trigger" },
     { "id": "t18", "query": "kör project sweep på det här ChatGPT-projektet", "expect": "trigger" },
     { "id": "t19", "query": "lista alla konversationer i projektet så jag ser vad som finns", "expect": "no-trigger" },
-    { "id": "t20", "query": "vilka chattar i Improvements handlar om Gauntlet?", "expect": "no-trigger" }
+    { "id": "t20", "query": "vilka chattar i Improvements handlar om Gauntlet?", "expect": "no-trigger" },
+    { "id": "t21", "query": "kör rnd compile på Improvements-korpuset", "expect": "trigger" },
+    { "id": "t22", "query": "kompilera det svepta korpuset till typad förståelse och visa vad det inte täcker", "expect": "trigger" },
+    { "id": "t23", "query": "prioritera idéerna i idébanken och säg vad vi ska bygga härnäst", "expect": "no-trigger" },
+    { "id": "t24", "query": "sammanfatta vad Improvements-projektet innehåller i stora drag", "expect": "no-trigger" }
   ]
 }

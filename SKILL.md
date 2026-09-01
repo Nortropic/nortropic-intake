@@ -1,13 +1,13 @@
 ---
 name: nortropic-intake
-description: Load a brainstorm into Claude Code as the understanding and context of what Johnny intends to implement. Two explicit modes. SINGLE (default) captures one conversation — the active ChatGPT or Claude tab, this Claude conversation, or (in local Claude Code with Chrome) any chat by URL — with a host-aware, fail-closed extraction playbook, then distills it into a self-contained idea brief (decisions incl. rejected paths, EARS acceptance criteria, open questions) plus a design-rationale file preserving why the design took its shape (reasoning chains, rejections, trade-offs, role-aware message-level provenance), with the verbatim transcript kept as linked evidence; delivers all three as real .md files into the idea-corpus repo (idébanken) and, when implementing now, into the current working session so Claude Code can plan and build from them. PROJECT_SWEEP (explicit invocation only, never inferred) sweeps a WHOLE ChatGPT/Claude project or an explicit conversation list into a lossless, coverage-verified, normalized R&D corpus — stable source identities, immutable per-conversation raw, mechanically provable coverage, a review queue for ambiguities, an independent sweep audit — without interviewing the owner or opening plan mode. The skill writes files and an index row but never commits or pushes. Use whenever Johnny asks to harvest, load or bring a brainstorm or chat into Claude Code, "harvest this URL", "arkivera vart samtal", "kor intake", "spara/lägg idén i idébanken" / park an idea for later, give Claude Code the context for an idea, turn a discussion into an implementation brief, or — for the sweep — "svep projektet", "kör project sweep", "sweep the whole project into the idea bank", "harvest all conversations in this project" — Swedish or English, even if unnamed. Do NOT use merely to discuss or summarize a chat, to edit an existing brief, or to list a project's conversations without archiving them.
+description: Load a brainstorm into Claude Code as the understanding and context of what Johnny intends to implement. Three explicit modes. SINGLE (default) captures one conversation — the active ChatGPT or Claude tab, this Claude conversation, or (in local Claude Code with Chrome) any chat by URL — with a host-aware, fail-closed extraction playbook, then distills it into a self-contained idea brief (decisions incl. rejected paths, EARS acceptance criteria, open questions) plus a design-rationale file preserving why the design took its shape (reasoning chains, rejections, trade-offs, role-aware message-level provenance), with the verbatim transcript kept as linked evidence; delivers all three as real .md files into the idea-corpus repo (idébanken) and, when implementing now, into the current working session so Claude Code can plan and build from them. PROJECT_SWEEP (explicit invocation only, never inferred) sweeps a WHOLE ChatGPT/Claude project or an explicit conversation list into a lossless, coverage-verified, normalized R&D corpus — stable source identities, immutable per-conversation raw, mechanically provable coverage, a review queue for ambiguities, an independent sweep audit — without interviewing the owner or opening plan mode. RND_COMPILE (explicit invocation only, never inferred) turns ALREADY-captured material — a swept project corpus or an explicit source set — into a typed, derived, rebuildable R&D understanding (observations, owner decisions, hypotheses, requirements, options, unknowns, each with exact provenance) plus a 12-lens coverage/negative-space read; it captures nothing new, never interviews, never plans, never prioritizes, never touches idea statuses — an option-space compiler, never a backlog. The skill writes files and an index row but never commits or pushes. Use whenever Johnny asks to harvest, load or bring a brainstorm or chat into Claude Code, "harvest this URL", "arkivera vart samtal", "kor intake", "spara/lägg idén i idébanken" / park an idea for later, give Claude Code the context for an idea, turn a discussion into an implementation brief, or — for the sweep — "svep projektet", "kör project sweep", "sweep the whole project into the idea bank", "harvest all conversations in this project" — or, for the compile — "kör rnd compile", "kompilera R&D-korpusen", "compile the swept corpus into typed understanding", "visa vad korpusen täcker och inte täcker" / show the corpus's negative space — Swedish or English, even if unnamed. Do NOT use merely to discuss or summarize a chat, to edit an existing brief, to list a project's conversations without archiving them, or to prioritize/rank ideas or decide what Nortropic should build next — activation belongs to Executive Function, never to Intake.
 ---
 
 # Nortropic intake: brainstorm → understanding for Claude Code
 
-## Two modes — explicit, never inferred
+## Three modes — explicit, never inferred
 
-Since v3.0 this skill has exactly two jobs, and the mode is always explicit:
+Since v4.0 this skill has exactly three jobs, and the mode is always explicit:
 
 - **SINGLE** (the default, and everything below until the Project sweep section):
   one conversation/brainstorm → one trustworthy implementation-understanding
@@ -19,9 +19,17 @@ Since v3.0 this skill has exactly two jobs, and the mode is always explicit:
   2.5 interview per historical chat, no Plan Mode, no approvals; ambiguities are
   recorded, queued and the sweep continues, while capture integrity and source
   coverage fail closed.
+- **RND_COMPILE** (see the R&D compile section): ALREADY-captured material — a
+  swept project corpus, or an explicit source set — → a typed, derived, rebuildable
+  understanding of what the material actually contains, plus its negative space.
+  A reading, not a runtime: it captures no new authority, asks no IMPLEMENTERA NU,
+  opens no Plan Mode, approves no plans, moves no idea status, prioritizes nothing,
+  creates no work. It expands Nortropic's OPTION SPACE; it never decides what
+  Nortropic does now.
 
 The mode is chosen by what Johnny asked for — "kör intake <url>" is SINGLE, "svep
-projektet" / "kör project sweep" is PROJECT_SWEEP — and NEVER by heuristics: a URL
+projektet" / "kör project sweep" is PROJECT_SWEEP, "kör rnd compile" / "kompilera
+korpusen" is RND_COMPILE — and NEVER by heuristics: a URL
 that happens to be a project page does not switch modes by itself; when the request
 is genuinely ambiguous, ask. A sweep produces ordinary idea packages at
 `status: idea`; pulling one to build later is the normal SINGLE implement-now flow.
@@ -1052,7 +1060,13 @@ graph database.
                          report --project P [--write] | validate [--project P …]
                          finalize --project P        # honest terminal state, never a hidden gap
 
-All three accept `--corpus PATH` before or after the subcommand, and fall back to
+    rnd_contract.py      init --compile C (--project P | --source PATH …) [--title T] [--at D]
+                         validate [--compile C] | coverage --compile C
+                         render --compile C [--write] | audit --compile C | status --compile C
+                         # reads the corpus, writes ONLY _rnd/<compile>/ — no plan,
+                         # approval, pointer or lifecycle command exists here
+
+All four accept `--corpus PATH` before or after the subcommand, and fall back to
 `$NORTROPIC_INTAKE_CORPUS`, then `~/nortropic/innovation-intake`. `hash F` gives the FILE
 sha (what `--candidate-sha` takes); `hash F --body` gives the content identity.
 
@@ -1191,6 +1205,210 @@ Interrupted? `status --project P` names exactly what remains, from the manifest 
 real production project without a separate explicit owner instruction, and the tools
 write files only: committing the swept corpus is the owner's step, exactly as in
 SINGLE mode.
+
+## R&D compile (RND_COMPILE) — typed understanding of a captured corpus
+
+**Explicit invocation only** ("kör rnd compile", "kompilera R&D-korpusen", "compile
+the swept corpus"), never inferred. The job:
+
+    VERIFIED CAPTURED EVIDENCE → TYPED UNDERSTANDING → RECOMPILABLE R&D CORPUS
+      → CROSS-CORPUS RECOMPILE LATER (not this mode, not this skill)
+
+Where SINGLE turns one brainstorm into one buildable understanding and PROJECT_SWEEP
+turns a whole project into trustworthy evidence, RND_COMPILE reads what has ALREADY
+been captured and verified and derives what it actually contains — including what it
+does **not** contain. It consumes a PROJECT_SWEEP corpus or an explicit source set;
+it captures nothing new, and external text gains no authority by being compiled any
+more than by being swept.
+
+**The standing laws of this mode** — load-bearing, each with a mechanical anchor in
+`scripts/rnd_contract.py` and the v4 eval suite:
+
+    RAW EVIDENCE SURVIVES SYNTHESIS.        EVIDENCE ≠ AUTHORITY.
+    INTAKE ≠ BACKLOG.                       OPTION ≠ COMMITMENT.
+    INNOVATION ≠ WORK.                      FREQUENCY ≠ IMPORTANCE.
+    RECENCY ≠ CORRECTNESS.                  ATTENTION ≠ STRATEGY.
+    DEFERRED ≠ FORGOTTEN.                   SILENCE = UNKNOWN.
+    CURRENT VERIFIED REALITY OUTRANKS COMPILED MEMORY.
+    ACTIVATION BELONGS TO EXECUTIVE FUNCTION.
+    EXECUTION BELONGS TO THE AUTONOMY KERNEL.
+
+A compile may expand Nortropic's OPTION SPACE. It may never decide which work
+Nortropic does now: no IMPLEMENTERA NU question, no Plan Mode, no approved plans, no
+idea-status transitions, no prioritization, no tasks/missions, no interviews. The
+tool surface makes that structural — `rnd_contract.py` reads the corpus and writes
+ONLY `_rnd/<compile>/`; commands for plans, approvals, pointers and lifecycle do not
+exist there, and the v4 suite proves a compile leaves every idea package, approved
+plan and INDEX row byte-identical.
+
+**The artifacts** (see `references/rnd-compile-template.md` for the full IR shape):
+
+    _rnd/<compile>/rnd-ir.json        derived R&D IR — CANONICAL
+    _rnd/<compile>/RND-COVERAGE.md    stamped, deterministic RENDERING of the IR
+    _rnd/<compile>/compile-audit.md   independent falsification, append-only
+
+One canonical derived file, one generated rendering (the PROJECT.md pattern —
+`RND_RENDER_STALE` when it drifts), one audit. Nothing else: no per-item files, no
+second index, no summary document. The derived layer is **deletable by design** —
+removing `_rnd/<compile>/` destroys derived work only, because evidence never lives
+there, and `validate` re-proves on every run that the bound sources still hash to
+the identities the compile was derived from (`RND_SOURCE_HASH_MISMATCH`). Deriving
+the IR is judgement work; everything mechanical about it — binding, provenance
+resolution, role checks, vocabulary, coverage, rendering — is validated fail-closed.
+
+**The evidence base is anchored to the git witness, and validate says where it
+stands.** A project compile binds each source to the swept manifest (source id +
+path + the manifest's recorded whole-file `sha256`), never to the IR's self-report,
+and reads owner_answers only from `_projects/<slug>/` — a `project` field that tries
+to steer to an agent-writable location fails as `RND_SOURCE_SET_INVALID`, and a
+source under the derived layer `_rnd/` fails as `RND_SOURCE_IN_DERIVED_LAYER`. But a
+review-queue or a source file is still bytes an editing agent could author in the
+working tree, so the evidence base is anchored to git — the one record outside that
+control, exactly as every other immutability guarantee in this skill: `validate`
+prints `RND_IMMUTABILITY_WITNESS=PRESENT|PARTIAL|ABSENT`, refuses a committed file
+changed afterwards (`RND_EVIDENCE_MUTATED`), and reports
+`RND_EVIDENCE_BASE_UNWITNESSED` (a WARN, never a block — an uncommitted corpus is a
+legitimate fresh run) until the owner commits the corpus. Owner authority asserted
+over an uncommitted base is labelled asserted, never silently treated as witnessed.
+
+**The core ontology is small and closed: seven kinds.**
+
+    OBSERVATION · OWNER_DECISION · DERIVED_JUDGMENT · HYPOTHESIS · REQUIREMENT ·
+    OPTION · UNKNOWN
+
+Failure modes, operating laws, candidate primitives, patterns and external analogies
+are tags/relations/properties on these — never new first-class kinds
+(`RND_KIND_INVALID`). The ontology expands only when an adversarial eval demonstrates
+the small set loses a material semantic distinction. Every item carries a stable
+`RND-NNN` id, its kind, a concise claim, a scope, exact provenance into the bound
+source set (source + message range, resolved against the recorded revision bytes),
+an authority/epistemic class, relations, **explicit uncertainty**, and — only when
+the source actually motivates one — an `activation_condition`. An activation
+condition is INFORMATION: it activates no task, no plan, no status transition, no
+IMPLEMENT_NOW routing, ever.
+
+**OWNER_DECISION comes only from real owner provenance** — the same role-aware,
+fail-closed mechanism as SINGLE mode: at least one cited turn must resolve, through
+the transcript's own headers, to a voice the OWNER spoke (or an owner-answered
+review-queue entry). Assistant-only backing is refused
+(`RND_OWNER_DECISION_ASSISTANT_ONLY`) — an assistant saying *"Johnny decided X"* is
+a proposal; unprovable roles are refused toward the weaker kind
+(`RND_OWNER_DECISION_ROLE_UNPROVEN`), and external-source-only material can never be
+laundered into owner authority (`RND_AUTHORITY_LAUNDERING`). Newer evidence never
+silently overwrites an older explicit owner decision: superseding an OWNER_DECISION
+takes another OWNER_DECISION with owner provenance
+(`RND_DECISION_SUPERSEDED_WITHOUT_OWNER`); disagreement is a `contradicts` relation
+and both items survive — RECENCY ≠ CORRECTNESS.
+
+**No priority machinery exists to launder.** The IR refuses `priority`,
+`importance`, `rank`, `weight`, `urgency`, `frequency` and every `*_score` anywhere
+in the file (`RND_PRIORITIZATION_FORBIDDEN`, `RND_SCORE_FORBIDDEN`) — an idea
+mentioned twenty times is one item with twenty provenance entries, never a heavier
+one — and refuses `status`, `task`, `plan`, `disposition`
+(`RND_LIFECYCLE_FIELD_FORBIDDEN`, `RND_DISPOSITION_FORBIDDEN`): KEEP / ADAPT /
+MERGE / SIMPLIFY / EXPERIMENT / DEFER / REJECT / NEEDS_EVIDENCE /
+ALREADY_IMPLEMENTED are **Recompile's** verdicts, made later against fresh repo
+reality — never Intake's. What Intake MAY preserve is the owner's explicit
+reject/defer as an OWNER_DECISION with provenance: a fact about the past, not a
+disposition of the future.
+
+**Negative space is first-class.** Every compile answers a baseline coverage lens of
+twelve rows — truth/trust, professional excellence, organization, executive
+function, continuity/operate-forever, identity/data/economics, learning/evolution,
+R&D/intake, assurance/red-team, lovability/product-experience, reality/dogfood,
+explicit unknowns/deferred — each in exactly one state:
+
+    WELL_EXPLORED | PARTIALLY_EXPLORED | NEEDS_RESEARCH | NEEDS_REALITY |
+    OWNER_DECISION | INTENTIONALLY_DEFERRED | UNKNOWN
+
+A lens with no evidence is `UNKNOWN` with an empty basis — the row is never omitted
+(`RND_COVERAGE_LENS_MISSING`) and UNKNOWN never counts as resolved; a claimed state
+cites the items it rests on (`RND_COVERAGE_UNEVIDENCED`), and OWNER_DECISION /
+INTENTIONALLY_DEFERRED states need an OWNER_DECISION item in the basis — deferral is
+an owner act, DEFERRED ≠ FORGOTTEN. The baseline is a floor and explicitly a
+**diagnostic lens, never an exhaustive ontology of Nortropic**: extra lenses may
+join it, and no model may call a corpus complete because it failed to imagine the
+missing category. The cross-cutting review lenses — Mission Command, VSM,
+Hoshin/catchball, Theory of Constraints, Cynefin, HRO, SRE, FinOps, Deming/PDSA,
+Lovable/Linear, middle-out/narrow-waist — and the lovability/desirability signals
+(time-to-magic, stuckness, bypass pressure, complexity leakage, calm operation,
+clarity, craft, "every interruption earns its interruption") are diagnostic
+questions for coverage notes and audit rounds: evidence, analogies and review
+lenses, never architecture authority through Intake, never automatic build
+requirements, and never reduced to a single score. The middle-out compression lens
+is recorded in `references/rnd-compile-template.md` and applies to the compile
+itself: prefer expressive compression over ontological expansion; internal
+complexity is acceptable — leaked complexity is a defect.
+
+**Current reality is pointed at, never cached as truth.** An item may carry a dated
+`reality_pointer` (`RND_REALITY_POINTER_UNDATED` without `observed_at`); the tools
+print `REALITY_POINTERS_REQUIRE_FRESH_READ=YES` on every run, and the later
+Recompile reads the target repositories fresh:
+
+    CURRENT VERIFIED REPO REALITY  >  COMPILED R&D MEMORY
+
+**Existing idea packages are historical sources, not backlog rows.** The
+innovation-intake corpus is full of briefs at `status: idea`. A historic
+`status: idea` records that an idea was captured — it is NOT an organisational
+commitment, not a backlog priority, and a compile never reinterprets it as one. No
+legacy migration happens for v4's sake: packages keep working, keep their statuses,
+and when a real implementation is later activated the road is the ordinary SINGLE
+implement-now lane from the stored brief — never from the IR.
+
+**The independent compile audit** (`compile-audit.md`) follows the sweep-audit
+discipline: a fresh, isolated reviewer gets the bound source set and the IR and
+tries to FALSIFY the compile — backlog laundering, authority laundering, owner-
+provenance laundering, frequency/recency bias, omitted or overstated negative space,
+ontology expansion, a derived layer acting as second truth, a compile that entered
+planning, a mixed corpus collapsed into "one buildable idea". Rounds are appended,
+never edited, each bound to the `ir_sha256` it audited; no round closes its own
+finding; only an owner-answered review-queue entry naming a finding dismisses it; an
+unremediated material finding keeps `RND_COMPILE_AUDITED=NO`.
+
+**The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
+
+    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D]
+                     validate [--compile C]      # falsify one compile, or all
+                     coverage --compile C        # lens table + standing laws
+                     render --compile C [--write]  # deterministic RND-COVERAGE.md
+                     audit --compile C | status --compile C
+
+`init` binds the compile to the source set as it exists — for a project, the
+manifest's `inventory_revision`/`inventory_sha256` and every source's recorded
+revision identity; uncaptured sources are recorded as excluded, visible, never
+absorbed. A project that grows afterwards makes the compile honestly STALE
+(`RND_SOURCE_SET_STALE`, a warning to recompile), never silently wrong — a proof is
+about the set that existed when it was measured.
+
+RND_COMPILE checklist (replaces the SINGLE checklist; the sweep checklist never
+runs inside a compile):
+
+```
+[ ] RC0. Mode confirmed EXPLICITLY (compile asked for by name); source set named:
+         a swept project or an explicit source list — already-captured material
+         only, never a live capture
+[ ] RC1. init bound the compile to the source set as measured (project inventory
+         revision + per-source revision identities, or explicit digests);
+         excluded/uncaptured sources visible in the IR, never absorbed
+[ ] RC2. Items derived into rnd-ir.json: seven kinds only; every item has claim,
+         scope, explicit uncertainty, exact provenance (source + message range);
+         OWNER_DECISION only where an owner voice or owner-answered RQ backs it;
+         contradictions recorded as relations, both sides preserved; activation
+         conditions recorded as information where the source motivates them
+[ ] RC3. Coverage lens complete: all twelve baseline rows, UNKNOWN where evidence
+         is absent, owner-backed states carry OWNER_DECISION basis; extra lenses
+         welcome, omissions impossible
+[ ] RC4. validate --compile PASSES; render --write produced RND-COVERAGE.md and a
+         re-run reproduces it byte-identically
+[ ] RC5. Independent compile audit (fresh isolated reviewer, bound to the current
+         ir_sha256) appended to compile-audit.md; material findings remediated by
+         later rounds or owner-dismissed via an owner-answered RQ;
+         RND_COMPILE_AUDITED=YES
+[ ] RC6. Deliver: paths + a short Swedish summary of what the corpus contains AND
+         what it does not (the UNKNOWN/NEEDS_* rows read out loud). No commit, no
+         push. No idea package, plan, status or INDEX row was touched — state it.
+         Recompile, prioritization and activation are explicitly NOT started here.
+```
 
 ## Execution checklist
 
@@ -1391,13 +1609,26 @@ inside a sweep):
   review queue, sweep audit, generated PROJECT.md); idea packages produced by a sweep
   are ordinary packages under `<slug>/` in the corpus root, indistinguishable from
   SINGLE-mode ones except for their episode provenance.
+- R&D-compile artifacts live under `_rnd/<compile>/` (canonical `rnd-ir.json`,
+  generated `RND-COVERAGE.md`, append-only `compile-audit.md`). The derived layer
+  carries no execution authority, holds no lifecycle, no priorities and no
+  dispositions, is bound to the exact source set it was derived from, and can be
+  deleted and rebuilt without touching one byte of evidence. INTAKE ≠ BACKLOG: a
+  historic `status: idea` in the corpus records a captured idea, never an
+  organisational commitment or a backlog priority — and no artifact of this skill
+  may reinterpret it as one.
 - Repeatable evals live in `evals/` (trigger queries, golden capture signature,
   brief rubric, rationale rubric, contract lint, approved-plan falsification suite,
   context suites, the v3 suite `test_project_v3.py` covering role-aware provenance,
   approval strength, the project contract, source identity vs builder metadata and
   enumeration evidence, plus two v3.1 suites: `test_transport_v31.py` for bounded
   digest-verified transport and the trust boundary, and `test_discovery_v31.mjs`,
-  which runs the SHIPPED browser adapters under node against a fake platform) — run
+  which runs the SHIPPED browser adapters under node against a fake platform, and
+  the v4 suite `test_rnd_v4.py`, which drives `rnd_contract.py` against synthetic
+  corpora and covers the RND_COMPILE eval classes A–P: no backlog collapse, no
+  authority/owner-provenance laundering, no frequency/recency bias, mandatory
+  negative space, closed ontology, deletable/rebuildable derived layer, information-
+  only activation conditions, and mode separation from SINGLE/PROJECT_SWEEP) — run
   them after any change to this skill; see `evals/README.md`.
 
 ## Architecture freeze — read this before changing the skill

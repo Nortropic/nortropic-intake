@@ -54,6 +54,9 @@ jobs:
       - name: v3.1 discovery suite (cursor pagination against the real shipped adapter)
         run: node evals/test_discovery_v31.mjs
 
+      - name: v4 RND_COMPILE suite (typed IR, coverage lens, laundering refusals)
+        run: python3 evals/test_rnd_v4.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e
@@ -91,9 +94,10 @@ jobs:
           }
           guard plan_contract    test_plan_contract test_context_v2 test_context_v21 test_project_v3
           guard context_contract test_plan_contract test_context_v2 test_context_v21 test_project_v3
-          guard intake_common    test_plan_contract test_context_v2 test_context_v21 test_project_v3
+          guard intake_common    test_plan_contract test_context_v2 test_context_v21 test_project_v3 test_rnd_v4
           guard project_contract test_project_v3
           guard reassemble_verify test_transport_v31
+          guard rnd_contract     test_rnd_v4
           cp /tmp/real/*.py scripts/
           # The discovery suite runs the SHIPPED adapter, so its mutation is that file.
           # The v3 suite depends on it too: its enumeration-evidence fixtures are the
