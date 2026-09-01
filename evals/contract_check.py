@@ -420,18 +420,21 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
-        "NORTROPIC_INTAKE_VERSION=v3.1.1",
+        "NORTROPIC_INTAKE_VERSION=v4.0",
         "ARCHITECTURE_STATE=FROZEN",
         "FREEZE_DATE=2026-09-01",
-        "SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f",
-        "SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca",
+        "SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c",
+        "SKILL_TREE=15161f4765beb3eb0e78f1be84773fc5dcb01178",
         "CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003",
         "CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9",
-        "REOPENED_FROM=v3.1 (frozen 2026-09-01; reopened same day by observed failure",
-        "point fix,\n              not architecture change)",
-        "v3.1.1** is the one-line point fix",
-        # v3.1, v3.0 and v2.1 frozen identities stay recorded as lineage — history is
-        # never dropped.
+        "REOPENED_FROM=v3.1.1 (frozen 2026-09-01; reopened same day by OWNER "
+        "ARCHITECTURE\n              CHANGE",
+        "not an observed defect, and no v3/v3.1/v3.1.1 property weakened)",
+        "**v4.0 adds a\nthird explicit mode, RND_COMPILE**",
+        # v3.1.1, v3.1, v3.0 and v2.1 frozen identities stay recorded as lineage —
+        # history is never dropped.
+        "v3.1.1 SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f",
+        "SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca  (frozen 2026-09-01)",
         "v3.1  SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab",
         "SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c  (frozen 2026-09-01)",
         "v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50",
@@ -449,7 +452,8 @@ CHECKS = [
     ("SKILL.md", "Z2 the reopen policy is exactly the owner's four conditions", [
         "REOPEN_POLICY=observed failure | material new capability | owner architecture "
         "change | demonstrated security/trust defect RELOAD_NOT_REMEMBER=YES",
-        "Nice ideas are not a reason to\nreopen it; a demonstrated defect is"]),
+        "Nice ideas are not a\nreason to reopen it; a demonstrated defect — or an "
+        "explicit owner\narchitecture change — is"]),
     ("SKILL.md", "Z3 the two standing principles are recorded", [
         "RELOAD_NOT_REMEMBER=YES", "CHATGPT_REQUIRED_AFTER_HANDOFF=NO",
         "**The standing principle is RELOAD, NOT REMEMBER.**",
@@ -473,9 +477,9 @@ CHECKS = [
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "The current SKILL identities are the **frozen architecture**, not this "
         "file's current\ncommit",
-        "`SKILL_MAIN` is the v3.1.1 point-fix merge on `main` (PR #6)",
+        "`SKILL_MAIN` is the v4.0 implementation merge on `main` (PR #7)",
         "Recording\ninvented SHAs would have been a forged freeze",
-        "v3.1 mutated no corpus content",
+        "v4 mutated no corpus content",
         "read the tree, not the branch head",
         "history is never dropped"]),
     ("SKILL.md", "Z8 v3.0 records its own new residual risks honestly", [
