@@ -265,9 +265,33 @@ part of the honest record (an independent review pressed on exactly these):
   documented residual the single-mode capture carries; the source-set hash binds the
   bytes, and the audit reads the words.
 
+- **The git witness is the trust root, and validate says where it stands.** Owner
+  provenance in a compile is mechanically checked (role-aware message backing, or a
+  substantial quote from a review-queue owner_answer) AND bound to the swept
+  manifest (source id + path + the manifest's recorded whole-file `sha256`). But a
+  review-queue or a source file is still bytes an editing agent could author in the
+  working tree — the same write access PROJECT_SWEEP itself uses. So the evidence
+  base is anchored to git, the one record outside that control: `validate` prints
+  `RND_IMMUTABILITY_WITNESS=PRESENT|PARTIAL|ABSENT`, refuses a committed file
+  changed afterwards (`RND_EVIDENCE_MUTATED`), and — until the corpus is committed —
+  reports `RND_EVIDENCE_BASE_UNWITNESSED` (WARN) rather than pretending asserted
+  owner authority is witnessed. An uncommitted corpus is a legitimate fresh run
+  (blocking one would make a first compile impossible), exactly as SINGLE/
+  PROJECT_SWEEP treat their own `immutability witness ABSENT`. Committing the swept
+  corpus is what turns the owner-provenance claims from asserted into witnessed —
+  and it is the owner's step, not this skill's.
+- **The explicit source set is the weaker trust mode, and it is labelled so.** An
+  `explicit` compile has no project manifest to witness its sources against — it
+  binds whatever captured files it is pointed at (never under `_rnd/`, never outside
+  the corpus). It still gets role-aware owner backing and the git witness, but not
+  the manifest cross-check a project compile gets. Prefer a project-bound compile
+  whenever the material was swept; reach for an explicit set only for genuinely
+  ad-hoc captured material, and read the witness line accordingly.
+
 These are the same shape as the frozen skill's accepted residual risks: mechanical
-where a machine can be trusted, independent-audit where judgement is required, and
-never a false claim that structure proves semantics.
+where a machine can be trusted, git-witnessed where an agent's own bytes cannot be
+trusted, independent-audit where judgement is required, and never a false claim that
+structure proves semantics.
 
 ## What RND_COMPILE never does
 

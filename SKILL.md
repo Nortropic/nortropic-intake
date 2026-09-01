@@ -1256,6 +1256,21 @@ the identities the compile was derived from (`RND_SOURCE_HASH_MISMATCH`). Derivi
 the IR is judgement work; everything mechanical about it — binding, provenance
 resolution, role checks, vocabulary, coverage, rendering — is validated fail-closed.
 
+**The evidence base is anchored to the git witness, and validate says where it
+stands.** A project compile binds each source to the swept manifest (source id +
+path + the manifest's recorded whole-file `sha256`), never to the IR's self-report,
+and reads owner_answers only from `_projects/<slug>/` — a `project` field that tries
+to steer to an agent-writable location fails as `RND_SOURCE_SET_INVALID`, and a
+source under the derived layer `_rnd/` fails as `RND_SOURCE_IN_DERIVED_LAYER`. But a
+review-queue or a source file is still bytes an editing agent could author in the
+working tree, so the evidence base is anchored to git — the one record outside that
+control, exactly as every other immutability guarantee in this skill: `validate`
+prints `RND_IMMUTABILITY_WITNESS=PRESENT|PARTIAL|ABSENT`, refuses a committed file
+changed afterwards (`RND_EVIDENCE_MUTATED`), and reports
+`RND_EVIDENCE_BASE_UNWITNESSED` (a WARN, never a block — an uncommitted corpus is a
+legitimate fresh run) until the owner commits the corpus. Owner authority asserted
+over an uncommitted base is labelled asserted, never silently treated as witnessed.
+
 **The core ontology is small and closed: seven kinds.**
 
     OBSERVATION · OWNER_DECISION · DERIVED_JUDGMENT · HYPOTHESIS · REQUIREMENT ·

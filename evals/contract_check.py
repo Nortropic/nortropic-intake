@@ -758,6 +758,15 @@ CHECKS = [
         "The owner gate resolves roles only from block-opening headers",
         "closes header text pasted into a message body",
         "a conversation whose subject matter *is* this transcript format"]),
+    ("references/rnd-compile-template.md",
+     "RD18 the git witness is the trust root and validate reports it", [
+        "The git witness is the trust root",
+        "bound to the swept\n  manifest (source id + path + the manifest's recorded "
+        "whole-file `sha256`)",
+        "RND_IMMUTABILITY_WITNESS=PRESENT|PARTIAL|ABSENT",
+        "RND_EVIDENCE_MUTATED",
+        "RND_EVIDENCE_BASE_UNWITNESSED",
+        "The explicit source set is the weaker trust mode, and it is labelled so"]),
 ]
 
 

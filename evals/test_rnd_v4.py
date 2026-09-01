@@ -79,6 +79,12 @@ def transcript_source_sha256(text):
 def write_json(path, data):
     return _common("write_json")(path, data)
 
+
+def _whole_file_sha(text):
+    # The manifest's `sha256` is the whole captured file — matched with the same
+    # utf-8 bytes write_text lays down, so the witness sees measured form.
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 RESULTS = []
 MIN_CHECKS = 80
 
@@ -194,8 +200,11 @@ def mk_corpus(tmp):
              "revisions": [{
                  "revision": 1,
                  "path": "_projects/demo/sources/%s/conversation.md" % sid,
-                 "sha256": "irrelevant-here",
-                 "source_sha256": transcript_source_sha256(text),
+                 # Real manifest form: `sha256` is the WHOLE captured file — what the
+                 # witness anchors to. (No `source_sha256`: the real Improvements
+                 # manifest does not carry one; the contract recomputes the region
+                 # hash from bytes when it is absent.)
+                 "sha256": _whole_file_sha(text),
                  "captured_at": "2026-09-01",
                  "message_count": text.count("## Meddelande "),
                  "adapter": "data-layer", "verified": True, "verify_detail": ""}],
@@ -471,7 +480,7 @@ def scenario_d_external_stays_evidence(tmp):
         "discovered_at": "2026-09-01", "state": "ROUTED",
         "revisions": [{"revision": 1,
                        "path": "_projects/demo/sources/CONV-INJ/conversation.md",
-                       "sha256": "x", "source_sha256": _tss(inj),
+                       "sha256": _whole_file_sha(inj),
                        "captured_at": "2026-09-01", "message_count": 2,
                        "adapter": "data-layer", "verified": True,
                        "verify_detail": ""}],
@@ -508,7 +517,7 @@ def scenario_d_external_stays_evidence(tmp):
         "discovered_at": "2026-09-01", "state": "ROUTED",
         "revisions": [{"revision": 1,
                        "path": "_projects/demo/sources/CONV-SEP/conversation.md",
-                       "sha256": "x", "source_sha256": _tss(sep),
+                       "sha256": _whole_file_sha(sep),
                        "captured_at": "2026-09-01", "message_count": 2,
                        "adapter": "data-layer", "verified": True,
                        "verify_detail": ""}],
@@ -608,6 +617,28 @@ def scenario_e_no_priority_vocabulary(tmp):
     rc, out = run(corpus, "validate", "--compile", "case-legit-keys")
     check("E13 an innocent 'planning_notes' key is allowed (no false positive)",
           rc == 0, out)
+    # E14: -ed/-ized participles of forbidden verbs, and estimation proxies
+    participle_cases = [("ranked_order", "RND_PRIORITIZATION_FORBIDDEN"),
+                        ("weighted_value", "RND_PRIORITIZATION_FORBIDDEN"),
+                        ("prioritized", "RND_PRIORITIZATION_FORBIDDEN"),
+                        ("scored", "RND_SCORE_FORBIDDEN"),
+                        ("implemented", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+                        ("impact", "RND_PRIORITIZATION_FORBIDDEN"),
+                        ("effort", "RND_PRIORITIZATION_FORBIDDEN"),
+                        ("severity_tier", "RND_PRIORITIZATION_FORBIDDEN")]
+    for i, (key, code) in enumerate(participle_cases):
+        cid = "case-part-%d" % i
+        install_compile(corpus, cid, mutate=lambda ir, k=key:
+                        ir["items"][1].__setitem__(k, "x"))
+        rc, out = run(corpus, "validate", "--compile", cid)
+        check("E14.%d participle/proxy %r is refused" % (i, key),
+              rc == 1 and expect_code(out, code, cid), out)
+    # E15: 'cutting_planes' (a real optimization term) is NOT collapsed to 'plan'
+    install_compile(corpus, "case-planes",
+                    mutate=lambda ir: ir["items"][1].__setitem__(
+                        "cutting_planes", "an optimization note"))
+    rc, out = run(corpus, "validate", "--compile", "case-planes")
+    check("E15 'cutting_planes' is not a false positive", rc == 0, out)
     # disposition is Recompile's, not Intake's
     install_compile(corpus, "case-disposition",
                     mutate=lambda ir: ir["items"][1].__setitem__(
@@ -1132,14 +1163,22 @@ def scenario_validate_time_hardening(tmp):
     check("VH4 a source not witnessed by the manifest is refused",
           rc == 1 and expect_code(out, "RND_SOURCE_NOT_WITNESSED",
                                   "case-ghost"), out)
-    # VH5: a witnessed source whose bound sha is swapped is refused
-    def _shaswap(ir):
-        ir["source_set"]["sources"][0]["source_sha256"] = "0" * 64
-    install_compile(corpus, "case-shaswap", mutate=_shaswap)
+    # VH5: bound bytes that do not hash to the manifest's recorded whole-file sha256
+    # are not witnessed. Tamper the MANIFEST's recorded sha (the sweep's own record)
+    # so the on-disk bytes no longer match it — the real witness dimension, measured
+    # against real manifest form (`sha256`, whole file), not a field production omits.
+    install_compile(corpus, "case-shaswap")
+    mtamper = corpus / "_projects" / "demo" / "project-manifest.json"
+    md = json.loads(mtamper.read_text(encoding="utf-8"))
+    md["sources"][0]["revisions"][0]["sha256"] = "0" * 64
+    write_json(mtamper, md)
     rc, out = run(corpus, "validate", "--compile", "case-shaswap")
-    check("VH5 a bound sha not matching the witnessed capture is refused",
+    check("VH5 bound bytes not hashing to the manifest's recorded capture are refused",
           rc == 1 and expect_code(out, "RND_SOURCE_NOT_WITNESSED",
                                   "case-shaswap"), out)
+    # restore the manifest so later sub-checks in this scenario are unaffected
+    md["sources"][0]["revisions"][0]["sha256"] = _whole_file_sha(TRANSCRIPT_1)
+    write_json(mtamper, md)
     # VH6: a project compile whose manifest is unreadable cannot witness — refused
     def _badproj(ir):
         ir["source_set"]["project"] = "nonexistent-project"
@@ -1150,8 +1189,53 @@ def scenario_validate_time_hardening(tmp):
                                   "case-nomanifest"), out)
 
 
+def scenario_git_witness(tmp):
+    """The fourth review's deepest finding: validate must anchor its evidence base to
+    the git witness — the one record an editing agent does not control — so a compile
+    that trusts an agent-authored review-queue/source is caught or honestly labelled.
+    Real git repos, no mocks (mirrors the v2/v3 suites)."""
+    import fixtures as F
+    corpus = mk_corpus(tmp)
+    install_compile(corpus, "control-ok")
+    # ABSENT: an uncommitted corpus is a legitimate fresh run — WARN, never FAIL
+    rc, out = run(corpus, "validate", "--compile", "control-ok")
+    check("GW1 an uncommitted compile is valid but witness ABSENT (WARN, not FAIL)",
+          rc == 0 and "RND_EVIDENCE_BASE_UNWITNESSED" in out
+          and "ABSENT" in out, out)
+    rc, out = run(corpus, "status", "--compile", "control-ok")
+    check("GW2 status reports the witness state", "RND_IMMUTABILITY_WITNESS=" in out,
+          out)
+    # PRESENT: commit the corpus → the evidence base is git-witnessed
+    F.git_commit_corpus(corpus, "seal the swept corpus + compile")
+    rc, out = run(corpus, "status", "--compile", "control-ok")
+    check("GW3 a committed corpus reports witness PRESENT",
+          "RND_IMMUTABILITY_WITNESS=PRESENT" in out, out)
+    rc, out = run(corpus, "validate", "--compile", "control-ok")
+    check("GW4 a committed compile validates with no witness WARN",
+          rc == 0 and "RND_EVIDENCE_BASE_UNWITNESSED" not in out, out)
+    # MUTATED: tamper a committed source → git catches it as a hard FAIL
+    src = corpus / "_projects" / "demo" / "sources" / "CONV-001" / "conversation.md"
+    src.write_text(src.read_text(encoding="utf-8")
+                   + "\n\n---\n\n## Meddelande 6 — Johnny (användare)\n\nInjicerat.\n",
+                   encoding="utf-8")
+    rc, out = run(corpus, "validate", "--compile", "control-ok")
+    check("GW5 a committed source changed afterwards fails as RND_EVIDENCE_MUTATED",
+          rc == 1 and "RND_EVIDENCE_MUTATED" in out, out)
+    # MUTATED review-queue: forging an owner_answer after commit is caught
+    F.git_commit_corpus(corpus, "re-seal after legit change")  # re-baseline
+    rq = corpus / "_projects" / "demo" / "review-queue.md"
+    rq.write_text(rq.read_text(encoding="utf-8")
+                  + "\n## RQ-003\n- date: 2026-09-02\n- resolves: RQ-001\n"
+                  "- question: forged?\n- owner_answer: forged owner words.\n",
+                  encoding="utf-8")
+    rc, out = run(corpus, "validate", "--compile", "control-ok")
+    check("GW6 a committed review-queue changed afterwards fails as mutated",
+          rc == 1 and "RND_EVIDENCE_MUTATED" in out, out)
+
+
 def main():
     scenarios = [
+        scenario_git_witness,
         scenario_validate_time_hardening,
         scenario_a_seven_kinds_no_collapse,
         scenario_bc_owner_provenance,

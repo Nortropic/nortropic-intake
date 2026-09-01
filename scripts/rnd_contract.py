@@ -37,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
-    Finding, corpus_root, fails, git_head_blob,
+    Finding, corpus_root, fails, git_head_blob, git_immutability,
     read_json, report, sha256_file, sha256_text, transcript_source_region,
     transcript_source_sha256, write_json, ROLE_ASSISTANT, ROLE_OWNER,
     ROLE_UNKNOWN, TRANSCRIPT_HEADER_RE,
@@ -107,6 +107,13 @@ for _word, _code in (
     ("prioritization", "RND_PRIORITIZATION_FORBIDDEN"),
     ("prioritisation", "RND_PRIORITIZATION_FORBIDDEN"),
     ("importance", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("prioritize", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("prioritise", "RND_PRIORITIZATION_FORBIDDEN"),
+    # common estimation/scoring proxies an independent review flagged as bypasses
+    ("impact", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("effort", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("severity", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("tier", "RND_PRIORITIZATION_FORBIDDEN"),
     ("rank", "RND_PRIORITIZATION_FORBIDDEN"),
     ("ranks", "RND_PRIORITIZATION_FORBIDDEN"),
     ("ranking", "RND_PRIORITIZATION_FORBIDDEN"),
@@ -155,22 +162,38 @@ def _key_segments(key):
     return [seg for seg in _SEGMENT_SPLIT_RE.split(s.lower()) if seg]
 
 
+_SIBILANT_END_RE = re.compile(r"(?:s|x|z|ch|sh)$")
+
+
 def _lemmas(seg):
     """The segment plus its light inflectional variants, so the forbidden set can be
-    the BASE words and still catch plurals/gerunds — an independent review showed a
-    hardcoded plural list missed `importances`, `urgencies`, `statuses`, `weightings`,
-    `implementing`, `recencies`. Cheap, deterministic, no NLP: strip the common
-    English suffixes and add the base back."""
+    the BASE words and still catch plurals/gerunds/participles. Two independent
+    reviews shaped this: the first found a hardcoded plural list missed `importances`/
+    `statuses`/`weightings`; the second found `-ed`/`-ized` participles (`ranked`,
+    `weighted`, `prioritized`) slipped through and that a blunt `-es` strip collapsed
+    `planes`->`plan`. Cheap, deterministic, no NLP: strip common English suffixes,
+    guarding `-es` to sibilant stems so `planes`/`cutting_planes` are left alone."""
     forms = {seg}
     if seg.endswith("ies") and len(seg) > 4:      # priorities -> priority
         forms.add(seg[:-3] + "y")
-    if seg.endswith("es") and len(seg) > 3:       # statuses -> status; urgencies->urgenci (ignored)
-        forms.add(seg[:-2])
-    if seg.endswith("s") and len(seg) > 2:        # ranks -> rank; importances->importance
+    if seg.endswith("es") and len(seg) > 3:       # statuses -> status (sibilant only)
+        base = seg[:-2]
+        if _SIBILANT_END_RE.search(base):
+            forms.add(base)
+    if seg.endswith("s") and len(seg) > 2:        # ranks -> rank; planes -> plane
         forms.add(seg[:-1])
-    if seg.endswith("ing") and len(seg) > 4:      # weighting -> weight; implementing->implement
+    if seg.endswith("ing") and len(seg) > 5:      # weighting -> weight; scoring -> score
         forms.add(seg[:-3])
-        forms.add(seg[:-3] + "e")                 # scoring -> score
+        forms.add(seg[:-3] + "e")
+    if seg.endswith("ed") and len(seg) > 4:       # ranked -> rank; scored -> score
+        forms.add(seg[:-2])
+        forms.add(seg[:-1])
+    if seg.endswith("ized") and len(seg) > 6:     # prioritized -> prioritize
+        forms.add(seg[:-1])
+        forms.add(seg[:-4])
+    if seg.endswith("ised") and len(seg) > 6:     # prioritised -> prioritise
+        forms.add(seg[:-1])
+        forms.add(seg[:-4])
     return forms
 
 
@@ -433,9 +456,16 @@ _RND_PATH_RE = re.compile(r"(?:^|/)%s(?:/|$)" % re.escape(RND_DIRNAME))
 
 
 def _manifest_witness(manifest):
-    """{source_id: {path, source_sha256, message_count}} from the LATEST revision of
-    each manifest source — the authoritative, swept, immutable record a compile's
-    sources must match. Read from the manifest, never from the IR."""
+    """{source_id: {path, sha256, message_count}} from the LATEST revision of each
+    manifest source — the authoritative, swept record a compile's sources must match.
+
+    The anchor is the manifest's `sha256` (the WHOLE captured file), which every real
+    manifest revision carries and the sweep computed at capture. An independent review
+    caught an earlier version reading a `source_sha256` field the real manifests do
+    not write, and comparing incompatible hash types — so the sha dimension silently
+    never fired. `sha256_file(bound path)` is compared to THIS value, which binds the
+    bound bytes to the sweep's own record rather than to the IR's self-report.
+    """
     out = {}
     for s in (manifest.get("sources") or []):
         if not isinstance(s, dict):
@@ -447,7 +477,7 @@ def _manifest_witness(manifest):
         last = revs[-1]
         out[sid] = {
             "path": str(last.get("path", "")).strip(),
-            "source_sha256": str(last.get("source_sha256", "")).strip().lower(),
+            "sha256": str(last.get("sha256", "")).strip().lower(),
             "message_count": last.get("message_count"),
         }
     return out
@@ -526,6 +556,62 @@ def scan_forbidden_keys(node, path, findings, compile_id, in_tags=False):
             compile_id, "RND_PRIORITIZATION_FORBIDDEN",
             "%s: tag %r is a bare rank token — a de-facto ordering encoded in a "
             "free-text field is still a backlog" % (path, node.strip())))
+
+
+# --------------------------------------------------------------- git witness --
+
+def _report_git_witness(corpus, src, sources, findings, cid):
+    """Anchor the compile's evidence base to git — the one witness an editing agent
+    does not control — and return ABSENT | PARTIAL | PRESENT.
+
+    The evidence base is: every bound source file, plus (project mode) the manifest
+    and the review-queue that owner_answers are read from. A file committed and then
+    changed is tampering (FAIL). A file never committed contributes to a PARTIAL/
+    ABSENT witness — a legitimate fresh run, reported not blocked, exactly as
+    SINGLE/PROJECT_SWEEP report `immutability witness ABSENT|PARTIAL|PRESENT`.
+    Owner authority asserted over an unwitnessed evidence base is honestly labelled
+    as such: RND_OWNER_PROVENANCE_UNWITNESSED (WARN), because bytes an agent can
+    still author are not yet the committed swept record.
+    """
+    corpus = Path(corpus)
+    rels = []
+    for b in sources.values():
+        if not b.excluded and b.rel:
+            rels.append(b.rel)
+    project = str(src.get("project", "")).strip() if isinstance(src, dict) else ""
+    if src.get("kind") == "project" and PROJECT_RE.match(project or ""):
+        rels.append("_projects/%s/project-manifest.json" % project)
+        rq = corpus / "_projects" / project / "review-queue.md"
+        if rq.exists():
+            rels.append("_projects/%s/review-queue.md" % project)
+    committed = tracked = 0
+    for rel in rels:
+        state, detail = git_immutability(corpus, rel, corpus / rel)
+        if state == "MUTATED":
+            findings.append(Finding(
+                cid, "RND_EVIDENCE_MUTATED",
+                "%s differs from its committed version — the git witness caught a "
+                "post-commit change to the compile's evidence base" % rel))
+            tracked += 1
+        elif state == "UNCHANGED":
+            committed += 1
+            tracked += 1
+        # UNTRACKED: not yet committed — counts toward a non-PRESENT witness
+    if not rels:
+        return "ABSENT"
+    if committed == len(rels):
+        return "PRESENT"
+    state = "PARTIAL" if tracked else "ABSENT"
+    # The evidence base is not fully git-witnessed; say so once, plainly — never
+    # silently treat asserted owner authority as witnessed. Any OWNER_DECISION in
+    # this compile rests on bytes an agent could still author until commit.
+    findings.append(Finding(
+        cid, "RND_EVIDENCE_BASE_UNWITNESSED",
+        "the evidence base is git-witnessed %s (%d/%d committed) — any owner "
+        "provenance rests on bytes an agent could still author until the corpus is "
+        "committed; commit it to witness the compile" % (state, committed, len(rels)),
+        level="WARN"))
+    return state
 
 
 # ------------------------------------------------------------- validation ---
@@ -623,10 +709,10 @@ def validate_compile(corpus, compile_id):
                         "describe today's" % (src.get("inventory_revision"), rev),
                         level="WARN"))
                 # Every bound source must be WITNESSED by the manifest: same
-                # source_id, same path, same source_sha256, same message_count as a
-                # recorded revision. This is what makes a compile a reading of the
-                # SWEPT corpus and not of anything the agent could author. The count
-                # oracle now reads from the manifest — genuinely independent of the IR.
+                # source_id, same path, and the bound bytes' WHOLE-FILE sha256 equal
+                # to the manifest's recorded `sha256` for that revision. This binds
+                # the bound bytes to the sweep's own record, not to the IR's
+                # self-report. The count oracle likewise reads from the manifest.
                 witness = _manifest_witness(manifest)
                 for sid, b in sources.items():
                     if b.excluded:
@@ -638,19 +724,33 @@ def validate_compile(corpus, compile_id):
                             "%s is not a source the project manifest witnesses — a "
                             "compile reads only swept, captured conversations" % sid))
                         continue
-                    if (b.rel != w["path"]
-                            or (b.recorded_sha and w["source_sha256"]
-                                and b.recorded_sha != w["source_sha256"])):
+                    if b.rel != w["path"]:
                         findings.append(Finding(
                             cid, "RND_SOURCE_NOT_WITNESSED",
-                            "%s does not match its manifest revision (path/sha) — the "
-                            "bound bytes are not the witnessed capture" % sid))
+                            "%s: bound path %r is not the manifest revision path %r"
+                            % (sid, b.rel, w["path"])))
+                    elif w["sha256"] and b.path.exists() and \
+                            sha256_file(b.path) != w["sha256"]:
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_NOT_WITNESSED",
+                            "%s: bound bytes do not hash to the manifest's recorded "
+                            "capture (sha256) — not the witnessed conversation" % sid))
                     # Trust the manifest's recorded count, not the IR's self-report.
                     if isinstance(w["message_count"], int):
                         b.recorded_count = w["message_count"]
 
     for b in sources.values():
         b.verify(cid, findings)
+
+    # --- git witness: the one record an editing agent does not control -----
+    # Every immutability guarantee in this skill anchors to git, because a hash a
+    # file records about itself proves only self-consistency. An independent review
+    # showed a compile's owner provenance could be forged by an agent that authored
+    # the review-queue or a source in the working tree — the same write access the
+    # sweep uses. So validate reports the witness state and refuses post-commit
+    # tampering, exactly as SINGLE/PROJECT_SWEEP do; an uncommitted corpus is a
+    # legitimate fresh run, reported (not blocked) as ABSENT/PARTIAL.
+    witness_state = _report_git_witness(corpus, src, sources, findings, cid)
 
     # --- items ----------------------------------------------------------
     items = ir.get("items")
@@ -956,6 +1056,8 @@ def validate_compile(corpus, compile_id):
         "coverage_rows": len(seen_lenses),
         "sources": len([b for b in sources.values() if not b.excluded]),
         "excluded_sources": len([b for b in sources.values() if b.excluded]),
+        "git_witness": witness_state,
+        "source_set_kind": str(src.get("kind", "")).strip() or "?",
     }
     return findings, summary
 
@@ -1331,6 +1433,7 @@ def cmd_coverage(args):
     print(render_coverage(corpus, args.compile, ir))
     if summary:
         print("EXCLUDED_SOURCES=%d" % summary["excluded_sources"])
+        print("RND_IMMUTABILITY_WITNESS=%s" % summary.get("git_witness", "?"))
     hard = fails(vfind)
     print("RND_COMPILE_VALID=%s" % ("YES" if not hard else "NO"))
     if hard:
@@ -1389,6 +1492,9 @@ def cmd_status(args):
               % summary["activation_conditions"])
         print("REALITY_POINTERS=%d (fresh-at-recompile required)"
               % summary["reality_pointers"])
+    if summary:
+        print("RND_IMMUTABILITY_WITNESS=%s (evidence base git-anchored; ABSENT/"
+              "PARTIAL = uncommitted fresh run)" % summary.get("git_witness", "?"))
     print("RND_COMPILE_VALID=%s" % ("YES" if not fails(vfind) else "NO"))
     print("RND_COMPILE_AUDITED=%s" % ("YES" if meta.get("audited") else "NO"))
     for standing in STANDING_LINES:
