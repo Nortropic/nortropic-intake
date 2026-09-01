@@ -420,20 +420,20 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
-        "NORTROPIC_INTAKE_VERSION=v3.1",
+        "NORTROPIC_INTAKE_VERSION=v3.1.1",
         "ARCHITECTURE_STATE=FROZEN",
         "FREEZE_DATE=2026-09-01",
-        "SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab",
-        "SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c",
+        "SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f",
+        "SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca",
         "CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003",
         "CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9",
-        "REOPENED_FROM=v3.0 (frozen 2026-08-30; reopened 2026-08-31 by observed "
-        "failure +",
-        "proving-run hardening, not architecture change)",
-        "v3.1 is hardening inside the frozen v3.0 architecture: no v3-era contract "
-        "was weakened, no mode semantics changed",
-        # v3.0 and v2.1 frozen identities stay recorded as lineage — history is never
-        # dropped.
+        "REOPENED_FROM=v3.1 (frozen 2026-09-01; reopened same day by observed failure",
+        "point fix,\n              not architecture change)",
+        "v3.1.1** is the one-line point fix",
+        # v3.1, v3.0 and v2.1 frozen identities stay recorded as lineage — history is
+        # never dropped.
+        "v3.1  SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab",
+        "SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c  (frozen 2026-09-01)",
         "v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50",
         "SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711  (frozen 2026-08-30)",
         "v2.1  SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e",
@@ -473,6 +473,7 @@ CHECKS = [
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "The current SKILL identities are the **frozen architecture**, not this "
         "file's current\ncommit",
+        "`SKILL_MAIN` is the v3.1.1 point-fix merge on `main` (PR #6)",
         "Recording\ninvented SHAs would have been a forged freeze",
         "v3.1 mutated no corpus content",
         "read the tree, not the branch head",

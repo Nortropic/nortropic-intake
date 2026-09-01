@@ -1402,8 +1402,8 @@ inside a sweep):
 
 ## Architecture freeze — read this before changing the skill
 
-The architecture is owner-authorized and **frozen** at v3.1. Nice ideas are not a reason
-to reopen it; a demonstrated defect is.
+The architecture is owner-authorized and **frozen** at v3.1.1. Nice ideas are not a
+reason to reopen it; a demonstrated defect is.
 
 **Lineage, recorded honestly.** v2.1 was frozen 2026-08-26
 (`SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e`,
@@ -1433,23 +1433,39 @@ now bounded and digest-verified, and the sandbox boundary is classified honestly
 runtime-owned (Intake bounds only what it controls); (D) a missed clipboard click let a
 stale equal-length export pass as a verified capture — the transport digest is now
 mandatory. Eight independent adversarial reviews gated the work; the eighth returned
-READY with zero blocking findings. The reopen was authority, not drift.
+READY with zero blocking findings.
+
+v3.1 was frozen 2026-09-01 and then the post-freeze live enumeration smoke test ran the
+shipped discovery adapter against the real *Improvements* project for the first time —
+the fixtures had only ever used slug-less synthetic project ids. It found a real defect:
+a ChatGPT project URL is `/g/g-p-<32 hex>-<title-slug>/project`, the listing endpoint
+keys on the stable hex id and 404s on the slug-bearing form, and the adapter passed the
+whole slug id through (404 on every real project, and — had it resolved — would have
+flagged every real member as foreign, since each item's own `gizmo_id` is the hex). It
+failed closed, so nothing wrong was produced, but it could never verify a real project.
+**v3.1.1** is the one-line point fix: the adapter derives the stable hex id (mirroring
+`project_contract.stable_project_id`) for both the endpoint and the foreign check, and a
+new regression (A13) reproduces the real slug-bearing shape. Reopened same day under
+`observed failure`; no v3 contract weakened. The reopen was authority, not drift.
 
 ```
-NORTROPIC_INTAKE_VERSION=v3.1
+NORTROPIC_INTAKE_VERSION=v3.1.1
 ARCHITECTURE_STATE=FROZEN
 FREEZE_DATE=2026-09-01
-REOPENED_FROM=v3.0 (frozen 2026-08-30; reopened 2026-08-31 by observed failure +
-              demonstrated security/trust defect — proving-run hardening, not
-              architecture change)
+REOPENED_FROM=v3.1 (frozen 2026-09-01; reopened same day by observed failure — the
+              v3.1 live enumeration smoke test found the discovery adapter passed the
+              URL title-slug to the endpoint instead of the stable hex id; point fix,
+              not architecture change)
 
-SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab
-SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c
+SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f
+SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca
 
 CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003
 CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9
 
 LINEAGE:
+  v3.1  SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab
+        SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c  (frozen 2026-09-01)
   v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50
         SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711  (frozen 2026-08-30)
   v2.1  SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e
@@ -1465,7 +1481,7 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v3.1 implementation merge on `main` (PR #5) and `SKILL_TREE`
+commit: `SKILL_MAIN` is the v3.1.1 point-fix merge on `main` (PR #6) and `SKILL_TREE`
 its tree, and recording the freeze necessarily moves `main` past them by one
 documentation-only commit — this one — that changed no runtime behaviour. Recording
 invented SHAs would have been a forged freeze. The corpus identities are the published
