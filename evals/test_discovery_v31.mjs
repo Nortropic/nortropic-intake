@@ -24,7 +24,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'scripts/project_discovery.js'), 'ut
 const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 
 // A suite that exits 0 having run nothing reports success it did not earn.
-const MIN_CHECKS = 28;
+const MIN_CHECKS = 32;
 const RESULTS = [];
 function check(name, cond, detail = '') {
   RESULTS.push([name, !!cond]);
@@ -209,6 +209,43 @@ await scenario('A10', async () => {
   check('A10b and never the v3.0 account listing with a gizmo_id query filter',
         !/^\/backend-api\/conversations\b/.test(r.endpoint || '') &&
         !/[?&]gizmo_id=/.test(r.endpoint || ''), r.endpoint);
+});
+
+// ---- A13: a REAL project URL carries a title slug; the endpoint keys on the hex ----
+// The live v3.1 smoke test found this: every ChatGPT project URL is
+// `/g/g-p-<32 hex>-<title-slug>/project`, the listing endpoint 404s on the slug-bearing
+// id and serves only the hex, and each item's own `gizmo_id` is the hex. The earlier
+// fixtures all used slug-less synthetic ids (`g-p-improvements0000`), so the adapter's
+// slug-stripping was never exercised — and the shipped adapter passed the slug straight
+// through, 404ing on every real project and (had it resolved) flagging all 27 members
+// as foreign. This scenario is that real shape.
+await scenario('A13', async () => {
+  const HEX = 'g-p-6a86d9dcb8488191b03ee843bb19eb6c';
+  const SLUGURL = {hostname: 'chatgpt.com', pathname: `/g/${HEX}-improvements/project`};
+  const members = Array.from({length: 27}, (_, i) =>
+    conv(`m-${i + 1}`, 't', {gizmo_id: HEX}));      // items carry the HEX, as the platform does
+  let hitEndpoint = null;
+  const platform = (url) => {
+    hitEndpoint = url.split('?')[0];
+    // The real platform: 404 on the slug-bearing id, serve only the hex.
+    if (url.startsWith(`/backend-api/gizmos/${HEX}/conversations`))
+      return J({items: members, cursor: null});
+    return {ok: false, status: 404, json: async () => ({detail: 'not found'})};
+  };
+  const r = await discover(platform, {loc: SLUGURL});
+  check('A13a the endpoint is built from the STABLE hex id, not the URL slug',
+        r.endpoint === `/backend-api/gizmos/${HEX}/conversations`
+        && hitEndpoint === `/backend-api/gizmos/${HEX}/conversations`,
+        `endpoint=${r.endpoint} hit=${hitEndpoint}`);
+  check('A13b projectId is the stable hex and the raw slug id is recorded alongside it',
+        r.projectId === HEX && r.rawUrlId === `${HEX}-improvements`,
+        `${r.projectId} / ${r.rawUrlId}`);
+  check('A13c an item whose gizmo_id is the hex is a MEMBER, not foreign — the check '
+        + 'compares stable ids on both sides',
+        r.membership.foreign_items.length === 0, JSON.stringify(r.membership));
+  check('A13d the enumeration verifies: 27 members, cursor exhausted, no foreign',
+        r.collected === 27 && r.exhaustion.proven === true && r.verifiable === true,
+        `collected=${r.collected} proven=${r.exhaustion.proven} verifiable=${r.verifiable}`);
 });
 
 // ---- A11: extract.js — the digest finding D's fix depends on ---------------

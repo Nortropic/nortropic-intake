@@ -20,6 +20,10 @@
 // platform demonstrated it will silently drop the filter. Where items carry their own
 // project id, that is checked too and any foreign item is a hard refusal.
 //
+// The id from the URL is `g-p-<32 hex>-<title-slug>`; the endpoint and the items' own
+// `gizmo_id` both key on the STABLE hex prefix, so the slug is stripped before either
+// is used (the v3.1 live smoke test found this — fixtures used slug-less ids).
+//
 // The contract (SKILL.md, Phase P1): an enumeration is either PROVABLY exhaustive or
 // it is declared UNVERIFIED — "DO NOT FAKE IT". Concretely:
 //   - `verifiable:true` (membership scoped AND exhaustion proved) is the ONLY output
@@ -42,9 +46,18 @@ await (async function(){
     return JSON.stringify({error:'no project-discovery adapter for '+host+
       ' — use an owner-declared inventory (fail closed; do not fake enumeration)'});
 
-  const projectId=(location.pathname.match(/\/g\/(g-p-[A-Za-z0-9-]+)/)||[])[1]||window.__nxProjectId;
-  if(!projectId) return JSON.stringify({error:'no project id in URL — open the project '+
+  const rawId=(location.pathname.match(/\/g\/(g-p-[A-Za-z0-9-]+)/)||[])[1]||window.__nxProjectId;
+  if(!rawId) return JSON.stringify({error:'no project id in URL — open the project '+
     'page (or set window.__nxProjectId), or fall back to a declared inventory'});
+  // A ChatGPT project id is `g-p-<32 hex>-<title-slug>`; the title slug follows the
+  // project NAME and is not part of identity. The listing endpoint keys on the stable
+  // hex id and 404s on the slug-bearing form, and each item's own `gizmo_id` is the
+  // hex too — so BOTH the endpoint and the foreign-item check must use the stable id
+  // (mirrors project_contract.stable_project_id). This was found by the v3.1 live
+  // smoke test: fixtures used slug-less synthetic ids and never exercised it.
+  const stableId=id=>{const m=String(id||'').match(/^(g-p-[0-9a-f]{16,})/i);
+                      return m?m[1].toLowerCase():String(id||'').toLowerCase();};
+  const projectId=stableId(rawId);
 
   let sess; try{ sess=await (await fetch('/api/auth/session',{credentials:'include'})).json(); }
   catch(e){ return JSON.stringify({error:'session fetch failed: '+e}); }
@@ -83,7 +96,7 @@ await (async function(){
       // hands back someone else's conversation is exactly the v3.0 defect, and it can
       // never be repaired by filtering here — it invalidates the whole enumeration.
       const owner=it.gizmo_id||it.conversation_origin||(it.gizmo&&it.gizmo.id)||null;
-      if(owner&&String(owner)!==String(projectId)) foreign.push(String(it.id));
+      if(owner&&stableId(owner)!==projectId) foreign.push(String(it.id));
       items.push({url:'https://chatgpt.com/c/'+it.id, key:'chatgpt.com/'+it.id,
                   title:String(it.title||'').slice(0,140), updated:it.update_time||null});
     }
@@ -123,7 +136,7 @@ await (async function(){
 
   const verifiable=exhausted&&!foreign.length;
   return JSON.stringify({
-    source:'project-discovery-cursor', projectId, endpoint:base,
+    source:'project-discovery-cursor', projectId, rawUrlId:rawId, endpoint:base,
     membership:{scope:'path-scoped-project-endpoint',
                 established_by:'project id in the request PATH',
                 foreign_items:foreign},
