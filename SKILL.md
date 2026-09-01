@@ -1633,8 +1633,9 @@ inside a sweep):
 
 ## Architecture freeze — read this before changing the skill
 
-The architecture is owner-authorized and **frozen** at v3.1.1. Nice ideas are not a
-reason to reopen it; a demonstrated defect is.
+The architecture is owner-authorized and **frozen** at v4.0. Nice ideas are not a
+reason to reopen it; a demonstrated defect — or an explicit owner architecture
+change — is.
 
 **Lineage, recorded honestly.** v2.1 was frozen 2026-08-26
 (`SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e`,
@@ -1679,22 +1680,47 @@ failed closed, so nothing wrong was produced, but it could never verify a real p
 new regression (A13) reproduces the real slug-bearing shape. Reopened same day under
 `observed failure`; no v3 contract weakened. The reopen was authority, not drift.
 
+v3.1.1 was frozen 2026-09-01 and then the owner reopened it — the same day, under the
+`owner architecture change` condition, **not** an observed defect — to generalize
+Intake so it can carry Nortropic's Post-Bootstrap Recompile/R&D corpus. **v4.0 adds a
+third explicit mode, RND_COMPILE**: it consumes ALREADY-captured material (a
+PROJECT_SWEEP corpus or an explicit source set) and derives a typed, rebuildable R&D
+IR — seven closed kinds (OBSERVATION · OWNER_DECISION · DERIVED_JUDGMENT · HYPOTHESIS ·
+REQUIREMENT · OPTION · UNKNOWN), each with exact provenance and role-aware owner
+backing — plus a twelve-lens negative-space coverage read and an independent compile
+audit, in a derived layer (`_rnd/<compile>/`) that carries no execution authority and
+can be deleted and rebuilt without losing evidence. INTAKE ≠ BACKLOG is the load-
+bearing law: no priorities, no lifecycle, no dispositions, no activation — a compile
+expands the OPTION SPACE and never decides what Nortropic does now. **SINGLE and
+PROJECT_SWEEP are preserved unchanged**; no v3/v3.1/v3.1.1 trust, capture, provenance,
+source-identity, plan or PROJECT_SWEEP property was weakened — the whole v3.1.1
+regression stayed green (670 checks) beside the new v4 suite. The build was hardened
+across five independent adversarial review rounds, each of which found real bypasses
+(vocabulary evasion, header-injection owner laundering, RQ blank-cheque, path
+traversal, a no-op manifest witness, an un-git-anchored evidence base) that were closed
+and re-verified with the reviewers' own probes; the fifth returned READY / CONVERGED,
+and the change was proven against the real *Improvements* corpus (typed understanding,
+visible negative space, owner-vs-assistant provenance held, rebuildable derived output,
+zero corpus mutations). The reopen was authority, not drift.
+
 ```
-NORTROPIC_INTAKE_VERSION=v3.1.1
+NORTROPIC_INTAKE_VERSION=v4.0
 ARCHITECTURE_STATE=FROZEN
 FREEZE_DATE=2026-09-01
-REOPENED_FROM=v3.1 (frozen 2026-09-01; reopened same day by observed failure — the
-              v3.1 live enumeration smoke test found the discovery adapter passed the
-              URL title-slug to the endpoint instead of the stable hex id; point fix,
-              not architecture change)
+REOPENED_FROM=v3.1.1 (frozen 2026-09-01; reopened same day by OWNER ARCHITECTURE
+              CHANGE — the owner ordered a third explicit mode, RND_COMPILE,
+              generalizing Intake to carry a Post-Bootstrap Recompile/R&D corpus;
+              not an observed defect, and no v3/v3.1/v3.1.1 property weakened)
 
-SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f
-SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca
+SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c
+SKILL_TREE=15161f4765beb3eb0e78f1be84773fc5dcb01178
 
 CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003
 CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9
 
 LINEAGE:
+  v3.1.1 SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f
+         SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca  (frozen 2026-09-01)
   v3.1  SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab
         SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c  (frozen 2026-09-01)
   v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50
@@ -1712,14 +1738,15 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v3.1.1 point-fix merge on `main` (PR #6) and `SKILL_TREE`
+commit: `SKILL_MAIN` is the v4.0 implementation merge on `main` (PR #7) and `SKILL_TREE`
 its tree, and recording the freeze necessarily moves `main` past them by one
-documentation-only commit — this one — that changed no runtime behaviour. Recording
+documentation-only commit — this one — that changes no runtime behaviour. Recording
 invented SHAs would have been a forged freeze. The corpus identities are the published
-Improvements proving-run state, unchanged: **v3.1 mutated no corpus content** — the
-skill still never commits or pushes the corpus, and the incremental validation below is
-read/verify/no-op. If you need the exact frozen bytes, read the tree, not the branch
-head. The v3.0 and v2.1 identities stay recorded as lineage — history is never dropped.
+Improvements proving-run state, unchanged: **v4 mutated no corpus content** — the skill
+still never commits or pushes the corpus, and the v4 proving run wrote only to a
+read-only temp copy (zero mutations to `innovation-intake` and to `nortropic-system`).
+If you need the exact frozen bytes, read the tree, not the branch head. The v3.1.1,
+v3.1, v3.0 and v2.1 identities stay recorded as lineage — history is never dropped.
 
 **The standing principle is RELOAD, NOT REMEMBER.** A conversation is working memory.
 Durable files, git, hashes and provenance are long-term context. After handoff, Claude
