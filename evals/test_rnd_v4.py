@@ -1187,6 +1187,22 @@ def scenario_validate_time_hardening(tmp):
     check("VH6 a project compile with no manifest is unverifiable, not merely stale",
           rc == 1 and expect_code(out, "RND_SOURCE_SET_INVALID",
                                   "case-nomanifest"), out)
+    # VH7: a manifest revision lacking BOTH sha256 and message_count binds nothing
+    # independently — the silent-skip class the fifth review flagged. WARN, not a
+    # block (real sweeps always write sha256; this is a malformed/legacy manifest).
+    install_compile(corpus, "case-witness-incomplete")
+    mp = corpus / "_projects" / "demo" / "project-manifest.json"
+    md = json.loads(mp.read_text(encoding="utf-8"))
+    md["sources"][0]["revisions"][0].pop("sha256", None)
+    md["sources"][0]["revisions"][0].pop("message_count", None)
+    write_json(mp, md)
+    rc, out = run(corpus, "validate", "--compile", "case-witness-incomplete")
+    check("VH7 a manifest revision with no sha256 nor count WARNs, never silent",
+          rc == 0 and "RND_SOURCE_WITNESS_INCOMPLETE" in out, out)
+    md["sources"][0]["revisions"][0]["sha256"] = _whole_file_sha(TRANSCRIPT_1)
+    md["sources"][0]["revisions"][0]["message_count"] = TRANSCRIPT_1.count(
+        "## Meddelande ")
+    write_json(mp, md)
 
 
 def scenario_git_witness(tmp):

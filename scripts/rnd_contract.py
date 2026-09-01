@@ -735,6 +735,20 @@ def validate_compile(corpus, compile_id):
                             cid, "RND_SOURCE_NOT_WITNESSED",
                             "%s: bound bytes do not hash to the manifest's recorded "
                             "capture (sha256) — not the witnessed conversation" % sid))
+                    elif not w["sha256"] and not isinstance(w["message_count"], int):
+                        # Neither independent binding is present: the manifest
+                        # revision records no `sha256` AND no `message_count`, so the
+                        # whole-file anchor and the count oracle both silently no-op.
+                        # An independent review flagged this same silent-skip class;
+                        # report it (WARN) rather than let a witness quietly bind
+                        # nothing. Real sweeps always write sha256, so this fires
+                        # only on a malformed/legacy manifest — recorded, not blocked.
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_WITNESS_INCOMPLETE",
+                            "%s: the manifest revision records neither sha256 nor "
+                            "message_count — nothing independent binds these bytes to "
+                            "the sweep; re-capture or re-sweep to witness them" % sid,
+                            level="WARN"))
                     # Trust the manifest's recorded count, not the IR's self-report.
                     if isinstance(w["message_count"], int):
                         b.recorded_count = w["message_count"]
