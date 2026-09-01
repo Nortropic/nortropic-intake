@@ -5,14 +5,22 @@
 //  - clone + replace <pre> with fenced text read in an opacity:0 holder
 //    (visibility:hidden returns empty)
 //  - escape to ASCII so slice transfer can never split a character
-// Stores the result on window.__nxExport; returns {host, len, msgCount}.
+// Stores the result on window.__nxExport; returns {host, len, sha256, msgCount}.
+//
+// The sha256 is the transport oracle. Length alone cannot tell two conversations
+// apart, and the proving run showed why that matters: when the clipboard relay's
+// trusted click does not land, pbpaste hands back the PREVIOUS export. Feed this
+// digest to reassemble_verify.py --sha256 and that becomes a hard failure instead
+// of a plausible one. NOTE: javascript_tool has REPL semantics — this script is
+// async (crypto.subtle is), so the leading `await` is load-bearing, exactly as in
+// project_discovery.js. Without it the pending Promise serializes as {}.
 //
 // If the host has no adapter, or the probe showed the CANDIDATE Claude selector
 // caught the wrong count/roles, set OVERRIDE_TURN / OVERRIDE_ROLE_ATTR below from
 // the probe's discovery report before running — don't guess blindly.
 //
 // NEUTRALIZE: true ONLY after the masked secret scan showed no real secrets (see playbook).
-(function(){
+await (async function(){
   const OVERRIDE_TURN = '';        // e.g. 'div[data-testid="chat-turn"]' — from discovery
   const OVERRIDE_ROLE_ATTR = '';   // e.g. 'data-testid' — value decides role; else alternate
   const NEUTRALIZE = false;
@@ -63,5 +71,10 @@
   document.body.removeChild(holder);
   const esc=s=>s.replace(/[^\x20-\x7e]/g,ch=>'\\u'+ch.charCodeAt(0).toString(16).padStart(4,'0'));
   window.__nxExport=esc(JSON.stringify(out));
-  return JSON.stringify({host, len:window.__nxExport.length, msgCount:out.length, roles:out.map(o=>o.role)});
+  const buf=await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(window.__nxExport));
+  const sha256=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  window.__nxExportSha256=sha256;
+  return JSON.stringify({host, len:window.__nxExport.length, sha256,
+    msgCount:out.length, roles:out.map(o=>o.role)});
 })()

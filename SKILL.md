@@ -300,7 +300,10 @@ incomplete understanding):
 
 - Message count and role sequence captured and stated.
 - First and last message verifiably present in the assembled export.
-- No truncation: reassembled transfer passes the length + JSON-parse checks from the playbook.
+- No truncation: the reassembled transfer hashes to the `sha256` the capture script
+  reported, and passes the length + JSON-parse checks from the playbook. Length alone
+  cannot tell two conversations apart — a clipboard the trusted click never refreshed
+  looks exactly like a correct capture of the right size.
 - Code fences balanced in every message.
 - Attachments (pasted-text/file chips) inventoried — on the data-layer path from message
   metadata, on the DOM path from the chips; contents captured best-effort with a strict
@@ -795,11 +798,14 @@ approved plan and the brief stays `clarified`.
    record is exactly as durable as the corpus's commit state, which is precisely
    what the WEAK label is telling you.
 
-   It also carries the candidate's **context binding** across:
-
-       APPROVED_PLAN_SHA256=X
-       APPROVED_PLAN_CONTEXT_REVISION=4
-       APPROVED_PLAN_SOURCE_SET_SHA256=Y
+   It also carries the candidate's **context binding** across. That binding lives in
+   the approved plan's own frontmatter — `context_revision` and `source_set_sha256`,
+   copied from the candidate and re-checked by `plan_contract.py validate` — not in a
+   line the tool prints. What the tools DO print is the comparison:
+   `plan-impact` reports `APPROVED_PLAN_CONTEXT_REVISION` against
+   `CURRENT_CONTEXT_REVISION`. `ACTIVE_APPROVED_PLAN_SHA256` is a pointer field:
+   `pointer` writes it into the workstream's CLAUDE.md block (or prints that same block
+   to stdout under `--print-only`) and `resume` reads it back to detect drift.
 
    This does **not** make the context package execution authority. It is provenance:
    *this is the understanding against which this plan was approved*, so that when the
@@ -1033,8 +1039,12 @@ graph database.
                          pointer --slug S --workstream W --into F --retire --reason R
                          hash F [--body]
 
-    project_contract.py  init --project P --title T | declare --project P --inventory F
-                                 [--method declared|data-layer] [--verified]
+    project_contract.py  init --project P --title T [--platform P] [--origin U]
+                         declare --project P --inventory F
+                                 [--method declared|data-layer|mixed] [--origin U]
+                                 [--verified --evidence D]   # --verified REQUIRES it,
+                                 # and REQUIRES an --origin carrying /g/g-p-… to bind
+                                 # it to; --inventory may BE the discovery record
                          register --project P --url U | capture --project P --source ID --file F
                          mark-extracted --project P --source ID (--ideas s1,s2 | --no-ideas --note …)
                          mark-routed --project P --source ID | mark-failed … --stage … --detail …
@@ -1090,16 +1100,35 @@ and it never guesses silently.
 **P0 — Scope & mode.** Confirm the project (or the explicit conversation list) and
 that this is a sweep. `project_contract.py init --project <name> --title …`.
 
-**P1 — Enumerate, honestly.** Data-layer first: `scripts/project_discovery.js` is a
-**CANDIDATE adapter (unverified)** for ChatGPT project listings — declare its output
-`--method data-layer --verified` ONLY when it returns `complete:true` (item count
-matches the API's own total). Anything less provable: take an owner-provided/exported
-conversation inventory and `declare --method declared` **without** `--verified` — the
-manifest then says `PROJECT_ENUMERATION_UNVERIFIED` and coverage answers for the
-declared inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration
-method. Identity is the platform's conversation id (`conversation_key = host/<id>`),
-never a title; reruns upsert by identity, so the same project can be swept repeatedly
-without duplicating a source.
+**P1 — Enumerate, honestly.** Data-layer first: `scripts/project_discovery.js` walks
+the project's own listing endpoint, `/backend-api/gizmos/<gid>/conversations`, which is
+**cursor-paginated and sends no total**. Enumeration is therefore proved the way that
+endpoint actually works:
+
+> **membership observed + pagination exhaustion mechanically demonstrated
+> = enumeration may be mechanically verified.**
+
+**Membership** comes from the endpoint's construction: the project id is in the request
+PATH, so every item comes back *as* a member. A query-filter endpoint cannot establish
+it — the Improvements proving run measured this platform accepting
+`conversations?…&gizmo_id=<gid>` and then ignoring the filter, answering with the whole
+account. **Exhaustion** is the cursor's own terminal signal, followed page by page until
+the platform stops offering one; a cursor that repeats is a loop, not a proof, and a
+page cap is a runaway guard, not an ending. A `total`, when the platform volunteers one,
+is an EXTRA oracle: its absence proves nothing, its disagreement blocks the claim.
+
+`declare --method data-layer --verified` now **requires `--evidence <discovery.json>`**,
+and `project_contract.py` re-reads that record rather than taking its word: membership
+scope, no foreign items, `exhaustion.proven`, a named terminal signal, and an item set
+matching the inventory being declared. Anything less provable: take an owner-provided or
+exported inventory and `declare --method declared` **without** `--verified` — the
+manifest then records `verified: false`, `coverage` prints
+`PROJECT_ENUMERATION_UNVERIFIED` from it (and `status` marks the same state `(UNVERIFIED)`),
+and coverage answers for the declared inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration method, and
+owner confirmation is a welcome EXTRA oracle that this proof does not require and cannot
+be substituted by. Identity is the platform's conversation id
+(`conversation_key = host/<id>`), never a title; reruns upsert by identity, so the same
+project can be swept repeatedly without duplicating a source.
 
 **P2 — Capture every conversation, fail closed.** Per conversation, the SINGLE-mode
 Phase 1 pipeline unchanged (data-layer capture via `scripts/data_capture.js`, DOM
@@ -1112,6 +1141,20 @@ conversation is `mark-failed` — both are HARD gaps: `SOURCE_COVERAGE_COMPLETE=
 and no review-queue entry can absorb them. An updated conversation re-captured later
 becomes revision N+1; the old raw is never touched. Never modify anything on the
 platform — read only.
+
+**A revision answers to the conversation, never to the header written about it.**
+Everything above the first `## Meddelande N — <roll>` line — title, source project, URL,
+export date, message count, the one-line purpose, the "Innehåll i korthet" paragraph, the
+citation-chip note — is **derived builder metadata**. `capture` keys the revision
+decision on `source_sha256`, the hash of the source region alone, and records the
+whole-file `sha256` alongside it for tamper detection and immutability. So a re-worded
+purpose line or a later export date is a **true no-op**, while a changed message, or a
+changed speaker label, is still revision N+1. The proving run is why: CONV-012 was
+captured twice with byte-identical messages and a re-phrased `**Syfte:**` line, and the
+whole-file hash minted a second revision out of that one derived line — the independent
+audit called it a `RERUN_IDEMPOTENCY_VIOLATION`, and it was one. Revisions written before
+`source_sha256` existed are handled by recomputing it from the bytes on disk, so a legacy
+corpus reaches the same no-op without being migrated.
 
 **P3 — Extract.** Distill each verified conversation with the normal Phase 2
 templates — zero, one or several ideas per conversation. Deliver each conversation
@@ -1167,7 +1210,10 @@ matters, and skipped steps are exactly where past runs went wrong:
         time-boxed attempt each, extract (scripts/extract.js; on DLP block: masked
         secret scan FIRST)
 [ ] 3.  Slice transfer complete, every slice ends with #END#
-[ ] 4.  Verification (scripts/reassemble_verify.py): length, JSON, roles, fences
+[ ] 4.  Verification (scripts/reassemble_verify.py --transport file|tool-output
+        --sha256 <the digest the capture script reported>): digest, length, JSON,
+        roles, fences. The digest is REQUIRED — waiving it needs --digest-unavailable
+        and downgrades the capture to length-only
 [ ] 5.  Truncation smell check: no code block starts/ends mid-construct — else back to 2
 [ ] 6.  full-chat.md built (metadata, attachment list, messages verbatim)
 [ ] 7.  idea-<slug>.md per references/brief-template.md (decisions with "because" and
@@ -1282,9 +1328,13 @@ PROJECT_SWEEP checklist (replaces steps 0–9 above; the SINGLE checklist never 
 inside a sweep):
 
 ```
-[ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run
-[ ] P1. Inventory declared honestly: data-layer --verified ONLY on a provable
-        completion signal, else owner-declared WITHOUT --verified
+[ ] P0. Mode confirmed EXPLICITLY (sweep asked for by name); project init run WITH
+        --origin <project URL> (the evidence in P1 is bound to it; declare --origin
+        can still supply it later, but nothing else can)
+[ ] P1. Inventory declared honestly: data-layer --verified ONLY with --evidence, a
+        discovery record whose membership is path-scoped and whose cursor was walked
+        to its own terminal signal (an operator's word is not a completion signal);
+        else owner-declared WITHOUT --verified and WITHOUT --evidence
         (PROJECT_ENUMERATION_UNVERIFIED); identity by conversation id, never title
 [ ] P2. Every conversation captured via the Phase 1 pipeline + `capture` verified;
         failures recorded (CAPTURED+error or mark-failed) — never silent
@@ -1343,9 +1393,12 @@ inside a sweep):
   SINGLE-mode ones except for their episode provenance.
 - Repeatable evals live in `evals/` (trigger queries, golden capture signature,
   brief rubric, rationale rubric, contract lint, approved-plan falsification suite,
-  context suites, and the v3 suite `test_project_v3.py` covering role-aware
-  provenance, approval strength and the project contract) — run them after any change
-  to this skill; see `evals/README.md`.
+  context suites, the v3 suite `test_project_v3.py` covering role-aware provenance,
+  approval strength, the project contract, source identity vs builder metadata and
+  enumeration evidence, plus two v3.1 suites: `test_transport_v31.py` for bounded
+  digest-verified transport and the trust boundary, and `test_discovery_v31.mjs`,
+  which runs the SHIPPED browser adapters under node against a fake platform) — run
+  them after any change to this skill; see `evals/README.md`.
 
 ## Architecture freeze — read this before changing the skill
 
@@ -1447,10 +1500,69 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   principle hide behind another episode's owner turn at the same number. Episode-scoped
   citations (`(← CHAT-002 msg 3)`) remove the ambiguity; no exploit has been
   demonstrated.
-- **Project enumeration is only as strong as its signal.** The data-layer project
-  listing is a CANDIDATE adapter, unverified against a live ChatGPT project; the
-  declared-inventory fallback proves coverage of the declaration, never of the
-  platform's project — which is exactly what `PROJECT_ENUMERATION_UNVERIFIED` says.
+- **Project enumeration is only as strong as its signal.** The declared-inventory
+  fallback proves coverage of the declaration, never of the platform's project — which is
+  exactly what `PROJECT_ENUMERATION_UNVERIFIED` says. Since v3.1 the data-layer path is
+  measured rather than candidate, and its verified claim carries re-checkable evidence;
+  what remains unprovable is whether the platform's listing endpoint is itself complete,
+  which no client can establish from outside.
+- **The instruction pins match a vocabulary, not a meaning.** `test_transport_v31.py`
+  fingerprints every place Intake's own text names the runtime's directory or the
+  sandbox override, so a new or reworded one fails until a person looks at it. Three
+  successive reviews each got an instruction past an earlier version of that check —
+  by prose the negation-heuristic misread, by a same-count swap, by wrapping the path
+  across a line break, and by gaming the carve-out for this skill's own install path —
+  which is why no carve-out remains: every occurrence is pinned, the legitimate ones by
+  hand. What remains open is stated in the
+  check itself: an instruction written entirely around the vocabulary still passes. It
+  guards against drift in Intake's own wording; it is not a semantic firewall.
+- **Intake does not own the sandbox, and does not pretend to.** The command sandbox, the
+  override that disables it, and the runtime's own private session storage all belong to
+  Claude Code, not to this skill — which is why no path into that storage is written
+  anywhere in this file. Intake can bound its own transport so nothing needs to spill
+  (`TOOL_OUTPUT_CHUNK_MAX`), and it can keep its own instructions from sending anyone
+  across that line — the latter by pinned inventory rather than by reading its own prose,
+  because the first version of that check tried to tell a prohibition from an
+  instruction and an independent review defeated it with one appended sentence. The
+  operational statement of the boundary lives in `references/extraction.md`, where the
+  transport steps are. Intake cannot stop an agent that decides to go around the
+  boundary anyway, and a check claiming otherwise would be a false security claim.
+- **A trusted click may not land.** The clipboard relay needs a real click to arm its
+  copy handler; when that click misses, `pbpaste` returns the previous export. The
+  `--sha256` transport oracle is mandatory precisely so that becomes a hard failure
+  rather than a plausible capture, which is as far as this layer can go — the flakiness
+  itself lives in the browser tooling, and no retry framework was added for it.
+- **The framing is ambiguous, and the digest is what resolves it.** `#END#` is a marker,
+  not a reserved word, so a conversation ABOUT this protocol carries the tokens in its
+  own text. Three readings of the framing are tried and the digest picks the one that
+  reproduces it — which recovers an ambiguous frame, never a damaged payload. When no
+  reading reproduces the digest the transfer is reported broken, and at that point a
+  conversation that merely quotes the markers is indistinguishable from one that really
+  was cut. That is why the diagnosis is labelled a hint and the digest is the verdict.
+- **A proof is about the set that existed when it was measured.** Register a new
+  conversation into a project whose enumeration is evidence-backed and `validate` says
+  `ENUMERATION_CLAIM_INVALID` — correctly, because the archived record no longer
+  describes this inventory. The remedy is to re-run discovery and declare again, not to
+  edit anything; the finding says so, because read quickly it looks like tampering when
+  the truth is that the project grew.
+- **The chunk bound is a prescription; a separate check notices a spill.** The bound
+  fires on an oversized chunk that arrived intact, which is what keeps the playbook from
+  prescribing a size that spills. A chunk that actually got cut is a different shape: it
+  loses its `#END#`, the next slice's marker is swallowed into the gap, and no index
+  looks missing — so `reassemble_verify.py` counts `S<i>|` markers against the slices it
+  parsed and names the truncated one. Neither check can see a spill the transport never
+  handed over at all.
+- **The source region begins at the first message header, so the header's own bytes are
+  outside source identity.** That is the point — it is what makes a re-worded purpose
+  line a no-op — but it also means a correction confined to the metadata header, such
+  as a fuller attachment inventory or a fixed URL line, is a no-op too: the corrected
+  delivery is DISCARDED, not merged, and the corpus keeps the header it first stored.
+  Neither field is a claim about what was said, and both can be re-derived from the
+  platform, so nothing about the conversation is lost — but a header correction has to
+  be made by capturing a genuinely changed conversation or not at all. A transcript that quotes a `## Meddelande N` line inside its own
+  header would move the region boundary upward, which `verify_transcript_format` then
+  rejects as non-contiguous numbering — fail-closed, but worth knowing for a corpus whose
+  subject matter is this very format.
 
 These become work only when an observed failure makes one material — that is what
 `observed failure` and `demonstrated security/trust defect` in the reopen policy mean.

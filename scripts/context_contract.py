@@ -2924,22 +2924,34 @@ def cmd_validate(args):
     for slug in slugs:
         pkg = Package(corpus, slug)
         local, manifest = [], None
-        if not pkg.exists():
-            local.append(Finding(slug, "BRIEF_MISSING", "no idea-%s.md" % slug))
-        else:
-            fm, body, fm_errors = read_frontmatter(pkg.brief)
-            for err in fm_errors:
-                local.append(Finding(slug, "BRIEF_FRONTMATTER_AMBIGUOUS", err))
-            manifest = validate_manifest(pkg, local, require=True)
-            brief_ids = set(parse_ids(body))
-            validate_clarifications(pkg, local, brief_ids=brief_ids,
-                                    extra_ids=addressable_ids(manifest, pkg))
-            # Structural sweep: the delta and the audit are validated corpus-wide, so a
-            # rewritten history or a deleted finding cannot reach git history unnoticed.
-            # Their ABSENCE only blocks at the coverage gate, not here.
-            validate_delta(pkg, manifest, brief_ids, local,
-                           addressable=addressable_ids(manifest, pkg))
-            validate_audit(pkg, manifest or {}, brief_ids, local, require=False)
+        # One malformed package must not take the sweep down with it. `or []`-style
+        # defaults defend a falsy non-list and nothing else, so a manifest carrying
+        # `"episodes": true` used to raise here — and an uncaught exception in a
+        # corpus-wide sweep means every package sorted after the bad one is never
+        # validated at all, with nothing saying which. A crash is itself a finding.
+        try:
+            if not pkg.exists():
+                local.append(Finding(slug, "BRIEF_MISSING", "no idea-%s.md" % slug))
+            else:
+                fm, body, fm_errors = read_frontmatter(pkg.brief)
+                for err in fm_errors:
+                    local.append(Finding(slug, "BRIEF_FRONTMATTER_AMBIGUOUS", err))
+                manifest = validate_manifest(pkg, local, require=True)
+                brief_ids = set(parse_ids(body))
+                validate_clarifications(pkg, local, brief_ids=brief_ids,
+                                        extra_ids=addressable_ids(manifest, pkg))
+                # Structural sweep: the delta and the audit are validated corpus-wide,
+                # so a rewritten history or a deleted finding cannot reach git history
+                # unnoticed. Their ABSENCE only blocks at the coverage gate, not here.
+                validate_delta(pkg, manifest, brief_ids, local,
+                               addressable=addressable_ids(manifest, pkg))
+                validate_audit(pkg, manifest or {}, brief_ids, local, require=False)
+        except Exception as exc:                                  # noqa: BLE001
+            local.append(Finding(
+                slug, "PACKAGE_VALIDATION_CRASHED",
+                "validating this package raised %s: %s — a file is malformed in a way "
+                "the contract does not model. Treated as a failure, and the remaining "
+                "packages were still validated." % (type(exc).__name__, exc)))
         findings.extend(local)
         if not fails(local):
             ok += 1

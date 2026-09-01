@@ -1,9 +1,14 @@
 # Project manifest — `_projects/<project>/project-manifest.json`
 
 The coverage contract of one PROJECT_SWEEP: which conversations exist, in what
-lifecycle state, with what identity and what enumeration honesty. Everything here is
-recomputed and re-validated from plain files by `scripts/project_contract.py`;
-"Claude thinks it read everything" is never the evidence.
+lifecycle state, with what identity and what enumeration honesty. Every INTEGRITY
+claim here — hashes, source identity, states, the enumeration evidence, tree↔manifest
+agreement — is recomputed and re-validated from plain files by
+`scripts/project_contract.py`; "Claude thinks it read everything" is never the
+evidence. Descriptive fields (`message_count`, `captured_at`, `adapter`,
+`discovered_at`) are recorded at capture time and NOT re-derived on later sweeps: they
+are testimony about the capture, useful for audit, and nothing downstream treats them
+as proof.
 
 ## The shape
 
@@ -21,7 +26,29 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
     "declared_inventory_sha256": "<sha256 of the inventory file>",
     "note": "owner-exported URL list; data-layer listing not provable"
   },
+
+  // …or, when the cursor walk proved itself (v3.1+). `evidence` is written by
+  // `declare --evidence`, never by hand, and the record it names is archived in the
+  // project folder so the proof survives with the corpus:
+  //
+  // "enumeration": {
+  //   "method": "data-layer",
+  //   "verified": true,
+  //   "declared_inventory_sha256": "…",
+  //   "evidence": {
+  //     "record": "_projects/<P>/enumeration-evidence-r<N>.json",
+  //     "sha256": "<of that record>",
+  //     "source": "project-discovery-cursor",
+  //     "endpoint": "/backend-api/gizmos/<gid>/conversations",
+  //     "membership_scope": "path-scoped-project-endpoint",
+  //     "membership_established_by": "project id in the request PATH",
+  //     "terminal_signal": "cursor-absent",
+  //     "pages_walked": 2, "collected": 27, "duplicates_dropped": 0,
+  //     "count_oracle": "absent — this endpoint sends no total; exhaustion is the proof"
+  //   }
+  // },
   "project_status": "",
+  "finalized_at": null,          // set by `finalize` once the end state is derived
   "inventory_revision": 3,
   "inventory_sha256": "<deterministic identity of the source inventory>",
   "inventory_history": [
@@ -38,7 +65,9 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
       "state": "ROUTED",
       "revisions": [
         {"revision": 1, "path": "_projects/improvements/sources/CONV-001/conversation.md",
-         "sha256": "…", "captured_at": "2026-09-01", "message_count": 75,
+         "sha256": "…",           // the WHOLE delivered file — tamper + immutability
+         "source_sha256": "…",    // the CONVERSATION alone — what a revision answers to
+         "captured_at": "2026-09-01", "message_count": 75,
          "adapter": "data-layer", "verified": true, "verify_detail": ""}
       ],
       "extracted_revision": 1,
@@ -56,6 +85,18 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
 - **Identity before ideas.** `conversation_key` is `host/<platform-conversation-id>`
   — never a title. Two conversations with the same title are two sources; a rerun
   upserts by key and can never duplicate one (`DUPLICATE_SOURCE_IDENTITY`).
+- **A revision answers to the conversation, not to the header written about it.**
+  `source_sha256` hashes the source region — everything from the first
+  `## Meddelande N — <roll>` line onward, role labels included. Everything above it is
+  DERIVED builder metadata: title, source project, URL, export date, message count,
+  the one-line purpose, the "Innehåll i korthet" paragraph, the citation-chip note. So
+  a re-worded purpose line or a later export date is a true no-op, while a changed
+  message or a changed speaker is revision N+1. `capture` recomputes this from the
+  bytes on disk rather than reading the field, and `validate` does the same
+  (`PROJECT_SOURCE_IDENTITY_MISMATCH`) — a manifest value the bytes cannot back would
+  otherwise make a real change look unchanged and swallow the revision. Revisions
+  written before this field existed simply have nothing to cross-check and need no
+  migration.
 - **Raw survives.** Every revision's bytes stay on disk exactly as captured
   (`SOURCE_FILE_MISSING`, `PROJECT_SOURCE_HASH_MISMATCH`); once committed, git is the
   witness (`PROJECT_SOURCE_MUTATED`). An updated conversation is a NEW revision file
@@ -75,11 +116,19 @@ recomputed and re-validated from plain files by `scripts/project_contract.py`;
   packages carry this conversation as an episode transcript, byte-identical to a
   recorded revision (`IDEA_PROVENANCE_DANGLING`, `IDEA_EPISODE_HASH_UNLINKED`).
   One chat may produce many ideas; many chats may CONTINUE_EXISTING one idea.
-- **Enumeration is honest.** `verified: true` requires a provable completion signal
-  (see `scripts/project_discovery.js` — a CANDIDATE adapter until verified live);
-  otherwise coverage answers for the DECLARED inventory only and prints
+- **Enumeration is honest.** `verified: true` requires `--evidence`: a discovery record
+  from `scripts/project_discovery.js` whose membership is established by the project id
+  in the request PATH and whose cursor was walked to its own terminal signal. `declare`
+  re-reads that record — endpoint, project id, page ledger, item set — rather than
+  trusting its labels (`ENUMERATION_VERIFICATION_REFUSED`), archives it in the project
+  folder, and the validator re-checks that the archived bytes still hash to the recorded
+  digest (`ENUMERATION_EVIDENCE_MISSING`, `ENUMERATION_EVIDENCE_TAMPERED`). Otherwise
+  coverage answers for the DECLARED inventory only and prints
   `PROJECT_ENUMERATION_UNVERIFIED`. Claiming verified with `method: none` fails
-  (`ENUMERATION_CLAIM_INVALID`). DO NOT FAKE IT.
+  (`ENUMERATION_CLAIM_INVALID`). A claim made before this contract existed stays valid
+  and is reported as `ENUMERATION_EVIDENCE_LEGACY_ABSENT` — recorded, never promoted.
+  DO NOT FAKE IT: never hand-write an evidence record, because the point of the proof
+  is that a machine produced it.
 - **Hard gaps beat everything.** A source at DISCOVERED/CAPTURED/FAILED is a hard
   gap: `SOURCE_COVERAGE_COMPLETE=NO`, and the project's end state is
   `INCOMPLETE_HARD_GAPS` — never "complete with review". A review-queue item can

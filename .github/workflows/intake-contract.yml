@@ -26,6 +26,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The discovery suite runs the shipped browser adapter under node. The runner
+      # image happens to ship one, but an undeclared dependency is one nobody notices
+      # breaking — so declare it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Contract lint (SKILL.md, templates, README state the contract)
         run: python3 evals/contract_check.py
 
@@ -40,6 +47,12 @@ jobs:
 
       - name: v3 suite (role-aware provenance, approval attestation, project sweep)
         run: python3 evals/test_project_v3.py
+
+      - name: v3.1 transport suite (bounded chunks, exact digests, trust boundary)
+        run: python3 evals/test_transport_v31.py
+
+      - name: v3.1 discovery suite (cursor pagination against the real shipped adapter)
+        run: node evals/test_discovery_v31.mjs
 
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
@@ -80,7 +93,41 @@ jobs:
           guard context_contract test_plan_contract test_context_v2 test_context_v21 test_project_v3
           guard intake_common    test_plan_contract test_context_v2 test_context_v21 test_project_v3
           guard project_contract test_project_v3
+          guard reassemble_verify test_transport_v31
           cp /tmp/real/*.py scripts/
+          # The discovery suite runs the SHIPPED adapter, so its mutation is that file.
+          # The v3 suite depends on it too: its enumeration-evidence fixtures are the
+          # adapter's own output, which is the point — a hand-written record would only
+          # have proved the checker agrees with the fixture.
+          # Both capture scripts carry the transport digest Step 4 requires; the
+          # discovery suite executes both, so each is its own mutation target.
+          for js in extract data_capture; do
+            cp "scripts/$js.js" "/tmp/real-$js.js"
+            printf 'await (async function(){return JSON.stringify({});})()\n' > "scripts/$js.js"
+            if node evals/test_discovery_v31.mjs > /tmp/mutjs.log 2>&1; then
+              echo "MUTATION GUARD FAILED: discovery suite passed with $js.js stubbed"
+              fail=1
+            else
+              echo "ok: discovery suite fails with $js.js stubbed"
+            fi
+            cp "/tmp/real-$js.js" "scripts/$js.js"
+          done
+          cp scripts/project_discovery.js /tmp/real-discovery.js
+          printf 'await (async function(){return JSON.stringify({});})()\n' > scripts/project_discovery.js
+          if node evals/test_discovery_v31.mjs > /tmp/mutjs.log 2>&1; then
+            echo "MUTATION GUARD FAILED: discovery suite passed with the adapter stubbed"
+            fail=1
+          else
+            echo "ok: discovery suite fails with project_discovery.js stubbed"
+          fi
+          if python3 evals/test_project_v3.py > /tmp/mutv3.log 2>&1; then
+            echo "MUTATION GUARD FAILED: v3 suite passed with the adapter stubbed"
+            fail=1
+          else
+            echo "ok: v3 suite fails with project_discovery.js stubbed"
+          fi
+          cp /tmp/real-discovery.js scripts/project_discovery.js
+          git diff --quiet -- scripts/project_discovery.js || { echo "GUARD DID NOT RESTORE the adapter"; exit 1; }
           # And the specific shape that used to slip through: a stub that still IMPORTS
           # cleanly but answers nothing.
           printf 'import sys\ndef main(argv=None):\n    print("PASS")\n    return 0\nif __name__ == "__main__":\n    sys.exit(main())\n' > scripts/context_contract.py

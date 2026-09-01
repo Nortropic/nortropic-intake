@@ -1,7 +1,8 @@
 # Chat extraction playbook (ChatGPT & Claude)
 
 Battle-tested against chatgpt.com (Aug 2026). The canonical code lives in `scripts/`
-(`data_capture.js`, `probe.js`, `render_pass.js`, `extract.js`, `reassemble_verify.py`) —
+(`data_capture.js`, `probe.js`, `render_pass.js`, `extract.js`, `project_discovery.js`,
+`reassemble_verify.py`) —
 use those files verbatim instead of rewriting the snippets; every line in them exists
 because a naive version failed. This document explains why they look the way they do.
 
@@ -34,11 +35,13 @@ misses messages. `scripts/data_capture.js` bypasses all of it:
    metadata. Attachments are inventoried (names from `metadata.attachments` + non-text
    multimodal parts), not inlined.
 5. **Evidence, fail closed**: the script prints message count, role sequence, first/last
-   message previews and total visible chars, and stores the ASCII-escaped export on
-   `window.__nxExport`. Sanity-check the size — if a naive dump is many times larger
-   than the visible chat plausibly is, you captured the raw model, not the text: fix it,
-   never deliver it. Then run the standard slice transfer (Step 3) and verification
-   (Step 4) unchanged.
+   message previews, total visible chars, `exportLen` and the **`sha256`** of the
+   escaped export, and stores that export on `window.__nxExport`. Sanity-check the size
+   — if a naive dump is many times larger than the visible chat plausibly is, you
+   captured the raw model, not the text: fix it, never deliver it. Then run the standard
+   slice transfer (Step 3) and verification (Step 4) unchanged — including
+   `--sha256 <that digest>`, which Step 4 requires. Both capture scripts report it, so
+   there is no path on which it is legitimately unavailable.
 
 **Fallback**: if the endpoint fails (401/403, network error, schema change) or yields
 non-text, fall back to the DOM playbook below (probe → render pass → extract). It stays
@@ -210,20 +213,46 @@ through tool output (189k chars verified lossless in a real run):
    click with the `computer` tool on a blank margin area. The trusted click supplies the
    activation; the handler removes the textarea and itself.
 3. `pbpaste > raw_export.txt` in the shell. NOTE: the command sandbox silently no-ops
-   pbcopy/pbpaste (empty output, exit 0) — run the pbpaste/pbcopy steps sandbox-disabled.
-4. Wrap as a single slice (`printf 'S0|' ; cat raw_export.txt ; printf '#END#'`) and run
-   `reassemble_verify.py` with the exact `exportLen` — the same fail-closed checks apply.
+   pbcopy/pbpaste (empty output, exit 0) — run **only** the pbpaste/pbcopy steps
+   sandbox-disabled.
 
-Fallback if the relay fails: console transfer (log `S<i>|chunk#END#` in ~40k chunks and
-read them back with `read_console_messages`, pattern `S<i>\|` — verified intact at 40k),
-then the classic 700-char slice protocol as last resort. javascript_tool REPL note: an
+   SCOPE OF THAT EXCEPTION — it covers the clipboard commands and nothing else. Never
+   disable the sandbox to read Claude Code's own storage (`~/.claude/projects`,
+   `~/.claude/sessions`, `~/.claude/history`), and never to recover a truncated or
+   spilled tool result. A capture that overflowed tool output is a transport defect;
+   the answer is to re-cut the transfer inside the bound stated under Step 3b, not to
+   go around the
+   boundary and read the spill. Intake cannot enforce this — the sandbox and its
+   override belong to the runtime — which is exactly why it is written here as a
+   standing instruction, and why `contract_check.py` lints for it.
+4. Wrap as a single slice (`printf 'S0|' ; cat raw_export.txt ; printf '#END#'`) and run
+   `reassemble_verify.py` with the exact `exportLen`, `--transport file` (these bytes
+   never passed through tool output, so the chunk bound does not apply) and `--sha256
+   <the digest extract.js reported>` — the same fail-closed checks apply, plus the one
+   that catches a clipboard the trusted click never refreshed.
+
+Fallback if the relay fails: console transfer (log `S<i>|chunk#END#` in **24k** chunks
+and read them back with `read_console_messages`, pattern `S<i>\|`), then the classic
+700-char slice protocol as last resort. Be precise about the two numbers: **24k is the
+prescribed cut** — tool output tops out around 32 KB, the proving run's 40k chunks
+overflowed it and spilled to disk (after which the agent went looking for its own spill
+outside the sandbox), and cutting at 24k leaves comfortable room for the `S<i>|`/`#END#`
+framing. **32 768 is the enforced ceiling**: `reassemble_verify.py` refuses any FRAMED
+chunk above `TOOL_OUTPUT_CHUNK_MAX` under `--transport tool-output`, so a chunk cut too
+close to the limit fails the run instead of quietly producing a spill file somebody has
+to go and find. A 30k chunk therefore passes the verifier while still being a bad idea;
+cut at 24k. javascript_tool REPL note: an
 async IIFE must be prefixed with `await`, or the pending Promise serializes as `{}`.
 
 ## Step 4 — Verify (fail closed)
 
 In the workspace, before building any markdown:
 
-1. `len(raw)` equals the reported `len` exactly.
+1. `len(raw)` equals the length the capture script reported (`exportLen` from
+   data_capture.js, `len` from extract.js), AND `sha256(raw)` equals the `sha256` it
+   reported. Length alone is a weak oracle — pass the digest to
+   `reassemble_verify.py --sha256`. Declare the transport too: `--transport file` for
+   the clipboard/artifact relay, `--transport tool-output` for the console path.
 2. `json.loads(raw)` succeeds; message count and role sequence match the probe.
 3. Code fences: every message has an even number of lines starting with ```.
 4. First and last message text match the probe previews.
@@ -275,30 +304,65 @@ chat text merely *talks about* tokens/cookies/auth. Handle in this order:
 
 ## Project discovery (PROJECT_SWEEP only) — enumerating a project's conversations
 
-Per-conversation capture above is VERIFIED tooling. Project-level ENUMERATION is not:
-`scripts/project_discovery.js` is a **CANDIDATE adapter** (ChatGPT only, unverified
-against a live project listing as of v3.0). The rules are fail-closed, and they are the
-whole point:
+Per-conversation capture above is VERIFIED tooling. Project-level ENUMERATION was not,
+until the Improvements proving run measured it (2026-08-31).
+`scripts/project_discovery.js` walks the project's own listing endpoint,
+`/backend-api/gizmos/<gid>/conversations`, which is **cursor-paginated and sends no
+count or total**. The rules are fail-closed, and they are the whole point:
 
 1. **Try the data layer first.** Run `project_discovery.js` on the logged-in project
-   page. It may only be trusted as exhaustive when it returns `complete:true` — items
-   collected equals the API's own `total`, with no pagination errors. Only then may
-   the inventory be declared `--method data-layer --verified` (after a human
-   sanity-check against the visible project).
+   page. Read two fields of its output, and no others:
+   - `verifiable: true` — membership scope is `path-scoped-project-endpoint`, no foreign
+     items came back, and `exhaustion.proven` is true with a named `terminal_signal`.
+   - `items` — the inventory itself.
+
+   Save the WHOLE record to a file. Declare with **both** flags:
+
+   ```bash
+   # The record IS the inventory — its `items` list is the enumeration — so the same
+   # file goes to both flags. --origin is what the proof gets bound to: pass it here
+   # if `init` did not record one, because nothing else can set it afterwards.
+   python3 scripts/project_contract.py declare --project P \
+     --inventory discovery.json --evidence discovery.json \
+     --origin https://chatgpt.com/g/g-p-…/project \
+     --method data-layer --verified
+   ```
+
+   `--verified` **requires** `--evidence`, and `project_contract.py` re-reads that
+   record instead of taking its word: endpoint shape, project id (against this
+   project's own origin — renaming the project on the platform rewrites the id's slug,
+   not its identity), membership scope, foreign items, the page ledger, and an item set
+   matching the inventory. `validate` then re-reads the ARCHIVED record the same way on
+   every sweep, so the claim answers to the proof's bytes rather than to the manifest
+   entry beside it. A record
+   that does not carry its proof is refused with `ENUMERATION_VERIFICATION_REFUSED`
+   and nothing is declared — go to rule 2 rather than trying to satisfy the checker.
+   (Before v3.1 this adapter called `conversations?…&gizmo_id=`, an endpoint that
+   accepts the filter and answers with the whole ACCOUNT, and trusted `complete:true`
+   from an item count matching that account's `total`. Both are gone. If you are
+   looking for `complete` in the output, you are reading a pre-v3.1 instruction.)
 2. **Anything less provable → declared inventory.** Take an owner-provided/exported
    conversation list (URLs or `host/<id>` keys), write it as JSON, and
-   `project_contract.py declare --method declared` WITHOUT `--verified`. The manifest
-   then carries `PROJECT_ENUMERATION_UNVERIFIED`, and coverage answers for the
-   declared inventory only. **DO NOT FAKE IT** — the architecture would rather say
-   "unverified" than claim 100% coverage it cannot prove.
+   `project_contract.py declare --method declared` WITHOUT `--verified` (and without
+   `--evidence`). The manifest then records `verified: false`, every coverage/status
+   report prints `PROJECT_ENUMERATION_UNVERIFIED` from it, and
+   coverage answers for the declared inventory only. **DO NOT FAKE IT** — the
+   architecture would rather say "unverified" than claim 100% coverage it cannot
+   prove. Never hand-write an evidence record to get past the checker: the point of
+   the proof is that a machine produced it.
 3. **Identity is the platform's conversation id, never the title.** Titles are
    editable, duplicable and routinely reused; `conversation_key = host/<id>` is what
    reruns upsert on, which is what makes a sweep idempotent.
-4. **Lazy loading/pagination:** the candidate adapter pages with offset+limit and
-   cross-checks the API's `total`. A DOM-scrolled sidebar listing is NOT a completion
+4. **Exhaustion is the cursor's own ending, not arithmetic.** The adapter follows
+   `cursor` until the platform stops offering one. A cursor that repeats is a loop, not
+   a proof; the page cap is a runaway guard, not an ending; and a `total`, on the rare
+   response that carries one, is an EXTRA oracle whose absence proves nothing and whose
+   disagreement blocks the claim. A DOM-scrolled sidebar listing is NOT a completion
    signal — window-virtualized lists unmount items exactly like the chat transcript
    does (see above), so a scraped list proves presence, never exhaustion.
-5. **Screenshots/OCR are never a capture or enumeration method.**
+5. **Screenshots/OCR are never a capture or enumeration method.** Owner confirmation is
+   a welcome EXTRA oracle — the mechanical proof does not need it, and it cannot stand
+   in for one.
 6. Per-conversation capture inside a sweep is EXACTLY the playbook above
    (data_capture.js first, DOM fallback, same gates) — the sweep changes discovery
    and bookkeeping, never capture quality.

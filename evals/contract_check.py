@@ -284,8 +284,16 @@ CHECKS = [
         "**Plan-Mode owner decisions must never live only in the chat.**",
         "PLAN_OWNER_DELTA_UNCITED",
         "Do not rely on the Plan Mode\nconversation surviving"]),
+    # Pin the tokens the tools ACTUALLY emit. The earlier version of this lint required
+    # `APPROVED_PLAN_SOURCE_SET_SHA256=Y`, which no script prints — it passed on prose
+    # describing output that does not exist, which is the exact failure mode a contract
+    # lint is for.
     ("SKILL.md", "W11 the approved plan binds the context it was approved against", [
-        "APPROVED_PLAN_CONTEXT_REVISION=4", "APPROVED_PLAN_SOURCE_SET_SHA256=Y",
+        "`context_revision` and `source_set_sha256`",
+        "re-checked by `plan_contract.py validate`", "not in a line the tool prints",
+        "APPROVED_PLAN_CONTEXT_REVISION", "CURRENT_CONTEXT_REVISION",
+        "is a pointer field",
+        "or prints that same block\n   to stdout under `--print-only`",
         "This does **not** make the context package execution authority"]),
     ("SKILL.md", "W12 stale is detected, and stale is not invalid", [
         "## Phase 5.5 — When context moves under an approved plan",
@@ -463,7 +471,23 @@ CHECKS = [
         "**Role truth is inherited from capture.**",
         "resolved conservatively",
         "**Project enumeration is only as strong as its signal.**",
-        "CANDIDATE adapter, unverified"]),
+        "no client can establish from outside"]),
+    ("SKILL.md", "Z9 v3.1 records the boundaries it does NOT own, without pretending", [
+        "**Intake does not own the sandbox, and does not pretend to.**",
+        "belong to\n  Claude Code, not to this skill",
+        "no path into that storage is written\n  anywhere in this file",
+        "pinned inventory rather than by reading its own prose",
+        "Intake cannot stop an\n  agent that decides to go around the boundary anyway",
+        "would be a false security claim",
+        "**A trusted click may not land.**",
+        "no retry framework was added for it",
+        "**The framing is ambiguous, and the digest is what resolves it.**",
+        "recovers an ambiguous frame, never a damaged payload",
+        "**A proof is about the set that existed when it was measured.**",
+        "**The instruction pins match a vocabulary, not a meaning.**",
+        "it is not a semantic firewall",
+        "**The chunk bound is a prescription; a separate check notices a spill.**",
+        "the header's own bytes are\n  outside source identity"]),
     # ---------------------------------------------------------------------
     # R3. Role-aware provenance (v3.0)
     # ---------------------------------------------------------------------
@@ -508,7 +532,55 @@ CHECKS = [
         "PROJECT_ENUMERATION_UNVERIFIED", "DO NOT FAKE IT",
         "screenshots/OCR are never an enumeration\nmethod",
         "never a title",
-        "**CANDIDATE adapter (unverified)**"]),
+        "cursor-paginated and sends no total**"]),
+    ("SKILL.md", "PS15 enumeration is proved by membership + mechanical exhaustion", [
+        "membership observed + pagination exhaustion mechanically demonstrated",
+        "= enumeration may be mechanically verified.**",
+        "the project id is in the request\nPATH",
+        "accepting\n`conversations?…&gizmo_id=<gid>` and then ignoring the filter",
+        "a cursor that repeats is a loop, not a proof",
+        "requires `--evidence <discovery.json>`",
+        "re-reads that record rather than taking its word",
+        "owner confirmation is a welcome EXTRA oracle that this proof does not require"]),
+    ("SKILL.md", "PS16 source identity excludes derived builder metadata", [
+        "**A revision answers to the conversation, never to the header written about it.**",
+        "derived builder metadata",
+        "keys the revision\ndecision on `source_sha256`",
+        "records the\nwhole-file `sha256` alongside it for tamper detection",
+        "a re-worded\npurpose line or a later export date is a **true no-op**",
+        "a changed message, or a\nchanged speaker label, is still revision N+1",
+        "RERUN_IDEMPOTENCY_VIOLATION",
+        "without being migrated"]),
+    ("references/extraction.md", "PS17 transport is bounded and its bytes are identified", [
+        "TOOL_OUTPUT_CHUNK_MAX",
+        "tool output tops out around 32 KB",
+        "`--transport tool-output`",
+        "Length alone is a weak oracle",
+        "--sha256"]),
+    # The two files no lint covered — which is why four reviews in a row each found a
+    # doc still describing older behaviour. evals/README.md is what a maintainer reads
+    # to know what the evals prove; the workflow is what actually runs them.
+    # PS19 pins the STRUCTURE of the eval inventory. It must not pin the check-id
+    # ranges: pinning the README's own words means a README that drifts together with
+    # its lint stays green — PS21 derives the ranges from the suite source instead.
+    ("evals/README.md", "PS19 the eval inventory matches what is actually there", [
+        "python3 evals/test_transport_v31.py", "node    evals/test_discovery_v31.mjs",
+        "## 10. v3.1 transport suite", "## 11. v3.1 discovery suite",
+        "the SHIPPED `scripts/project_discovery.js`",
+        "`extract.js` and `data_capture.js` both report the sha256 Step 4 requires"]),
+    (".github/workflows/intake-contract.yml",
+     "PS20 CI runs every suite and guards every module it depends on", [
+        "python3 evals/test_transport_v31.py", "node evals/test_discovery_v31.mjs",
+        "actions/setup-node@v4",
+        "guard reassemble_verify test_transport_v31",
+        "for js in extract data_capture; do",
+        "MUTATION GUARD FAILED: v3 suite passed with the adapter stubbed"]),
+    ("references/extraction.md", "PS18 the one sandbox exception carries a negative scope", [
+        "run **only** the pbpaste/pbcopy steps",
+        "SCOPE OF THAT EXCEPTION",
+        "Never\n   disable the sandbox to read Claude Code's own storage",
+        "never to recover a truncated or\n   spilled tool result",
+        "Intake cannot enforce this"]),
     ("SKILL.md", "PS5 hard gaps beat completeness, queue cannot absorb them", [
         "COMPLETE | COMPLETE_WITH_OPEN_REVIEW | INCOMPLETE_HARD_GAPS",
         "A hard capture/coverage gap is never \"complete with review\"",
@@ -556,6 +628,43 @@ def normalize(text):
     return re.sub(r"\s+", " ", text)
 
 
+def check_readme_ranges():
+    """The README's v3-suite table must match the check ids the suite really emits.
+
+    A phrase-presence lint cannot do this: it pins the README's own words, so a README
+    that drifts TOGETHER WITH its lint stays green — which is exactly how a stale
+    `J39–J48` survived the introduction of J49. Derive the truth from the suite source
+    and compare.
+    """
+    root = Path(__file__).resolve().parent
+    suite = (root / "test_project_v3.py").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    ids = sorted({(m.group(1), int(m.group(2)))
+                  for m in re.finditer(r"check\(\s*[\"']([A-Z])(\d+)", suite)})
+    failures = []
+    derived = {}
+    for family in sorted({f for f, _ in ids}):
+        nums = [n for f, n in ids if f == family]
+        derived[family] = ("%s%d–%s%d" % (family, min(nums), family, max(nums))
+                           if min(nums) != max(nums)
+                           else "%s%d" % (family, min(nums)))
+        row = "| %s |" % derived[family]
+        if row not in readme:
+            failures.append("README lacks a row for the range the suite emits: %s "
+                            "(family %s runs %d..%d)"
+                            % (row, family, min(nums), max(nums)))
+    # And the reverse: a row claiming a range the suite does not emit — a stale
+    # leftover beside the corrected one, or an invented family — fails too. "Match"
+    # has to mean both directions or it means neither.
+    table = readme[readme.index("## 9. v3 suite"):readme.index("No real project")]
+    for m in re.finditer(r"^\| ([A-Z])(\d+)(?:–[A-Z](\d+))? \|", table, re.M):
+        family, claimed = m.group(1), m.group(0).strip("| ").strip()
+        if derived.get(family) != claimed:
+            failures.append("README claims range %r for family %s but the suite "
+                            "emits %r" % (claimed, family, derived.get(family)))
+    return failures
+
+
 def main():
     failures = 0
     cache = {}
@@ -587,7 +696,15 @@ def main():
             failures += 1
         else:
             print(f"PASS  {label}")
-    total = len(CHECKS)
+    for miss in check_readme_ranges():
+        print(f"FAIL  PS21 the README's v3-suite ranges are derived, not asserted  "
+              f"[{miss}]")
+        failures += 1
+    else:
+        if not check_readme_ranges():
+            print("PASS  PS21 the README's v3-suite ranges match the ids the suite "
+                  "actually emits")
+    total = len(CHECKS) + 1
     print(f"\n{total - failures}/{total} contract checks passed")
     sys.exit(1 if failures else 0)
 

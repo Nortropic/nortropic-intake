@@ -1249,6 +1249,56 @@ def _omit_new_source(folder, corpus, targets):
 
 # ------------------------------------------------------------------ main ---
 
+def sweep_survives_crash(tmp):
+    """One malformed package is a finding, never an abort that skips every later one.
+
+    The `or []` idiom defends a FALSY non-list and nothing else, so a manifest carrying
+    `"episodes": true` used to raise a bare TypeError inside the corpus-wide sweep —
+    and every package sorted after the bad one was never validated at all, with nothing
+    saying which. project_contract got this guard first; a review then found the same
+    crash in this module (and the same structural exposure in plan_contract), which is
+    exactly the this-project failure mode of fixing one instance of a property and
+    declaring the class closed.
+    """
+    corpus, folder, targets = living(Path(tmp) / "a")
+    # A second package that sorts AFTER the poisoned one. It only needs to be reached
+    # and reported — its own findings are its own business — so a bare brief suffices.
+    after = Path(corpus) / "zzz-after"
+    after.mkdir()
+    (after / "idea-zzz-after.md").write_text("# after\n", encoding="utf-8")
+    (folder / (SLUG + "-context-manifest.json")).write_text(
+        '{"episodes": true}', encoding="utf-8")
+
+    rc, out = F.context(["validate"], corpus)
+    check("V6a a manifest malformed beyond what the contract models becomes "
+          "PACKAGE_VALIDATION_CRASHED, not a traceback",
+          rc != 0 and "Traceback" not in out
+          and "PACKAGE_VALIDATION_CRASHED" in out, out.strip()[:700])
+    check("V6b and the packages sorted after it are still validated",
+          "zzz-after" in out, out.strip()[:700])
+
+    # V6c needs a shape that actually CRASHES plan_contract's per-slug validation —
+    # the poisoned context manifest above never reaches it, so asserting only "no
+    # traceback" was vacuous: a review deleted plan_contract's whole guard and this
+    # stayed green. A dict where an int revision belongs blows up the comparison at
+    # the plan/context binding, which is inside the guarded region.
+    corpus_b, folder_b, _ = living(Path(tmp) / "b", with_plan=True, status="planned")
+    after_b = Path(corpus_b) / "zzz-after"
+    after_b.mkdir()
+    (after_b / "idea-zzz-after.md").write_text("# after\n", encoding="utf-8")
+    mf = folder_b / (SLUG + "-context-manifest.json")
+    import json as _json
+    data = _json.loads(mf.read_text(encoding="utf-8"))
+    data["context_revision"] = {"a": 1}
+    mf.write_text(_json.dumps(data), encoding="utf-8")
+    rc, out = F.plan(["validate"], corpus_b)
+    check("V6c the plan sweep converts its own crash shape to "
+          "PACKAGE_VALIDATION_CRASHED and still validates the packages after it",
+          rc != 0 and "Traceback" not in out
+          and "PACKAGE_VALIDATION_CRASHED" in out and "zzz-after" in out,
+          out.strip()[:700])
+
+
 SCENARIOS = [
     ("C1  same idea, second brainstorm", c1_second_brainstorm),
     ("C2  second brainstorm reverses a decision", c2_reversed_decision),
@@ -1262,6 +1312,7 @@ SCENARIOS = [
     ("C13 ChatGPT independence", c13_chatgpt_independence),
     ("C14/C15 two workstreams, pointer retirement", c14_c15_two_workstreams_and_pointer_gc),
     ("T1–T8 source trust / instruction authority", trust_boundary),
+    ("V6  a malformed package cannot abort the sweep", sweep_survives_crash),
     ("R   the independent reviews' own repros", r_review_repros),
 ]
 

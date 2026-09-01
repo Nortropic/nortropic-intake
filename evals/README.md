@@ -1,9 +1,13 @@
 # Evals — run these after ANY change to this skill
 
-Nine checks, all repeatable. Zero regression = all nine pass. Five measure the skill's
-outputs and its stated contract without touching the capture/distill/verify pipeline;
-the last four execute the real validators against real corpora and real git
-repositories built on disk.
+Eleven checks, all repeatable. Zero regression = all eleven pass. The first five run the
+skill's own suites against real files and real git repositories; the two v3.1 suites
+drive the shipped scripts directly — one under node against a fake platform, one against
+`reassemble_verify.py` in temp directories; the last three execute the real validators
+against the real corpus. The numbers in the command block below are the section
+numbers further down, which is why they start at 1 for the contract lint and then jump:
+sections 2–5 cover the trigger eval, the capture goldens and the rubrics, which are
+judged rather than run.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
@@ -11,25 +15,63 @@ python3 evals/test_plan_contract.py                   # 6 — approved-plan fals
 python3 evals/test_context_v2.py                      # 7 — context continuity A–L
 python3 evals/test_context_v21.py                     # 8 — living context C1–C15, T1–T8
 python3 evals/test_project_v3.py                      # 9 — v3: roles, attestation, sweep
+python3 evals/test_transport_v31.py                   # 10 — v3.1: bounded transport
+node    evals/test_discovery_v31.mjs                  # 11 — v3.1: cursor enumeration
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
 python3 scripts/project_contract.py validate          # real projects, when any exist
 ```
+
+The two v3.1 suites exist because the Improvements proving run found things the
+previous nine could not have caught:
+
+* `test_discovery_v31.mjs` runs the **real shipped** `scripts/project_discovery.js`
+  under a fake platform — not a Python reimplementation of it, which would have proved
+  only that the copy agrees with itself. Before v3.1 no eval executed any of the
+  browser-side JS at all, which is why a discovery adapter that called the wrong
+  endpoint shipped and was only found by a live run. It also exercises `extract.js`'s
+  transport digest against a minimal DOM. It needs `node`; the workflow declares it with
+  `setup-node` rather than relying on the runner image happening to have one.
+* `test_transport_v31.py` exercises `scripts/reassemble_verify.py`, which no suite
+  covered either: the >32 KB chunk that spilled during the proving run, the
+  equal-length stale-clipboard payload a missed trusted click leaves behind, the
+  framing shapes a broken transfer actually makes (T1–T9), and the trust-boundary
+  family (T10–T13) that pins Intake's own vocabulary about the runtime's storage and
+  the sandbox override.
+
+The discovery suite also executes BOTH capture scripts — `data_capture.js` (preferred)
+and `extract.js` (DOM fallback) — against minimal fakes, because the transport digest
+that closes finding D is theirs to produce, and a digest wired to only one of them is
+exactly the defect that shipped in this release's first draft.
+
+Every code the tools can print is a contract surface. The transport ones:
+`TRANSPORT_CHUNK_OVERSIZE`, `TRANSPORT_DIGEST_MISMATCH`, `TRANSPORT_DIGEST_UNVERIFIED`,
+`TRANSPORT_SLICE_MERGED`, `TRANSPORT_SLICE_TRUNCATED`, `TRANSPORT_SLICE_REFETCHED`,
+`TRANSPORT_INCOMPLETE`, `TRANSPORT_TAIL_MISSING`, `TRANSPORT_PAYLOAD_SHORT`,
+`TRANSPORT_LENGTH_UNEXPLAINED`, `TRANSPORT_INDEX_IMPLAUSIBLE`,
+`TRANSPORT_CONTENT_WRONG`. The capture one that says the manifest is out of step
+with the bytes: `SOURCE_IDENTITY_RECORD_STALE`.
 
 (`project_contract.py validate` legitimately fails with "contains no project
 manifests" until the first real sweep has run — that is the mis-pathed-corpus guard
 doing its job, not a regression.)
 
 Workflows exist for both repos — `.github/workflows/intake-contract.yml` here and
-`corpus-contract.yml` in the corpus — but be precise about their status: a workflow is
-only *running* once the file is pushed, and only *enforcing* once it is a **required
-status check** in branch protection. Neither step has been done yet (see
-OWNER_ACTION_REQUIRED). Until then, the local pre-commit hook is the only live gate, and
-it is overridable with `--no-verify`.
+`corpus-contract.yml` in the corpus — and a workflow is only *running* once the file is
+pushed, only *enforcing* once it is a **required status check** in branch protection.
+For THIS repo both steps are now done: `main` requires the `contract` check (verified
+against the branch-protection API on 2026-08-31, `strict: true`), so a red run blocks the
+merge. `enforce_admins` is off, so an admin can still override — that is a person
+deciding, not a gate that silently is not there. The corpus repo's own hook remains a
+local gate, overridable with `--no-verify`.
 
-CI additionally runs a **mutation guard**: it stubs out each of the four modules
-(`plan_contract`, `context_contract`, `project_contract`, `intake_common`) in turn and
-requires the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
+CI additionally runs a **mutation guard**: it stubs out each of the five modules
+(`plan_contract`, `context_contract`, `project_contract`, `intake_common`,
+`reassemble_verify`) in turn — plus all three shipped browser scripts
+(`project_discovery.js`, against both the discovery suite and the v3 suite whose
+enumeration-evidence fixtures are its real output; `extract.js`; `data_capture.js`) —
+and requires
+the suites that depend on the stubbed module to fail for every combination. This catches the failure mode where a stub raises
 `SystemExit(0)` mid-run and the suite exits green having executed almost nothing — which
 is why every suite also asserts a floor (`MIN_CHECKS`) on checks actually executed.
 
@@ -148,7 +190,8 @@ first rationale delivered by a real run becomes the known-good example.
 ## 6. Approved-plan falsification (`test_plan_contract.py`)
 
 Executes `scripts/plan_contract.py` against corpora built on disk — no mocks. Weighted
-towards falsification: three happy-path cases against ~20 ways a plan can be unprovable
+towards falsification: a minority of happy-path cases against the many ways a plan can
+be unprovable
 (missing, unbound, wrong hash, wrong slug, unapproved, superseded pointer, broken
 supersession, orphaned version, escaped path, section summarized away, plan bound at the
 wrong lifecycle state, filename/version drift, pointer to an unproven plan).
@@ -170,8 +213,9 @@ case (`R8`) runs the same scenario with no durable plan and asserts it fails clo
 `LEGACY_PLAN_ARTIFACT_MISSING` rather than guessing.
 
 The suite also guards a negative property that is easy to lose (`case 14`): nothing in
-the scripts, SKILL.md, README or the templates may require a private conversation or
-session path. The mechanism must work for a fresh agent that has only repository +
+the scripts, SKILL.md, README, the approved-plan template or the brief template may
+require a private conversation or session path. (Those two templates are the ones case
+14 reads; the transport suite's T10 pin covers references/ in full, by fingerprint.) The mechanism must work for a fresh agent that has only repository +
 intake access.
 
 ## 7. Context continuity (`test_context_v2.py`)
@@ -225,7 +269,7 @@ packages, real git repositories, the real validators, no mocks.
 | C15 | pointer retirement | the named block goes, the other stays byte-identical, no intake artifact changes, wrong/ambiguous retirement removes nothing |
 | T1–T8 | source trust | injection-shaped page stays evidence; foreign README gains no authority; an attachment cannot forge owner approval; source text cannot switch the workstream; owner adoption is the legitimate path; a declared target keeps canonical authority; ambiguity fails closed; the auditor has a code for source→decision escalation |
 
-It ends with an **18-case mutation matrix** covering both families: altered source-set
+It ends with a **19-case mutation matrix** covering both families: altered source-set
 identity, a source appended without a revision, duplicate episode ids, an overwritten raw
 episode, rewritten/truncated revision history, a manifest downgraded out of revision
 tracking, a fabricated owner delta, stripped external provenance, a suppressed audit
@@ -241,13 +285,47 @@ git, the real validators, control fixtures, MIN_CHECKS floor):
 
 | | Family | Proves |
 |---|---|---|
-| A1–A6 | role-aware provenance | an assistant "decision" never passes as owner-backed; a real owner message does; mixed ranges resolve to the part carrying authority; external text confers nothing; legacy role-less transcripts report UNKNOWN honestly |
-| B5–B8 | approval strength | WEAK is persisted and reported; STRONG stays STRONG; a pre-v3 plan is LEGACY_UNKNOWN, never promoted; a post-commit WEAK→STRONG flip fails |
+| A1–A7 | role-aware provenance | an assistant "decision" never passes as owner-backed; a real owner message does; mixed ranges resolve to the part carrying authority; external text confers nothing; legacy role-less transcripts report UNKNOWN honestly |
+| B5–B9 | approval strength | WEAK is persisted and reported; STRONG stays STRONG; a pre-v3 plan is LEGACY_UNKNOWN, never promoted; a post-commit WEAK→STRONG flip fails |
 | C8–C12 | project source model | stable CONV identities from platform ids; same-title conversations stay separate; reruns upsert; updates become traceable revisions; old raw survives byte-identically |
-| D13–D16 | project coverage | capture failures are hard gaps; manifest ↔ tree in both directions; interrupted sweeps resume from the manifest; a hand-asserted COMPLETE fails |
-| E17–E20 | idea routing | one chat → many ideas; many chats → one idea; ambiguity queues without blocking; duplicate INDEX rows fail |
+| D13–D17 | project coverage | capture failures are hard gaps; manifest ↔ tree in both directions; interrupted sweeps resume from the manifest; a hand-asserted COMPLETE fails |
+| E17–E21 | idea routing | one chat → many ideas; many chats → one idea; ambiguity queues without blocking; duplicate INDEX rows fail |
 | F21–F24 | mode separation | a full synthetic sweep produces no plans and no interviews, lands ideas at `status: idea`, and completes unattended via CLI alone |
 | G25–G29 | audit & trust | dangling/hash-unlinked provenance; self-closed audit findings; owner-less dismissals; tampered hashes; mutated raw; assistant proposals refused downstream of a sweep |
 | H30–H31 | side effects | the tooling never commits the corpus; every command runs against a tmp `--corpus` |
+| I32–I42 | source identity vs builder metadata (v3.1) | the CONV-012 reproducer: byte-identical messages under a re-worded `**Syfte:**` line mint NO revision, and neither does a later `**Exportdatum:**`; a changed message or a changed speaker still does; the old raw survives; an interrupted write is refused rather than overwritten; a legacy revision with no recorded identity reaches the same no-op without migration; and a `source_sha256` the bytes cannot back is caught by both `capture` and `validate` |
+| J39–J49 | enumeration evidence (v3.1) | `--verified` without `--evidence` is refused; so are a record naming the v3.0 query endpoint, one describing another project, an all-null or unbalanced cursor ledger, a padded item count, and the adapter's own reported count disagreement; a real record from the shipped adapter DOES verify, is archived in-corpus, and is re-checked for tampering; a pre-v3.1 claim stays valid as legacy without being promoted; a manifest malformed beyond what the contract models becomes PROJECT_VALIDATION_CRASHED instead of aborting the sweep; and init's printed next step is a command that actually runs |
 
 No real project is ever swept by the evals — every fixture is synthetic and torn down.
+The J-family fixtures are produced by running the SHIPPED `scripts/project_discovery.js`
+under node (`evals/discovery_record.mjs`), so the checker is fed what the adapter really
+writes rather than a hand-built record that would only prove the two agree with a
+fixture.
+
+## 10. v3.1 transport suite (`test_transport_v31.py`)
+
+Drives `scripts/reassemble_verify.py` directly, in temp directories. Nothing here reads
+or writes a real user file, and T12 proves that by comparing `$HOME` and the repo root
+before and after — not by asserting that a `mkdtemp()` path is under the temp dir, which
+is what it used to do and which could not fail.
+
+| | Family | Proves |
+|---|---|---|
+| T1–T3 | large source | a conversation far past the tool-output ceiling transports in bounded chunks, byte-exact, hash intact, fences balanced |
+| T4–T5 | the bound is real | an oversized FRAMED chunk is refused; the file/clipboard relay is not bounded by it; an undeclared transport defaults to the bounded reading; a corrupted slice index is refused rather than enumerated |
+| T6–T7 | broken transfers | a mid-transfer gap, a truncated slice that swallowed the next, a truncated LAST slice, a missing tail and a short single slice each get their own named diagnosis and a resume point; a duplicate index is reported; a conversation quoting `S<i>\|` and `#END#` in its own text still verifies, in all five arrangements; and a genuinely damaged payload is not rescued by any of it |
+| T8–T9 | length is not identity | the equal-length stale-clipboard payload is caught by the digest; the digest is mandatory and waiving it is a deliberate, loud act |
+| T10–T13 | the trust boundary | every mention of the runtime's own directory and every sandbox-bypass phrase in Intake's own text matches a pinned wording, across the rubrics and the workflow too; the pins fire on a new occurrence, a paraphrase inside the vocabulary, and a same-count swap; this suite writes nothing outside its temp directory |
+
+## 11. v3.1 discovery suite (`test_discovery_v31.mjs`)
+
+Runs the three SHIPPED browser scripts under node against fake platforms. Needs `node`;
+the workflow declares it with `setup-node`.
+
+| | Family | Proves |
+|---|---|---|
+| A1–A3 | cursor walk | two pages then exhaustion gives the exact union; a duplicate across pages is one source; same title with different ids stays two |
+| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its account-wide listing (an 80-chat fixture standing in for the real run's 800) cannot be reached |
+| A5–A8 | exhaustion | an outstanding cursor, a cursor that never advances, and a disagreeing total each block the claim; an empty project with an exhausted cursor is a valid zero-membership result; a rerun is byte-identical |
+| A9–A10 | guards | an unknown host and a missing project id fail closed; the adapter builds a path-scoped URL and never a `gizmo_id` query |
+| A11–A12 | capture digests | `extract.js` and `data_capture.js` both report the sha256 Step 4 requires, of exactly the bytes they stored, and both keep their load-bearing leading `await` |

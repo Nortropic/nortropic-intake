@@ -21,6 +21,13 @@ run through the real validators — no mocks:
           mutated raw, and project normalization that cannot mint owner authority.
   H30–H31 side-effect contract: the tools never commit the corpus; fixtures never
           touch the real corpus (every command runs against a tmp --corpus).
+  I32–I38 source identity vs builder metadata (v3.1, from the proving run): a
+          re-worded purpose line or a later export date is DERIVED and never mints a
+          revision; a changed message or a changed speaker still does.
+  J39–J48 enumeration evidence (v3.1, from the proving run): a verified claim must
+          carry a proof of membership scope and cursor exhaustion that `declare` AND
+          `validate` both re-read from its bytes, bound to the project's own origin;
+          a pre-v3.1 claim stays valid as legacy without being promoted.
 
 All real Improvements sweeping is out of scope here BY CONSTRUCTION: every project
 in this suite is synthetic, in a temp directory, and torn down after the run.
@@ -31,6 +38,7 @@ Usage (from the skill root):
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -41,7 +49,7 @@ import fixtures as F  # noqa: E402
 RESULTS = []
 
 # A suite that exits 0 having run nothing reports success it did not earn.
-MIN_CHECKS = 50
+MIN_CHECKS = 75
 
 
 def check(name, condition, detail=""):
@@ -151,6 +159,7 @@ SWEEP_CHAT_2B = SWEEP_CHAT_2 + """
 Tillägg: grinden ska också logga varje beslut.
 """
 
+GID = "g-p-demo"
 URL_1 = "https://chatgpt.com/c/aaaaaaaa-1111-2222-3333-000000000001"
 URL_2 = "https://chatgpt.com/c/bbbbbbbb-1111-2222-3333-000000000002"
 URL_3 = "https://chatgpt.com/c/cccccccc-1111-2222-3333-000000000003"
@@ -209,7 +218,8 @@ def sweep_project(tmp, name="demo-sweep"):
         {"url": URL_3, "title": "Kvalitetsgrinden"},   # same TITLE, different id
     ]), encoding="utf-8")
     rc, out = F.project(["init", "--project", name, "--title", "Demo sweep",
-                         "--platform", "chatgpt", "--at", "2026-08-30"], corpus)
+                         "--platform", "chatgpt", "--at", "2026-08-30",
+                         "--origin", "https://chatgpt.com/g/%s/project" % GID], corpus)
     assert rc == 0, out
     rc, out = F.project(["declare", "--project", name, "--inventory", str(inv),
                          "--method", "declared", "--at", "2026-08-30"], corpus)
@@ -915,11 +925,645 @@ def h_side_effects(tmp):
           and "NORTROPIC_INTAKE_CORPUS" in open(F.__file__, encoding="utf-8").read())
 
 
+# ======================== I. source identity vs builder metadata (v3.1) =====
+
+# The real CONV-012 shape. Everything above the first `## Meddelande` header is
+# written by the builder ABOUT the conversation; below it is what was actually said.
+def _delivery(syfte, exportdatum="2026-08-31", body=None, opener="Johnny (användare)"):
+    return (
+        "# Nortropic Evolution Radar — fullständigt transkript\n\n"
+        "**Källprojekt:** Improvements (ChatGPT-projekt)\n"
+        "**Chatt:** Nortropic Evolution Radar\n"
+        "**URL:** %s\n"
+        "**Exportdatum:** %s\n"
+        "**Antal meddelanden:** 2 (1 användare, 1 assistent)\n"
+        "**Syfte:** %s\n\n"
+        "**Innehåll i korthet:** Samtalet öppnar med: ”%s…”\n\n---\n\n"
+        "## Meddelande 1 — %s\n\n%s\n\n---\n\n"
+        "## Meddelande 2 — ChatGPT (assistent)\n\n"
+        "Beslutat: radarn läser från Aquarium-strömmen.\n"
+        % (URL_1, exportdatum, syfte, (body or "Vi bygger Evolution Radar.")[:40],
+           opener, body or "Vi bygger Evolution Radar."))
+
+
+# The two purpose lines the proving run actually produced for CONV-012.
+SYFTE_R1 = ("Brainstorm om Nortropic Aquarium som ambient organisationsobservabilitet "
+            "samt evolution foundations och en Evolution Radar-bevakning.")
+SYFTE_R2 = ("Brainstorm om Nortropic Aquarium som ambient organizational observability "
+            "samt omvärldsbevakning och evolution foundations för Organization OS.")
+
+
+def i_source_identity(tmp):
+    corpus = sweep_project(tmp, "identity")
+    first = _delivery(SYFTE_R1)
+    rc, out = capture(corpus, "identity", "CONV-001", first, tmp, at="2026-08-31")
+    check("I32 the first capture lands as revision 1 and states its source identity",
+          rc == 0 and "revision 1" in out and "SOURCE_SHA256=" in out, out.strip()[:600])
+
+    # ---- I33: THE proving-run bug. Same conversation, re-worded purpose line.
+    drifted = _delivery(SYFTE_R2)
+    body = lambda s: s[s.index("## Meddelande 1"):]
+    check("I33a the reproducer is honest: only the derived header differs",
+          body(first) == body(drifted) and first != drifted)
+    rc, out = capture(corpus, "identity", "CONV-001", drifted, tmp, at="2026-08-31")
+    check("I33b a re-worded **Syfte:** line does NOT mint a revision "
+          "(the CONV-012 RERUN_IDEMPOTENCY_VIOLATION)",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+    check("I33c and it says WHY — derived metadata, not a source change",
+          "only derived builder/header metadata differs" in out, out.strip()[:600])
+
+    # ---- I34: the same root cause, on the field that would have hit all 27.
+    later = _delivery(SYFTE_R1, exportdatum="2026-09-04")
+    rc, out = capture(corpus, "identity", "CONV-001", later, tmp, at="2026-09-04")
+    check("I34 a later **Exportdatum:** does not re-revise the conversation either — "
+          "a rerun on another day is still a no-op",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+
+    # ---- I35: byte-identical input is still a plain no-op.
+    rc, out = capture(corpus, "identity", "CONV-001", first, tmp, at="2026-08-31")
+    check("I35 re-capturing the exact same bytes is a no-op, as it always was",
+          rc == 0 and "these bytes are already revision 1" in out, out.strip()[:600])
+
+    data = read_project_manifest(corpus, "identity")
+    src = data["sources"][0]
+    files = sorted(p.name for p in (Path(corpus) /
+                                    "_projects/identity/sources/CONV-001").iterdir())
+    check("I36a after three header-only reruns there is still exactly one revision",
+          len(src["revisions"]) == 1 and files == ["conversation.md"], str(files))
+    check("I36b and the stored revision records its source identity for the next rerun",
+          len(str(src["revisions"][0].get("source_sha256", ""))) == 64,
+          str(src["revisions"][0]))
+
+    # ---- I37: a REAL change to what was said must still create N+1.
+    changed = _delivery(SYFTE_R1, body="Vi bygger Evolution Radar, och den läser "
+                                       "Aquarium varje timme.")
+    rc, out = capture(corpus, "identity", "CONV-001", changed, tmp, at="2026-09-05")
+    data = read_project_manifest(corpus, "identity")
+    src = data["sources"][0]
+    check("I37a a changed message is a genuine source change: revision 2",
+          rc == 0 and "revision 2" in out
+          and [r["revision"] for r in src["revisions"]] == [1, 2], out.strip()[:600])
+    r1 = Path(corpus) / src["revisions"][0]["path"]
+    check("I37b the old raw revision survives, byte-identical",
+          r1.exists() and F.sha256_file(r1) == src["revisions"][0]["sha256"])
+    check("I37c the two revisions differ in SOURCE identity, not merely in file bytes",
+          src["revisions"][0]["source_sha256"] != src["revisions"][1]["source_sha256"])
+
+    # ---- I38: a changed speaker is a changed source — role labels are inside it.
+    corpus2 = sweep_project(Path(tmp) / "roles", "roles")
+    base = _delivery(SYFTE_R1)
+    capture(corpus2, "roles", "CONV-001", base, Path(tmp) / "roles", at="2026-08-31")
+    reroled = _delivery(SYFTE_R1, opener="ChatGPT (assistent)")
+    rc, out = capture(corpus2, "roles", "CONV-001", reroled, Path(tmp) / "roles",
+                      at="2026-08-31")
+    check("I38 a changed speaker role in the raw input IS a content revision — "
+          "role-aware provenance lives inside source identity",
+          rc == 0 and "revision 2" in out, out.strip()[:600])
+
+    # ---- legacy: a revision captured before source_sha256 existed still no-ops.
+    data = read_project_manifest(corpus, "identity")
+    for r in data["sources"][0]["revisions"]:
+        r.pop("source_sha256", None)
+    write_project_manifest(corpus, "identity", data)
+    rc, out = capture(corpus, "identity", "CONV-001", _delivery(SYFTE_R2,
+                      body="Vi bygger Evolution Radar, och den läser Aquarium varje "
+                           "timme."), tmp, at="2026-09-06")
+    check("I39 a legacy revision with no recorded source identity still reaches the "
+          "no-op — recomputed from the bytes on disk, no migration required",
+          rc == 0 and "CAPTURE_UNCHANGED" in out, out.strip()[:600])
+    rc, out = F.project(["validate", "--project", "identity"], corpus)
+    check("I40 and the corpus still validates with legacy revisions in it",
+          rc == 0, out.strip()[:600])
+
+    # ---- I41: a capture interrupted between writing the file and saving the
+    # manifest. The bytes are on disk, the manifest has not heard of them. The next
+    # attempt must not silently overwrite them into a phantom revision.
+    corpus3 = sweep_project(Path(tmp) / "crash", "crash")
+    crash_tmp = Path(tmp) / "crash"
+    capture(corpus3, "crash", "CONV-001", _delivery(SYFTE_R1), crash_tmp, at="2026-08-31")
+    data = read_project_manifest(corpus3, "crash")
+    orphan = _delivery(SYFTE_R1, body="Ett helt annat innehåll som aldrig bokfördes.")
+    (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md").write_text(
+        orphan, encoding="utf-8")            # file written, then the process died
+    rc, out = capture(corpus3, "crash", "CONV-001",
+                      _delivery(SYFTE_R1, body="Nytt riktigt innehåll."), crash_tmp,
+                      at="2026-09-01")
+    check("I41a an interrupted write is refused, never overwritten",
+          rc != 0 and "CAPTURE_REFUSED" in out and "never" in out, out.strip()[:600])
+    after = read_project_manifest(corpus3, "crash")
+    check("I41b and no phantom revision was booked into the manifest",
+          len(after["sources"][0]["revisions"])
+          == len(data["sources"][0]["revisions"]),
+          str(after["sources"][0]["revisions"]))
+    # ---- I42: source_sha256 steers a fail-closed decision, so it must answer to
+    # the bytes. A stale or forged value would make `capture` report CAPTURE_UNCHANGED
+    # for a conversation that really did change — the new bytes never written, and
+    # nothing downstream able to tell. The validator recomputes it, like the
+    # verification verdict and the whole-file hash before it.
+    corpus4 = sweep_project(Path(tmp) / "forge", "forge")
+    forge_tmp = Path(tmp) / "forge"
+    capture(corpus4, "forge", "CONV-001", _delivery(SYFTE_R1), forge_tmp, at="2026-08-31")
+    real_next = _delivery(SYFTE_R1, body="Ett helt nytt svar som faktiskt ändrats.")
+    data = read_project_manifest(corpus4, "forge")
+    import hashlib
+    region = real_next[real_next.index("## Meddelande 1"):].rstrip()
+    data["sources"][0]["revisions"][0]["source_sha256"] = hashlib.sha256(
+        region.encode("utf-8")).hexdigest()          # points at content not on disk
+    write_project_manifest(corpus4, "forge", data)
+    rc, out = F.project(["validate", "--project", "forge"], corpus4)
+    check("I42a a source_sha256 the bytes cannot back is caught by the validator",
+          rc != 0 and "PROJECT_SOURCE_IDENTITY_MISMATCH" in out, out.strip()[:700])
+    check("I42b and the finding says why it matters — a swallowed revision",
+          "silently swallows the next real revision" in out, out.strip()[:700])
+    # And `capture` is the decision point, so it must not trust the field either: a
+    # wrong value there says "unchanged", writes nothing, returns 0, and a genuine
+    # revision disappears with no trace for `validate` to find later.
+    rc, out = capture(corpus4, "forge", "CONV-001", real_next, forge_tmp, at="2026-09-02")
+    check("I42c a forged field does NOT make a real change look unchanged — capture "
+          "derives prior identity from the bytes, not from the manifest",
+          rc == 0 and "revision 2" in out and "CAPTURE_UNCHANGED" not in out,
+          out.strip()[:700])
+    check("I42d and the stale record is reported rather than quietly preferred",
+          "SOURCE_IDENTITY_RECORD_STALE" in out, out.strip()[:700])
+    data2 = read_project_manifest(corpus4, "forge")
+    check("I42e the genuine revision landed and both raw files survive",
+          [r["revision"] for r in data2["sources"][0]["revisions"]] == [1, 2]
+          and all((Path(corpus4) / r["path"]).is_file()
+                  for r in data2["sources"][0]["revisions"]),
+          str(data2["sources"][0]["revisions"]))
+
+    check("I41c the orphaned bytes survive on disk for the operator to resolve",
+          (Path(corpus3) / "_projects/crash/sources/CONV-001/conversation-r2.md"
+           ).read_text(encoding="utf-8") == orphan)
+
+
+# ======================== J. enumeration evidence (v3.1) ====================
+
+def real_discovery_record(urls, gid=GID):
+    """The record the SHIPPED adapter actually emits for these conversations.
+
+    Hand-writing this fixture is exactly the mistake it would be testing for: the two
+    halves of the enumeration contract — the adapter that produces the proof and the
+    checker that re-reads it — only mean something if the checker is fed what the
+    adapter really writes. So the adapter is run, under node, from its own source file.
+    """
+    ids = [u.rstrip("/").rsplit("/", 1)[-1] for u in urls]
+    out = subprocess.run(
+        ["node", str(Path(__file__).resolve().parent / "discovery_record.mjs"), gid]
+        + ids, capture_output=True, text=True)
+    assert out.returncode == 0, out.stdout + out.stderr
+    return json.loads(out.stdout)
+
+
+def _evidence(tmp, name, urls, _base=None, **over):
+    """A discovery record, derived from the real one so the negatives stay realistic."""
+    rec = json.loads(json.dumps(_base if _base is not None
+                                else real_discovery_record(urls)))
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(rec.get(k), dict):
+            rec[k].update(v)
+        else:
+            rec[k] = v
+    path = Path(tmp) / ("evidence-%s.json" % name)
+    path.write_text(json.dumps(rec), encoding="utf-8")
+    return path
+
+
+def j_enumeration_evidence(tmp):
+    corpus = sweep_project(tmp, "enum")
+    inv = Path(tmp) / "inventory.json"          # the same 3 conversations
+    urls = [URL_1, URL_2, URL_3]
+
+    def declare(evidence=None, verified=True):
+        argv = ["declare", "--project", "enum", "--inventory", str(inv),
+                "--method", "data-layer", "--at", "2026-08-31"]
+        if verified:
+            argv.append("--verified")
+        if evidence:
+            argv += ["--evidence", str(evidence)]
+        return F.project(argv, corpus)
+
+    rc, out = declare(evidence=None)
+    check("J39 --verified with no evidence at all is REFUSED — v3.0's unearned boolean",
+          rc != 0 and "ENUMERATION_VERIFICATION_REFUSED" in out
+          and "requires --evidence" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "foreign", urls,
+                   membership={"foreign_items": ["someone-elses-chat"]},
+                   verifiable=False)
+    rc, out = declare(ev)
+    check("J40 evidence containing another project's conversation cannot verify "
+          "membership — the exact v3.0 unfiltered-endpoint defect",
+          rc != 0 and "belonging to another" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "unfiltered", urls,
+                   membership={"scope": "query-filtered"})
+    rc, out = declare(ev)
+    check("J41 a query-filtered endpoint can never establish membership, however "
+          "complete it claims to be",
+          rc != 0 and "in its PATH" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "unproven", urls,
+                   exhaustion={"proven": False, "reason": "cursor still outstanding"},
+                   verifiable=False)
+    rc, out = declare(ev)
+    check("J42 unproven exhaustion is PROJECT_ENUMERATION_UNVERIFIED, not a claim",
+          rc != 0 and "PROJECT_ENUMERATION_UNVERIFIED" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "othersett", [URL_1, URL_2])
+    rc, out = declare(ev)
+    check("J43 evidence about a DIFFERENT set of conversations proves nothing "
+          "about this inventory",
+          rc != 0 and "proves nothing about this one" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "brokenendpoint", urls,
+                   endpoint="/backend-api/conversations?limit=50&gizmo_id=" + GID)
+    rc, out = declare(ev)
+    check("J43b a record LABELLED path-scoped while naming the v3.0 query endpoint is "
+          "refused — the label is not the proof, the request path is",
+          rc != 0 and "gizmo_id QUERY filter" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "selfinconsistent", urls, projectId="g-p-somewhere-else")
+    rc, out = declare(ev)
+    check("J43c a record whose endpoint disagrees with its own projectId is refused",
+          rc != 0 and "the request path is" in out, out.strip()[:700])
+
+    # And the harder one the name above used to imply but never tested: a record that
+    # is perfectly self-consistent about a DIFFERENT project.
+    other = real_discovery_record(urls, gid="g-p-someone-elses-project")
+    ev = _evidence(tmp, "otherproject", urls, _base=other)
+    rc, out = declare(ev)
+    check("J43c2 a self-consistent proof about ANOTHER project cannot verify this one "
+          "— the evidence is bound to the project's own origin",
+          rc != 0 and "proves nothing here" in out, out.strip()[:700])
+
+    # An all-null ledger is what a record written from memory looks like: every check
+    # that compares cursors to each other passes, because they are all None.
+    amnesiac = real_discovery_record(urls)
+    for pg in amnesiac["exhaustion"]["pages"]:
+        pg["cursor_in"] = None
+        pg["cursor_out"] = None
+    ev = _evidence(tmp, "amnesiac", urls, _base=amnesiac)
+    rc, out = declare(ev)
+    check("J43c3 an all-null cursor ledger is refused — a page that ends the walk "
+          "before the last page never happened",
+          rc != 0 and "not the last page" in out, out.strip()[:700])
+
+    dup = real_discovery_record(urls)
+    dup["items"].append(dict(dup["items"][0]))
+    dup["collected"] = len(dup["items"])
+    dup["exhaustion"]["pages"][-1]["items"] += 1
+    ev = _evidence(tmp, "paddeditems", urls, _base=dup)
+    rc, out = declare(ev)
+    check("J43c4 a duplicated item cannot pad the count past a set comparison",
+          rc != 0 and "only %d distinct" % len(urls) in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "badcount", urls)
+    rec = json.loads(ev.read_text(encoding="utf-8"))
+    rec["exhaustion"]["pages"][0]["items"] = "two"
+    ev.write_text(json.dumps(rec), encoding="utf-8")
+    rc, out = declare(ev)
+    check("J43c5 a non-numeric page count is a stated refusal, not a traceback",
+          rc != 0 and "cannot be added up" in out and "Traceback" not in out,
+          out.strip()[:700])
+
+    ev = _evidence(tmp, "noledger", urls,
+                   exhaustion={"pages": [], "pages_walked": 2})
+    rc, out = declare(ev)
+    check("J43d a walk with no page ledger cannot demonstrate exhaustion",
+          rc != 0 and "no page ledger" in out, out.strip()[:700])
+
+    real_open = real_discovery_record(urls)
+    real_open["exhaustion"]["pages"][-1]["cursor_out"] = "still-more"
+    ev = _evidence(tmp, "openledger", urls, _base=real_open)
+    rc, out = declare(ev)
+    check("J43e a ledger whose last page still hands out a cursor stopped, "
+          "it did not finish",
+          rc != 0 and "it did not finish" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "miscount", urls, collected=99999)
+    rc, out = declare(ev)
+    check("J43f a collected count that does not match the items it counts is refused",
+          rc != 0 and "does not match what it counts" in out, out.strip()[:700])
+
+    # The ledger has to add up, not merely exist. A record reconstructed from memory
+    # after a transport failure stops agreeing with itself here.
+    thin = real_discovery_record(urls)
+    thin["exhaustion"]["pages"] = [{"page": 1, "cursor_in": None, "items": 0,
+                                    "cursor_out": None}]
+    thin["exhaustion"]["pages_walked"] = 1
+    ev = _evidence(tmp, "thinledger", urls, _base=thin)
+    rc, out = declare(ev)
+    check("J43g a ledger whose pages saw 0 items cannot account for the conversations "
+          "the record claims to have collected",
+          rc != 0 and "does not account for the result" in out, out.strip()[:700])
+
+    broken = real_discovery_record(urls)
+    broken["exhaustion"]["pages"][1]["cursor_in"] = "a-different-cursor"
+    ev = _evidence(tmp, "chainbreak", urls, _base=broken)
+    rc, out = declare(ev)
+    check("J43h pages whose cursors do not chain are not one walk",
+          rc != 0 and "cursor chain breaks" in out, out.strip()[:700])
+
+    midstream = real_discovery_record(urls)
+    midstream["exhaustion"]["pages"][0]["cursor_in"] = "resume-token"
+    ev = _evidence(tmp, "midstream", urls, _base=midstream)
+    rc, out = declare(ev)
+    check("J43i a walk that started mid-stream never enumerated the beginning",
+          rc != 0 and "has not enumerated the beginning" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "disagrees", urls,
+                   count_oracle="DISAGREES: collected 27 vs total 800")
+    rc, out = declare(ev)
+    check("J43j the adapter's own count disagreement cannot be declared as a "
+          "verification",
+          rc != 0 and "count oracle says" in out, out.strip()[:700])
+
+    data = read_project_manifest(corpus, "enum")
+    check("J44a not one refused declaration promoted the enumeration",
+          data["enumeration"]["verified"] is False, str(data["enumeration"]))
+
+    # A project whose manifest never recorded a project origin has nothing to bind a
+    # proof to. Fail closed rather than fall back to the record's own word.
+    unbound = sweep_project(Path(tmp) / "unbound", "unbound")
+    F.project(["init", "--project", "unbound2", "--title", "No origin",
+               "--platform", "chatgpt", "--at", "2026-08-31"], unbound)
+    inv2 = Path(tmp) / "inv-unbound.json"
+    inv2.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    ev = _evidence(tmp, "unbound", urls)
+    rc, out = F.project(["declare", "--project", "unbound2", "--inventory", str(inv2),
+                         "--evidence", str(ev), "--method", "data-layer",
+                         "--verified", "--at", "2026-08-31"], unbound)
+    check("J43c6 a project with no recorded origin cannot bind any proof, so it "
+          "cannot claim a verified enumeration",
+          rc != 0 and "cannot be bound to it" in out, out.strip()[:700])
+
+    real = real_discovery_record(urls)
+    check("J44a2 the shipped adapter's own output is what the checker is fed — the "
+          "two halves of the enumeration contract actually meet",
+          real["verifiable"] is True
+          and real["endpoint"] == "/backend-api/gizmos/%s/conversations" % GID
+          and len(real["exhaustion"]["pages"]) == real["exhaustion"]["pages_walked"]
+          and real["exhaustion"]["pages"][-1]["cursor_out"] is None,
+          json.dumps(real.get("exhaustion"))[:400])
+    ev = _evidence(tmp, "good", urls, _base=real)
+    rc, out = declare(ev)
+    data = read_project_manifest(corpus, "enum")
+    check("J44b a path-scoped, cursor-exhausted record DOES verify the enumeration",
+          rc == 0 and "VERIFIED=YES" in out and "ENUMERATION_EVIDENCE=" in out,
+          out.strip()[:700])
+    check("J44c and the proof is recorded in the manifest for audit, not just trusted",
+          data["enumeration"]["verified"] is True
+          and data["enumeration"]["evidence"]["terminal_signal"] == "cursor-absent"
+          and len(data["enumeration"]["evidence"]["sha256"]) == 64,
+          str(data["enumeration"].get("evidence")))
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44d an evidence-backed verified enumeration validates clean, no warning",
+          rc == 0 and "ENUMERATION_EVIDENCE_LEGACY_ABSENT" not in out,
+          out.strip()[:700])
+
+    # The proof survives with the corpus, and answers to its own bytes.
+    archived = Path(corpus) / data["enumeration"]["evidence"]["record"]
+    check("J44e the record itself is archived in the corpus, not left at an absolute "
+          "path on whichever laptop ran the sweep",
+          archived.is_file()
+          and not Path(data["enumeration"]["evidence"]["record"]).is_absolute()
+          and F.sha256_file(archived) == data["enumeration"]["evidence"]["sha256"],
+          str(data["enumeration"]["evidence"].get("record")))
+    archived.write_text(archived.read_text(encoding="utf-8").replace(
+        '"collected"', '"COLLECTED"'), encoding="utf-8")
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44f editing the archived proof after the fact is caught",
+          rc != 0 and "ENUMERATION_EVIDENCE_TAMPERED" in out, out.strip()[:700])
+    archived.unlink()
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J44g and deleting it is caught too — a proof nobody can re-read is not one",
+          rc != 0 and "ENUMERATION_EVIDENCE_MISSING" in out, out.strip()[:700])
+    ev = _evidence(tmp, "good2", urls, _base=real)
+    declare(ev)
+    data = read_project_manifest(corpus, "enum")
+
+    # ---- the archived proof is re-CHECKED, not merely counted --------------
+    # Verifying only the digest would make the claim answerable to whatever bytes were
+    # archived — the same asymmetry this contract refuses for transcripts.
+    archived = Path(corpus) / data["enumeration"]["evidence"]["record"]
+    archived.write_text('{"this": "is not a discovery record at all"}', encoding="utf-8")
+    d2 = read_project_manifest(corpus, "enum")
+    d2["enumeration"]["evidence"]["sha256"] = F.sha256_file(archived)
+    write_project_manifest(corpus, "enum", d2)
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J46a a hand-written manifest cannot verify by archiving junk and recording "
+          "its digest — validate re-reads the proof itself",
+          rc != 0 and "ENUMERATION_CLAIM_INVALID" in out
+          and "does not carry the claim it backs" in out, out.strip()[:800])
+    ev = _evidence(tmp, "good3", urls, _base=real)
+    declare(ev)
+
+    # ---- the checks nothing exercised -------------------------------------
+    unproven = real_discovery_record(urls)
+    unproven["exhaustion"]["proven"] = False        # verifiable stays true
+    ev = _evidence(tmp, "provenonly", urls, _base=unproven)
+    rc, out = declare(ev)
+    check("J46b exhaustion.proven is checked on its own, not only via verifiable",
+          rc != 0 and "exhaustion.proven is not true" in out, out.strip()[:700])
+
+    notver = real_discovery_record(urls)
+    notver["verifiable"] = False                    # exhaustion stays proven
+    ev = _evidence(tmp, "verifiableonly", urls, _base=notver)
+    rc, out = declare(ev)
+    check("J46c and verifiable is checked on its own too — neither of the pair is "
+          "green because of the other",
+          rc != 0 and "does not claim verifiable:true" in out, out.strip()[:700])
+
+    ev = _evidence(tmp, "freetextsignal", urls,
+                   exhaustion={"terminal_signal": "trust me, it ended"})
+    rc, out = declare(ev)
+    check("J46d a terminal signal the adapter cannot emit is an assertion in free "
+          "text, not a measurement",
+          rc != 0 and "is not one of" in out, out.strip()[:700])
+
+    badwalk = real_discovery_record(urls)
+    badwalk["exhaustion"]["pages_walked"] = 7
+    ev = _evidence(tmp, "walkcount", urls, _base=badwalk)
+    rc, out = declare(ev)
+    check("J46e a pages_walked that disagrees with the ledger is refused",
+          rc != 0 and "the ledger holds" in out, out.strip()[:700])
+
+    junkitem = real_discovery_record(urls)
+    junkitem["items"].append({"title": "no url and no key"})
+    junkitem["collected"] = len(junkitem["items"])
+    junkitem["exhaustion"]["pages"][-1]["items"] += 1
+    ev = _evidence(tmp, "junkitem", urls, _base=junkitem)
+    rc, out = declare(ev)
+    check("J46f an item with no resolvable conversation identity is not a member",
+          rc != 0 and "no resolvable conversation" in out, out.strip()[:700])
+
+    # ---- MAT-4: every malformed shape is a refusal, never a traceback ------
+    for label, mutate in (
+            ("strpages", lambda r: r["exhaustion"].__setitem__("pages", ["p1", "p2"])),
+            ("strcollected", lambda r: r.__setitem__("collected", "3")),
+            ("strdupes", lambda r: r.__setitem__("duplicates_dropped", "0"))):
+        rec = real_discovery_record(urls)
+        mutate(rec)
+        ev = _evidence(tmp, label, urls, _base=rec)
+        rc, out = declare(ev)
+        check("J46g[%s] a malformed evidence field is a stated refusal, not a "
+              "traceback" % label,
+              rc != 0 and "Traceback" not in out
+              and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:700])
+
+    # ---- a TRUTHY non-dict is the shape `or {}` does not defend, and a validator
+    #      that raises inside the corpus sweep takes every later project with it ----
+    for label, mutate in (
+            ("membership", lambda r: r.__setitem__("membership", True)),
+            ("exhaustion", lambda r: r.__setitem__("exhaustion", True)),
+            ("foreign", lambda r: r["membership"].__setitem__("foreign_items", 5)),
+            ("items", lambda r: r.__setitem__("items", "two"))):
+        rec = real_discovery_record(urls)
+        mutate(rec)
+        ev = _evidence(tmp, "truthy-" + label, urls, _base=rec)
+        rc, out = declare(ev)
+        check("J46h[%s] a truthy non-object evidence field is a stated refusal, not a "
+              "traceback" % label,
+              rc != 0 and "Traceback" not in out
+              and "ENUMERATION_VERIFICATION_REFUSED" in out, out.strip()[:600])
+
+    # The fixture must actually CRASH validate_project, or the try/except this check
+    # exists for never runs — an earlier version used the M1 shape, which the M1 fix
+    # itself turned into an ordinary refusal, leaving the guard green but unexercised.
+    # A review proved that by deleting the guard with the check still passing. A
+    # non-dict SOURCE is a shape the validator's own typing does not model.
+    crashed = sweep_project(Path(tmp) / "crash-sweep", "aaa-broken")
+    cdata = read_project_manifest(crashed, "aaa-broken")
+    cdata["sources"][0]["ideas"] = [1]        # a non-string idea slug: TypeError in
+    write_project_manifest(crashed, "aaa-broken", cdata)   # the idea-link resolution
+    healthy = sweep_project(Path(tmp) / "healthy", "zzz-healthy")
+    shutil.copytree(Path(healthy) / "_projects/zzz-healthy",
+                    Path(crashed) / "_projects/zzz-healthy")
+    rc, out = F.project(["validate"], crashed)
+    check("J46i a manifest malformed beyond what the contract models cannot abort the "
+          "corpus-wide sweep — it becomes PROJECT_VALIDATION_CRASHED and the projects "
+          "sorted after it are still validated",
+          rc != 0 and "Traceback" not in out
+          and "PROJECT_VALIDATION_CRASHED" in out and "zzz-healthy" in out,
+          out.strip()[:800])
+
+    # ---- MAT-2: the origin is reachable after init, and a rename is not a
+    #      different project ------------------------------------------------
+    late = sweep_project(Path(tmp) / "late", "late")
+    F.project(["init", "--project", "late2", "--title", "Origin came later",
+               "--platform", "chatgpt", "--at", "2026-08-31"], late)
+    inv3 = Path(tmp) / "inv-late.json"
+    inv3.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    ev = _evidence(tmp, "late", urls)
+    rc, out = F.project(["declare", "--project", "late2", "--inventory", str(inv3),
+                         "--evidence", str(ev), "--method", "data-layer", "--verified",
+                         "--origin", "https://chatgpt.com/g/%s/project" % GID,
+                         "--at", "2026-08-31"], late)
+    check("J47a a project scaffolded without --origin is not stuck: declare can "
+          "record it, and then the proof binds",
+          rc == 0 and "VERIFIED=YES" in out, out.strip()[:800])
+    rc, out = F.project(["declare", "--project", "late2", "--inventory", str(inv3),
+                         "--method", "declared", "--origin",
+                         "https://chatgpt.com/g/g-p-something-else/project",
+                         "--at", "2026-08-31"], late)
+    check("J47b but changing WHICH project a corpus is about is not a declare-time "
+          "edit", rc != 0 and "already records origin" in out, out.strip()[:700])
+    # …and the rename tolerance has to reach this guard too, or it refuses a rename at
+    # the gate before the one that was written to accept it. A real ChatGPT project id
+    # is `g-p-<32 hex>-<slug>` and the slug follows the title, so use that shape.
+    HEX = "g-p-6a86d9dcb8488191b03ee843bb19eb6c"
+    ren = sweep_project(Path(tmp) / "ren-guard", "ren3")
+    F.project(["init", "--project", "ren4", "--title", "Rename guard", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s-improvements/project" % HEX], ren)
+    rc, out = F.project(["declare", "--project", "ren4", "--inventory", str(inv3),
+                         "--method", "declared", "--at", "2026-09-01", "--origin",
+                         "https://chatgpt.com/g/%s-forbattringar/project" % HEX], ren)
+    check("J47b2 re-passing the SAME project's origin after a rename is accepted — "
+          "the guard compares project identity, not URL text",
+          rc == 0, out.strip()[:700])
+    rc, out = F.project(["declare", "--project", "ren4", "--inventory", str(inv3),
+                         "--method", "declared", "--at", "2026-09-01", "--origin",
+                         "https://chatgpt.com/g/g-p-0000000000000000000000000000000a/project"],
+                        ren)
+    check("J47b3 while a genuinely different project id is still refused",
+          rc != 0 and "already records origin" in out, out.strip()[:700])
+
+    # A ChatGPT project id is `g-p-<hex>-<slug>` and the slug follows the TITLE, so a
+    # rename must not read as a different project.
+    renamed = sweep_project(Path(tmp) / "renamed", "renamed")
+    hexgid = "g-p-6a86d9dcb8488191b03ee843bb19eb6c"
+    F.project(["init", "--project", "ren2", "--title", "Renamed", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s-improvements/project" % hexgid], renamed)
+    ev = _evidence(tmp, "renamed", urls,
+                   _base=real_discovery_record(urls, gid=hexgid + "-forbattringar"))
+    rc, out = F.project(["declare", "--project", "ren2", "--inventory", str(inv3),
+                         "--evidence", str(ev), "--method", "data-layer", "--verified",
+                         "--at", "2026-08-31"], renamed)
+    check("J47c renaming the project on the platform rewrites the id's slug, not its "
+          "identity — the proof still binds",
+          rc == 0 and "VERIFIED=YES" in out, out.strip()[:800])
+
+    # ---- MAT-3: the documented single-file command actually runs -----------
+    onefile = sweep_project(Path(tmp) / "onefile", "onefile")
+    F.project(["init", "--project", "one2", "--title", "One file", "--platform",
+               "chatgpt", "--at", "2026-08-31", "--origin",
+               "https://chatgpt.com/g/%s/project" % GID], onefile)
+    rec_path = Path(tmp) / "discovery.json"
+    rec_path.write_text(json.dumps(real_discovery_record(urls)), encoding="utf-8")
+    rc, out = F.project(["declare", "--project", "one2", "--inventory", str(rec_path),
+                         "--evidence", str(rec_path), "--method", "data-layer",
+                         "--verified", "--at", "2026-08-31"], onefile)
+    check("J48 the documented command — the SAME discovery record as --inventory and "
+          "--evidence — actually runs; a record's items ARE the inventory",
+          rc == 0 and "VERIFIED=YES" in out and "%d new" % len(urls) in out,
+          out.strip()[:800])
+    rc, out = F.project(["validate", "--project", "one2"], onefile)
+    check("J48b and what it produced validates clean",
+          rc == 0 and "ENUMERATION_CLAIM_INVALID" not in out, out.strip()[:700])
+
+    # ---- M6: the first instruction an operator receives is init's own next step.
+    # It printed the v3.0 command, which v3.1 refuses — a wall at the exact moment the
+    # enumeration path is chosen.
+    hint = sweep_project(Path(tmp) / "hint", "hint")
+    rc, out = F.project(["init", "--project", "hint2", "--title", "Hint", "--platform",
+                         "chatgpt", "--at", "2026-09-01"], hint)
+    flat = " ".join(out.split())
+    check("J49a init's printed next step names --evidence with --verified, which the "
+          "tool now requires",
+          rc == 0 and "--verified REQUIRES --evidence" in flat
+          and "--evidence <discovery.json>" in flat, out.strip()[:700])
+    check("J49b and it names --origin, without which a verified enumeration cannot "
+          "bind — the project has none yet",
+          "--origin" in out, out.strip()[:700])
+    # Follow it verbatim: the declared path it prints must run.
+    inv4 = Path(tmp) / "inv-hint.json"
+    inv4.write_text(json.dumps([{"url": u} for u in urls]), encoding="utf-8")
+    rc, out = F.project(["declare", "--project", "hint2", "--inventory", str(inv4),
+                         "--method", "declared", "--at", "2026-09-01"], hint)
+    check("J49c the declared command init prints actually runs",
+          rc == 0 and "PROJECT_ENUMERATION_UNVERIFIED" in out, out.strip()[:700])
+
+    # Back-compat: a claim made before the evidence contract existed stays VALID,
+    # is reported as legacy, and is never silently promoted.
+    data["enumeration"].pop("evidence")
+    write_project_manifest(corpus, "enum", data)
+    rc, out = F.project(["validate", "--project", "enum"], corpus)
+    check("J45a a pre-v3.1 verified claim remains valid — no forced migration",
+          rc == 0, out.strip()[:700])
+    check("J45b but it is marked legacy, so trust is recorded and not promoted",
+          "ENUMERATION_EVIDENCE_LEGACY_ABSENT" in out
+          and "WARN" in out, out.strip()[:700])
+
+
 # ------------------------------------------------------------------ runner --
 
 def main():
     scenarios = [a_role_aware, b_approval_strength, c_source_model, d_coverage,
-                 e_idea_routing, f_mode_separation, g_audit_trust, h_side_effects]
+                 e_idea_routing, f_mode_separation, g_audit_trust, h_side_effects,
+                 i_source_identity, j_enumeration_evidence]
     for scenario in scenarios:
         tmp = tempfile.mkdtemp(prefix="intake-v3-")
         try:
