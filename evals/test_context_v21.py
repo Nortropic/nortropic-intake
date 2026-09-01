@@ -1277,9 +1277,26 @@ def sweep_survives_crash(tmp):
     check("V6b and the packages sorted after it are still validated",
           "zzz-after" in out, out.strip()[:700])
 
-    rc, out = F.plan(["validate"], corpus)
-    check("V6c the plan sweep survives the same package without a traceback",
-          "Traceback" not in out, out.strip()[:700])
+    # V6c needs a shape that actually CRASHES plan_contract's per-slug validation —
+    # the poisoned context manifest above never reaches it, so asserting only "no
+    # traceback" was vacuous: a review deleted plan_contract's whole guard and this
+    # stayed green. A dict where an int revision belongs blows up the comparison at
+    # the plan/context binding, which is inside the guarded region.
+    corpus_b, folder_b, _ = living(Path(tmp) / "b", with_plan=True, status="planned")
+    after_b = Path(corpus_b) / "zzz-after"
+    after_b.mkdir()
+    (after_b / "idea-zzz-after.md").write_text("# after\n", encoding="utf-8")
+    mf = folder_b / (SLUG + "-context-manifest.json")
+    import json as _json
+    data = _json.loads(mf.read_text(encoding="utf-8"))
+    data["context_revision"] = {"a": 1}
+    mf.write_text(_json.dumps(data), encoding="utf-8")
+    rc, out = F.plan(["validate"], corpus_b)
+    check("V6c the plan sweep converts its own crash shape to "
+          "PACKAGE_VALIDATION_CRASHED and still validates the packages after it",
+          rc != 0 and "Traceback" not in out
+          and "PACKAGE_VALIDATION_CRASHED" in out and "zzz-after" in out,
+          out.strip()[:700])
 
 
 SCENARIOS = [

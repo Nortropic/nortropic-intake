@@ -48,8 +48,8 @@ Every code the tools can print is a contract surface. The transport ones:
 `TRANSPORT_CHUNK_OVERSIZE`, `TRANSPORT_DIGEST_MISMATCH`, `TRANSPORT_DIGEST_UNVERIFIED`,
 `TRANSPORT_SLICE_MERGED`, `TRANSPORT_SLICE_TRUNCATED`, `TRANSPORT_SLICE_REFETCHED`,
 `TRANSPORT_INCOMPLETE`, `TRANSPORT_TAIL_MISSING`, `TRANSPORT_PAYLOAD_SHORT`,
-`TRANSPORT_LENGTH_UNEXPLAINED`, `TRANSPORT_INDEX_IMPLAUSIBLE`, `TRANSPORT_CONTENT_WRONG`,
-`TRANSPORT_SLICE_REFETCHED` (informational). The capture one that says the manifest is out of step
+`TRANSPORT_LENGTH_UNEXPLAINED`, `TRANSPORT_INDEX_IMPLAUSIBLE`,
+`TRANSPORT_CONTENT_WRONG`. The capture one that says the manifest is out of step
 with the bytes: `SOURCE_IDENTITY_RECORD_STALE`.
 
 (`project_contract.py validate` legitimately fails with "contains no project
@@ -325,8 +325,7 @@ the workflow declares it with `setup-node`.
 | | Family | Proves |
 |---|---|---|
 | A1–A3 | cursor walk | two pages then exhaustion gives the exact union; a duplicate across pages is one source; same title with different ids stays two |
-| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its account-wide listing (an 80-chat
-fixture standing in for the real run's 800) cannot be reached |
+| A4 | membership | a foreign conversation blocks verification; the v3.0 account endpoint is never called and its account-wide listing (an 80-chat fixture standing in for the real run's 800) cannot be reached |
 | A5–A8 | exhaustion | an outstanding cursor, a cursor that never advances, and a disagreeing total each block the claim; an empty project with an exhausted cursor is a valid zero-membership result; a rerun is byte-identical |
 | A9–A10 | guards | an unknown host and a missing project id fail closed; the adapter builds a path-scoped URL and never a `gizmo_id` query |
 | A11–A12 | capture digests | `extract.js` and `data_capture.js` both report the sha256 Step 4 requires, of exactly the bytes they stored, and both keep their load-bearing leading `await` |

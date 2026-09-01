@@ -40,17 +40,38 @@ MIN_CHECKS = 18
 
 
 def _entries(directory):
-    """Top-level names in a directory — the before/after snapshot T12 compares."""
+    """Top-level names in a directory — the cheap half of T12's snapshot.
+
+    Used for $HOME and the work tree, which are too large to walk. The repo itself is
+    walked in FULL by _repo_state below — a name-set one level deep missed both a file
+    planted in a subdirectory and an existing file overwritten in place, and a review
+    demonstrated each.
+    """
     try:
         return {e.name for e in directory.iterdir()}
     except OSError:
         return set()
 
 
+def _repo_state(root):
+    """{relpath: (size, mtime_ns)} for every tracked-tree file — clobbering included."""
+    state = {}
+    for path in root.rglob("*"):
+        if ".git" in path.parts:
+            continue
+        try:
+            if path.is_file():
+                st = path.stat()
+                state[str(path.relative_to(root))] = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            pass
+    return state
+
+
 # Captured at import, before any scenario runs, so T12 answers to what actually appeared
 # on disk rather than to where the temp directory happens to be.
 HOME_BEFORE = _entries(Path.home())
-REPO_BEFORE = _entries(ROOT)
+REPO_BEFORE = _repo_state(ROOT)
 WORK_BEFORE = _entries(Path.home() / "nortropic")
 
 
@@ -386,8 +407,7 @@ def t_digest(tmp):
 # This skill's own tree is the one legitimate exception — and only while the path stays
 # inside it: `.claude/skills/../projects/x` climbs straight back out, so the exemption
 # is withdrawn the moment a `..` appears after it.
-PRIVATE_STORAGE_RE = (r"(?<![A-Za-z0-9_-])\.claude\b"
-                      r"(?!/skills(?![^\s\)\]`\"']*\.\.))")
+PRIVATE_STORAGE_RE = r"(?i:(?<![A-Za-z0-9_-])\.claude\b)"
 SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSandbox"
                      r"|dangerously-skip-permissions|disable the sandbox"
                      r"|disabling the sandbox|turn off sandbox|sandbox bypassed"
@@ -397,25 +417,39 @@ SANDBOX_BYPASS_RE = (r"sandbox-disabled|sandbox[- ]disabled|dangerouslyDisableSa
 # entry below was read before it was pinned: each is a PROHIBITION, or a lint/fixture
 # that enforces one. Not one of them grants access to anything.
 PINNED_MENTIONS = {
-    # references/extraction.md:216-221 — the pbcopy/pbpaste exception and the SCOPE
+    # references/extraction.md — the pbcopy/pbpaste exception and the SCOPE
     # paragraph that bounds it. Five fingerprints: the forbidding sentence names all
     # three stores plus the override, and each match carries its own window.
-    "a4af8658": "extraction.md:217 — 'run **only** the pbpaste/pbcopy steps sandbox-disabled'",
-    "2a63eb8c": "extraction.md:220 — 'Never disable the sandbox to read Claude Code's own storage'",
-    "9cd9ff4d": "extraction.md:220 — that sentence naming ~/.claude/projects",
-    "1a76876c": "extraction.md:221 — …sessions, inside the same prohibition",
-    "5b8dafc8": "extraction.md:221 — …history, inside the same prohibition",
-    # evals/contract_check.py:550 — PS18, the lint that requires the SCOPE paragraph
-    # above to keep saying what it says.
-    "82807cba": "contract_check.py:550 — PS18's required substrings for that paragraph",
-    # evals/test_plan_contract.py:525 — case 14's three patterns: the lint that keeps
+    "a4af8658": "extraction.md — 'run **only** the pbpaste/pbcopy steps sandbox-disabled'",
+    "2a63eb8c": "extraction.md — 'Never disable the sandbox to read Claude Code's own storage'",
+    "9cd9ff4d": "extraction.md — that sentence naming ~/.claude/projects",
+    "1a76876c": "extraction.md — …sessions, inside the same prohibition",
+    "5b8dafc8": "extraction.md — …history, inside the same prohibition",
+    # evals/contract_check.py, the PS18 lint — the check that requires the SCOPE
+    # paragraph above to keep saying what it says. (No line numbers in these notes:
+    # they rot the moment the file above them grows, and the fingerprint is the pin.)
+    "82807cba": "contract_check.py — PS18's required substrings for that paragraph",
+    # evals/test_plan_contract.py — case 14's three patterns: the lint that keeps
     # these paths out of SKILL.md and the scripts entirely.
-    "13977b17": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/projects'",
-    "adb5f2ad": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/sessions'",
-    "12fb08b4": "test_plan_contract.py:525 — case 14 pattern r'\\.claude/history'",
-    # evals/test_context_v2.py:764 — the M13 mutation: a manifest claiming such a path,
+    "13977b17": "test_plan_contract.py — case 14 pattern r'\\.claude/projects'",
+    "adb5f2ad": "test_plan_contract.py — case 14 pattern r'\\.claude/sessions'",
+    "12fb08b4": "test_plan_contract.py — case 14 pattern r'\\.claude/history'",
+    # evals/test_context_v2.py — the M13 mutation: a manifest claiming such a path,
     # which the validator must reject.
-    "94aa001c": "test_context_v2.py:764 — M13 mutation '../../.claude/projects/x.jsonl'",
+    "94aa001c": "test_context_v2.py — M13 mutation '../../.claude/projects/x.jsonl'",
+    # The skill's OWN install path, `~/.claude/skills/nortropic-intake/…`. These used to
+    # be a regex exemption; every version of that exemption was gamed (slash rule, name
+    # rule, `..`-lookahead delimiters, letter case), so now they are pinned occurrences
+    # like everything else and there is no lookahead left to game. Each is a command
+    # line into the skill's own scripts; none grants access to runtime storage.
+    "bba46c42": "README.md — install path: clone to ~/.claude/skills/nortropic-intake/",
+    "3f58a6ce": "SKILL.md — PC=~/.claude/skills/nortropic-intake/scripts shorthand",
+    "9d569211": "SKILL.md — the resume command's full script path",
+    "ce50da3c": "context-delta-template.md — the delta command's full script path",
+    "f4faaf23": "context-manifest-template.md — manifest init command path",
+    "55db2481": "context-manifest-template.md — second command path in the same block",
+    "732bd4b0": "distillation-audit-template.md — the audit command's full script path",
+    "b2c1e7db": "plan_contract.py — the resolve-mechanically hint's script path",
 }
 
 
@@ -533,12 +567,15 @@ def t_boundary(tmp):
     # was a tautology that tracked no write at all. Two reviews proved it by planting a
     # real write outside the temp tree with T12 still green. Compare actual directory
     # contents against the snapshot taken before any scenario ran.
-    leaked = sorted((HOME_BEFORE ^ _entries(Path.home()))
-                    | (REPO_BEFORE ^ _entries(ROOT))
-                    | (WORK_BEFORE ^ _entries(Path.home() / "nortropic")))
-    check("T12 this suite created nothing outside its temp directory — not in $HOME, "
-          "not in the repo, not in the work tree",
-          not leaked, "appeared or vanished: %s" % leaked[:10])
+    repo_now = _repo_state(ROOT)
+    repo_diff = sorted({rel for rel in set(REPO_BEFORE) | set(repo_now)
+                        if REPO_BEFORE.get(rel) != repo_now.get(rel)})
+    top_diff = sorted((HOME_BEFORE ^ _entries(Path.home()))
+                      | (WORK_BEFORE ^ _entries(Path.home() / "nortropic")))
+    check("T12 this suite wrote nothing into the repo tree (walked in full, size and "
+          "mtime), and created nothing at the top level of $HOME or the work tree",
+          not repo_diff and not top_diff,
+          "repo: %s | top-level: %s" % (repo_diff[:8], top_diff[:8]))
 
     # T13: and no eval in the repo reads or writes the runtime's real storage.
     real_hits = []

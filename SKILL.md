@@ -803,9 +803,9 @@ approved plan and the brief stays `clarified`.
    copied from the candidate and re-checked by `plan_contract.py validate` — not in a
    line the tool prints. What the tools DO print is the comparison:
    `plan-impact` reports `APPROVED_PLAN_CONTEXT_REVISION` against
-   `CURRENT_CONTEXT_REVISION`. `ACTIVE_APPROVED_PLAN_SHA256` is a pointer FIELD, not a
-   printed line: `pointer` writes it into the workstream's CLAUDE.md block and `resume`
-   reads it back to detect drift — no command prints that token.
+   `CURRENT_CONTEXT_REVISION`. `ACTIVE_APPROVED_PLAN_SHA256` is a pointer field:
+   `pointer` writes it into the workstream's CLAUDE.md block (or prints that same block
+   to stdout under `--print-only`) and `resume` reads it back to detect drift.
 
    This does **not** make the context package execution authority. It is provenance:
    *this is the understanding against which this plan was approved*, so that when the
@@ -1122,7 +1122,8 @@ and `project_contract.py` re-reads that record rather than taking its word: memb
 scope, no foreign items, `exhaustion.proven`, a named terminal signal, and an item set
 matching the inventory being declared. Anything less provable: take an owner-provided or
 exported inventory and `declare --method declared` **without** `--verified` — the
-manifest then says `PROJECT_ENUMERATION_UNVERIFIED` and coverage answers for the declared
+manifest then records `verified: false`, coverage and status print
+`PROJECT_ENUMERATION_UNVERIFIED` from it, and coverage answers for the declared
 inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration method, and
 owner confirmation is a welcome EXTRA oracle that this proof does not require and cannot
 be substituted by. Identity is the platform's conversation id
@@ -1509,8 +1510,10 @@ New in v3.0, surfaced by its own review and recorded rather than quietly fixed:
   fingerprints every place Intake's own text names the runtime's directory or the
   sandbox override, so a new or reworded one fails until a person looks at it. Three
   successive reviews each got an instruction past an earlier version of that check —
-  by prose the negation-heuristic misread, by a same-count swap, and by wrapping the
-  path across a line break — and each hole is closed. What remains open is stated in the
+  by prose the negation-heuristic misread, by a same-count swap, by wrapping the path
+  across a line break, and by gaming the carve-out for this skill's own install path —
+  which is why no carve-out remains: every occurrence is pinned, the legitimate ones by
+  hand. What remains open is stated in the
   check itself: an instruction written entirely around the vocabulary still passes. It
   guards against drift in Intake's own wording; it is not a semantic firewall.
 - **Intake does not own the sandbox, and does not pretend to.** The command sandbox, the

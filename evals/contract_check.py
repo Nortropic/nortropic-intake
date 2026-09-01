@@ -292,8 +292,8 @@ CHECKS = [
         "`context_revision` and `source_set_sha256`",
         "re-checked by `plan_contract.py validate`", "not in a line the tool prints",
         "APPROVED_PLAN_CONTEXT_REVISION", "CURRENT_CONTEXT_REVISION",
-        "is a pointer FIELD, not a\n   printed line",
-        "no command prints that token",
+        "is a pointer field",
+        "or prints that same block\n   to stdout under `--print-only`",
         "This does **not** make the context package execution authority"]),
     ("SKILL.md", "W12 stale is detected, and stale is not invalid", [
         "## Phase 5.5 — When context moves under an approved plan",
@@ -642,15 +642,26 @@ def check_readme_ranges():
     ids = sorted({(m.group(1), int(m.group(2)))
                   for m in re.finditer(r"check\(\s*[\"']([A-Z])(\d+)", suite)})
     failures = []
+    derived = {}
     for family in sorted({f for f, _ in ids}):
         nums = [n for f, n in ids if f == family]
-        want = ("%s%d–%s%d" % (family, min(nums), family, max(nums))
-                if min(nums) != max(nums) else "%s%d" % (family, min(nums)))
-        row = "| %s |" % want
+        derived[family] = ("%s%d–%s%d" % (family, min(nums), family, max(nums))
+                           if min(nums) != max(nums)
+                           else "%s%d" % (family, min(nums)))
+        row = "| %s |" % derived[family]
         if row not in readme:
             failures.append("README lacks a row for the range the suite emits: %s "
                             "(family %s runs %d..%d)"
                             % (row, family, min(nums), max(nums)))
+    # And the reverse: a row claiming a range the suite does not emit — a stale
+    # leftover beside the corrected one, or an invented family — fails too. "Match"
+    # has to mean both directions or it means neither.
+    table = readme[readme.index("## 9. v3 suite"):readme.index("No real project")]
+    for m in re.finditer(r"^\| ([A-Z])(\d+)(?:–[A-Z](\d+))? \|", table, re.M):
+        family, claimed = m.group(1), m.group(0).strip("| ").strip()
+        if derived.get(family) != claimed:
+            failures.append("README claims range %r for family %s but the suite "
+                            "emits %r" % (claimed, family, derived.get(family)))
     return failures
 
 
