@@ -1402,8 +1402,8 @@ inside a sweep):
 
 ## Architecture freeze — read this before changing the skill
 
-The v3.0 architecture is owner-authorized and **frozen**. Nice ideas are not a reason to
-reopen it; a demonstrated defect is.
+The architecture is owner-authorized and **frozen** at v3.1. Nice ideas are not a reason
+to reopen it; a demonstrated defect is.
 
 **Lineage, recorded honestly.** v2.1 was frozen 2026-08-26
 (`SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e`,
@@ -1414,17 +1414,48 @@ the v3.0 architecture (*Project Corpus Intake*: v2.1's single-brainstorm intake
 preserved, plus an explicit PROJECT_SWEEP mode, role-aware provenance and durable
 approval-attestation strength). The reopen was authority, not drift.
 
+v3.0 was frozen 2026-08-30 (`SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50`,
+`SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711`) and then run for real for the
+first time — a PROJECT_SWEEP against the ChatGPT project *Improvements* (27
+conversations). That proving run surfaced four concrete defects, and the owner reopened
+the freeze 2026-08-31 under the `observed failure` and `demonstrated security/trust
+defect` conditions — **not** an architecture change. **v3.1 is hardening inside the
+frozen v3.0 architecture: no v3-era contract was weakened, no mode semantics changed.**
+The four, each reproduced against shipped v3.0 code before it was touched: (A) project
+enumeration called an endpoint that accepts a `gizmo_id` filter and ignores it, so it
+would have reported a complete enumeration over 800 account-wide conversations — now
+cursor-paginated against the path-scoped project endpoint, with `--verified` requiring
+re-checkable, project-bound, archived evidence; (B) a re-worded builder header line
+minted a spurious source revision (CONV-012's r2) — now revisions answer to
+`source_sha256` over the conversation itself, recomputed from bytes; (C) a >32 KB console
+transport spilled and an agent bypassed the sandbox to read its own spill — transport is
+now bounded and digest-verified, and the sandbox boundary is classified honestly as
+runtime-owned (Intake bounds only what it controls); (D) a missed clipboard click let a
+stale equal-length export pass as a verified capture — the transport digest is now
+mandatory. Eight independent adversarial reviews gated the work; the eighth returned
+READY with zero blocking findings. The reopen was authority, not drift.
+
 ```
-NORTROPIC_INTAKE_VERSION=v3.0
+NORTROPIC_INTAKE_VERSION=v3.1
 ARCHITECTURE_STATE=FROZEN
-FREEZE_DATE=2026-08-30
-REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner architecture change)
+FREEZE_DATE=2026-09-01
+REOPENED_FROM=v3.0 (frozen 2026-08-30; reopened 2026-08-31 by observed failure +
+              demonstrated security/trust defect — proving-run hardening, not
+              architecture change)
 
-SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50
-SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711
+SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab
+SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c
 
-CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00
-CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c
+CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003
+CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9
+
+LINEAGE:
+  v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50
+        SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711  (frozen 2026-08-30)
+  v2.1  SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e
+        SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc  (frozen 2026-08-26)
+        CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00
+        CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c
 
 REOPEN_POLICY=observed failure | material new capability |
               owner architecture change | demonstrated security/trust defect
@@ -1433,14 +1464,15 @@ RELOAD_NOT_REMEMBER=YES
 CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
-Those two SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v3.0 implementation merge on `main` (PR #3) and
-`SKILL_TREE` its tree, and recording the freeze necessarily moved `main` past them by
-one documentation-only commit that changed no runtime behaviour. Recording invented
-SHAs would have been a forged freeze, which is why the implementation itself shipped
-with `REOPENED_FOR_V3_IMPLEMENTATION` and no identities. The corpus identities are
-v2.1's, unchanged: v3.0 mutated no corpus content. If you need the exact frozen
-bytes, read the tree, not the branch head.
+The current SKILL identities are the **frozen architecture**, not this file's current
+commit: `SKILL_MAIN` is the v3.1 implementation merge on `main` (PR #5) and `SKILL_TREE`
+its tree, and recording the freeze necessarily moves `main` past them by one
+documentation-only commit — this one — that changed no runtime behaviour. Recording
+invented SHAs would have been a forged freeze. The corpus identities are the published
+Improvements proving-run state, unchanged: **v3.1 mutated no corpus content** — the
+skill still never commits or pushes the corpus, and the incremental validation below is
+read/verify/no-op. If you need the exact frozen bytes, read the tree, not the branch
+head. The v3.0 and v2.1 identities stay recorded as lineage — history is never dropped.
 
 **The standing principle is RELOAD, NOT REMEMBER.** A conversation is working memory.
 Durable files, git, hashes and provenance are long-term context. After handoff, Claude

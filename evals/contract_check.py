@@ -420,16 +420,24 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
-        "NORTROPIC_INTAKE_VERSION=v3.0",
+        "NORTROPIC_INTAKE_VERSION=v3.1",
         "ARCHITECTURE_STATE=FROZEN",
-        "FREEZE_DATE=2026-08-30",
-        "SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50",
-        "SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711",
-        "REOPENED_FROM=v2.1 (frozen 2026-08-26; reopened 2026-08-30 by owner "
-        "architecture change)",
-        # v2.1's frozen identities stay recorded as lineage — history is never dropped.
-        "SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e",
-        "SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc",
+        "FREEZE_DATE=2026-09-01",
+        "SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab",
+        "SKILL_TREE=c057de3ec0a790b0983dd74312429f667cc2863c",
+        "CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003",
+        "CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9",
+        "REOPENED_FROM=v3.0 (frozen 2026-08-30; reopened 2026-08-31 by observed "
+        "failure +",
+        "proving-run hardening, not architecture change)",
+        "v3.1 is hardening inside the frozen v3.0 architecture: no v3-era contract "
+        "was weakened, no mode semantics changed",
+        # v3.0 and v2.1 frozen identities stay recorded as lineage — history is never
+        # dropped.
+        "v3.0  SKILL_MAIN=7ddb9a53ef7d4c50fbe16b293e429f6754faef50",
+        "SKILL_TREE=22342a351bc1447e532e6a4089cc89487a8c8711  (frozen 2026-08-30)",
+        "v2.1  SKILL_MAIN=87c07546c2716a4692d96961abb7a51e69a7832e",
+        "SKILL_TREE=7b3163ede48cbea3ec07b6b82b074cbbb74373dc  (frozen 2026-08-26)",
         "CORPUS_MAIN=6c6e5d94a20dd60c58dbdd251b0e5bcf05437b00",
         "CORPUS_TREE=29fb88ebc8081244df331bc4236d4bccd7d7ce8c",
         "The reopen was authority, not drift"]),
@@ -463,10 +471,12 @@ CHECKS = [
         "each exercised by the suites",
         "The suites prove specific properties of each, never\ncompleteness"]),
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
-        "Those two SKILL identities are the **frozen architecture**, not this file's "
-        "current\ncommit",
-        "Recording invented\nSHAs would have been a forged freeze",
-        "read the tree, not the branch head"]),
+        "The current SKILL identities are the **frozen architecture**, not this "
+        "file's current\ncommit",
+        "Recording\ninvented SHAs would have been a forged freeze",
+        "v3.1 mutated no corpus content",
+        "read the tree, not the branch head",
+        "history is never dropped"]),
     ("SKILL.md", "Z8 v3.0 records its own new residual risks honestly", [
         "**Role truth is inherited from capture.**",
         "resolved conservatively",
