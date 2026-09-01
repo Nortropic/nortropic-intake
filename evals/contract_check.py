@@ -527,9 +527,12 @@ CHECKS = [
         "weak approval stays visibly weak forever"]),
     # ---------------------------------------------------------------------
     # PS. Project sweep (v3.0) — the second mode, stated where drift would hide.
+    # PS1 was reworded together with the doc under the v4 owner architecture
+    # change ("Two modes" → "Three modes") — the explicit-mode contract itself is
+    # unchanged and still pinned.
     # ---------------------------------------------------------------------
-    ("SKILL.md", "PS1 two explicit modes, never heuristic", [
-        "## Two modes — explicit, never inferred",
+    ("SKILL.md", "PS1 three explicit modes, never heuristic", [
+        "## Three modes — explicit, never inferred",
         "NEVER by heuristics",
         "a URL\nthat happens to be a project page does not switch modes by itself"]),
     ("SKILL.md", "PS2 the sweep never interviews and never plans", [
@@ -632,6 +635,115 @@ CHECKS = [
         "SWEEP_AUDIT_FINDING_SELF_CLOSED",
         "SWEEP_AUDIT_DISMISSED_WITHOUT_OWNER",
         "SILENT_CAPTURE_FAILURE", "RERUN_IDEMPOTENCY_VIOLATION"]),
+    # ---------------------------------------------------------------------
+    # RD. R&D compile (v4.0) — the third mode, owner-ordered. These pin the
+    #     laws where drift would hide; the behaviour itself is exercised by
+    #     evals/test_rnd_v4.py against the real rnd_contract.py.
+    # ---------------------------------------------------------------------
+    ("SKILL.md", "RD1 the third mode is explicit and consumes captured material only", [
+        "**RND_COMPILE** (see the R&D compile section)",
+        "## R&D compile (RND_COMPILE) — typed understanding of a captured corpus",
+        "**Explicit invocation only**",
+        "It consumes a PROJECT_SWEEP corpus or an explicit source set",
+        "it captures nothing new, and external text gains no authority by being "
+        "compiled any\nmore than by being swept"]),
+    ("SKILL.md", "RD2 the standing laws are recorded as laws, with anchors", [
+        "RAW EVIDENCE SURVIVES SYNTHESIS.",
+        "INTAKE ≠ BACKLOG.",
+        "OPTION ≠ COMMITMENT.",
+        "FREQUENCY ≠ IMPORTANCE.",
+        "RECENCY ≠ CORRECTNESS.",
+        "DEFERRED ≠ FORGOTTEN.",
+        "SILENCE = UNKNOWN.",
+        "CURRENT VERIFIED REALITY OUTRANKS COMPILED MEMORY.",
+        "ACTIVATION BELONGS TO EXECUTIVE FUNCTION.",
+        "EXECUTION BELONGS TO THE AUTONOMY KERNEL."]),
+    ("SKILL.md", "RD3 the compile never plans, prioritizes, interviews or moves status", [
+        "no IMPLEMENTERA NU question, no Plan Mode, no approved plans, no\n"
+        "idea-status transitions, no prioritization, no tasks/missions, no "
+        "interviews",
+        "commands for plans, approvals, pointers and lifecycle do not\nexist there",
+        "It expands Nortropic's OPTION SPACE; it never decides what\nNortropic "
+        "does now"]),
+    ("SKILL.md", "RD4 the ontology is seven kinds, closed, tags for the rest", [
+        "**The core ontology is small and closed: seven kinds.**",
+        "OBSERVATION · OWNER_DECISION · DERIVED_JUDGMENT · HYPOTHESIS · "
+        "REQUIREMENT ·\n    OPTION · UNKNOWN",
+        "never new first-class kinds\n(`RND_KIND_INVALID`)",
+        "only when an adversarial eval demonstrates\nthe small set loses a "
+        "material semantic distinction"]),
+    ("SKILL.md", "RD5 owner decisions cannot be laundered, in any direction", [
+        "**OWNER_DECISION comes only from real owner provenance**",
+        "RND_OWNER_DECISION_ASSISTANT_ONLY",
+        "RND_OWNER_DECISION_ROLE_UNPROVEN",
+        "RND_AUTHORITY_LAUNDERING",
+        "RND_DECISION_SUPERSEDED_WITHOUT_OWNER",
+        "disagreement is a `contradicts` relation\nand both items survive — "
+        "RECENCY ≠ CORRECTNESS"]),
+    ("SKILL.md", "RD6 no priority machinery exists, disposition is Recompile's", [
+        "**No priority machinery exists to launder.**",
+        "RND_PRIORITIZATION_FORBIDDEN", "RND_SCORE_FORBIDDEN",
+        "RND_LIFECYCLE_FIELD_FORBIDDEN", "RND_DISPOSITION_FORBIDDEN",
+        "an idea\nmentioned twenty times is one item with twenty provenance "
+        "entries, never a heavier\none",
+        "are **Recompile's** verdicts, made later against fresh repo\nreality — "
+        "never Intake's",
+        "a fact about the past, not a\ndisposition of the future"]),
+    ("SKILL.md", "RD7 negative space is mandatory and honest", [
+        "**Negative space is first-class.**",
+        "RND_COVERAGE_LENS_MISSING",
+        "UNKNOWN never counts as resolved",
+        "RND_COVERAGE_UNEVIDENCED",
+        "deferral is\nan owner act, DEFERRED ≠ FORGOTTEN",
+        "**diagnostic lens, never an exhaustive ontology of Nortropic**",
+        "no model may call a corpus complete because it failed to imagine the\n"
+        "missing category"]),
+    ("SKILL.md", "RD8 review lenses stay diagnostic, lovability is never a score", [
+        "Mission Command, VSM,\nHoshin/catchball, Theory of Constraints, Cynefin, "
+        "HRO, SRE, FinOps, Deming/PDSA,\nLovable/Linear, middle-out/narrow-waist",
+        "never architecture authority through Intake, never automatic build\n"
+        "requirements, and never reduced to a single score",
+        "bypass pressure"]),
+    ("SKILL.md", "RD9 activation conditions are information, never activation", [
+        "an `activation_condition`. An activation\ncondition is INFORMATION: it "
+        "activates no task, no plan, no status transition, no\nIMPLEMENT_NOW "
+        "routing, ever"]),
+    ("SKILL.md", "RD10 the derived layer is deletable, bound, and never a second truth", [
+        "One canonical derived file, one generated rendering",
+        "RND_RENDER_STALE",
+        "**deletable by design**",
+        "RND_SOURCE_HASH_MISMATCH",
+        "a proof is\nabout the set that existed when it was measured"]),
+    ("SKILL.md", "RD11 compiled memory never outranks fresh repo reality", [
+        "**Current reality is pointed at, never cached as truth.**",
+        "RND_REALITY_POINTER_UNDATED",
+        "REALITY_POINTERS_REQUIRE_FRESH_READ=YES",
+        "CURRENT VERIFIED REPO REALITY  >  COMPILED R&D MEMORY"]),
+    ("SKILL.md", "RD12 historic status:idea is never reinterpreted as backlog", [
+        "**Existing idea packages are historical sources, not backlog rows.**",
+        "it is NOT an organisational\ncommitment, not a backlog priority",
+        "No\nlegacy migration happens for v4's sake",
+        "the ordinary SINGLE\nimplement-now lane from the stored brief — never "
+        "from the IR"]),
+    ("SKILL.md", "RD13 the compile audit names the laundering it hunts", [
+        "**The independent compile audit**",
+        "backlog laundering, authority laundering, owner-\nprovenance laundering, "
+        "frequency/recency bias, omitted or overstated negative space,\nontology "
+        "expansion, a derived layer acting as second truth, a compile that "
+        "entered\nplanning",
+        "RND_COMPILE_AUDITED=NO"]),
+    ("references/rnd-compile-template.md", "RD14 the IR contract is stated in full", [
+        "RND_ITEM_UNSOURCED", "RND_PROVENANCE_UNBOUND",
+        "RND_PROVENANCE_OUT_OF_RANGE", "RND_OWNER_DECISION_ASSISTANT_ONLY",
+        "RND_AUTHORITY_LAUNDERING", "RND_DECISION_SUPERSEDED_WITHOUT_OWNER",
+        "RND_PRIORITIZATION_FORBIDDEN", "RND_SCORE_FORBIDDEN",
+        "RND_COVERAGE_LENS_MISSING", "RND_COVERAGE_OWNER_STATE_UNBACKED",
+        "RND_RAW_DUPLICATION", "RND_REALITY_POINTER_UNDATED",
+        "RND_BACKLOG_LAUNDERING", "RND_COLLAPSED_TO_SINGLE_IDEA",
+        "deletability is checked, not assumed"]),
+    ("README.md", "RD15 the README explains the third mode honestly", [
+        "RND_COMPILE",
+        "typad, härledd", "aldrig en backlog"]),
 ]
 
 

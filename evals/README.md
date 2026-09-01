@@ -1,13 +1,14 @@
 # Evals — run these after ANY change to this skill
 
-Eleven checks, all repeatable. Zero regression = all eleven pass. The first five run the
+Twelve checks, all repeatable. Zero regression = all twelve pass. The first five run the
 skill's own suites against real files and real git repositories; the two v3.1 suites
 drive the shipped scripts directly — one under node against a fake platform, one against
-`reassemble_verify.py` in temp directories; the last three execute the real validators
-against the real corpus. The numbers in the command block below are the section
-numbers further down, which is why they start at 1 for the contract lint and then jump:
-sections 2–5 cover the trigger eval, the capture goldens and the rubrics, which are
-judged rather than run.
+`reassemble_verify.py` in temp directories; the v4 suite drives `rnd_contract.py`
+against synthetic corpora in temp directories; the last three execute the real
+validators against the real corpus. The numbers in the command block below are the
+section numbers further down, which is why they start at 1 for the contract lint and
+then jump: sections 2–5 cover the trigger eval, the capture goldens and the rubrics,
+which are judged rather than run.
 
 ```bash
 python3 evals/contract_check.py                       # 1 — contract lint
@@ -17,6 +18,7 @@ python3 evals/test_context_v21.py                     # 8 — living context C1�
 python3 evals/test_project_v3.py                      # 9 — v3: roles, attestation, sweep
 python3 evals/test_transport_v31.py                   # 10 — v3.1: bounded transport
 node    evals/test_discovery_v31.mjs                  # 11 — v3.1: cursor enumeration
+python3 evals/test_rnd_v4.py                          # 12 — v4: RND_COMPILE
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
 python3 scripts/project_contract.py validate          # real projects, when any exist
@@ -53,8 +55,9 @@ Every code the tools can print is a contract surface. The transport ones:
 with the bytes: `SOURCE_IDENTITY_RECORD_STALE`.
 
 (`project_contract.py validate` legitimately fails with "contains no project
-manifests" until the first real sweep has run — that is the mis-pathed-corpus guard
-doing its job, not a regression.)
+manifests" until the first real sweep has run, and `rnd_contract.py validate` with
+"no compiles found" until the first real compile — both are the mis-pathed-corpus
+guard doing its job, not a regression.)
 
 Workflows exist for both repos — `.github/workflows/intake-contract.yml` here and
 `corpus-contract.yml` in the corpus — and a workflow is only *running* once the file is
@@ -65,9 +68,9 @@ merge. `enforce_admins` is off, so an admin can still override — that is a per
 deciding, not a gate that silently is not there. The corpus repo's own hook remains a
 local gate, overridable with `--no-verify`.
 
-CI additionally runs a **mutation guard**: it stubs out each of the five modules
+CI additionally runs a **mutation guard**: it stubs out each of the six modules
 (`plan_contract`, `context_contract`, `project_contract`, `intake_common`,
-`reassemble_verify`) in turn — plus all three shipped browser scripts
+`reassemble_verify`, `rnd_contract`) in turn — plus all three shipped browser scripts
 (`project_discovery.js`, against both the discovery suite and the v3 suite whose
 enumeration-evidence fixtures are its real output; `extract.js`; `data_capture.js`) —
 and requires
@@ -329,3 +332,33 @@ the workflow declares it with `setup-node`.
 | A5–A8 | exhaustion | an outstanding cursor, a cursor that never advances, and a disagreeing total each block the claim; an empty project with an exhausted cursor is a valid zero-membership result; a rerun is byte-identical |
 | A9–A10 | guards | an unknown host and a missing project id fail closed; the adapter builds a path-scoped URL and never a `gizmo_id` query |
 | A11–A12 | capture digests | `extract.js` and `data_capture.js` both report the sha256 Step 4 requires, of exactly the bytes they stored, and both keep their load-bearing leading `await` |
+
+## 12. v4 RND_COMPILE suite (`test_rnd_v4.py`)
+
+The owner-ordered v4 eval classes, same construction as suites 6–9 (real files, the
+real `rnd_contract.py`, temp corpora, control fixtures that must pass in the same
+run as every planted failure, MIN_CHECKS floor). Every scenario builds a synthetic
+swept project — two conversations with owner, assistant and unknown-role turns, an
+owner-answered review queue, an idea package and an approved plan the compile must
+never touch — and drives the real CLI end to end.
+
+| | Family | Proves |
+|---|---|---|
+| A | seven kinds, no collapse | a mixed brainstorm compiles as OBSERVATION/OWNER_DECISION/DERIVED_JUDGMENT/HYPOTHESIS/REQUIREMENT/OPTION/UNKNOWN; `implement_now` is refused vocabulary; no idea brief is minted |
+| B/C | owner provenance | an assistant's "Johnny decided X" never becomes OWNER_DECISION; the honest kind passes; a real owner turn and an owner-answered RQ both back one; an unanswered RQ backs nothing |
+| D | external stays evidence | unknown-role imperative text fails closed away from owner; claiming owner class on evidence is laundering |
+| E | no priority machinery | `priority`/`frequency`/`importance`/`*_score`/`disposition` are refused anywhere in the IR, nested included |
+| F | recency never wins | a non-owner item cannot supersede an OWNER_DECISION; an owner can; contradiction preserves both sides |
+| G | negative space | a struck lens row fails; unevidenced states fail; UNKNOWN-with-basis fails; deferral needs an owner; an all-UNKNOWN lens is valid and visible |
+| H | delete + rebuild | removing `_rnd/` destroys no evidence; the rendering reproduces byte-identically; a hand-edited rendering is stale; mutated source bytes are caught |
+| I/J | inert + untouched | activation conditions are information-only; every command leaves the corpus outside `_rnd/` hash-identical |
+| K | no planning surface | approve/pointer/handoff/resume are argparse errors; the tool declares its write scope |
+| L | closed ontology | FAILURE_MODE and DEFER are not kinds; the same content passes as a tag |
+| M/N | diagnostics + reality | lovability/compression live in notes, never a score; reality pointers are dated; every run prints the fresh-read law; a grown project is stale, not wrong |
+| PR | provenance discipline | out-of-range/unbound/unsourced/duplicate/overlong/uncertainty-free/dangling items and claimed authority all refuse |
+| AU | audit discipline | round-at-current-identity audits; PASS-over-findings, self-closure, ownerless dismissal, invented codes, unevidenced findings, stale rounds and open material findings all refuse; the owner's own words naming a finding dismiss it |
+| IN | init honesty | init binds the measured set, starts every lens UNKNOWN, refuses overwrite/no-set/escaping ids, and records uncaptured sources as visible exclusions |
+
+(The v3.1.1 regression itself — eval class O — is suites 1 and 6–11 run unchanged
+beside this one; the freeze/lineage class P is contract_check's Z-series and
+RD-series.)
