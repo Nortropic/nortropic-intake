@@ -37,10 +37,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
-    Finding, corpus_root, fails, git_head_blob, parse_transcript_roles,
+    Finding, corpus_root, fails, git_head_blob,
     read_json, report, sha256_file, sha256_text, transcript_source_region,
     transcript_source_sha256, write_json, ROLE_ASSISTANT, ROLE_OWNER,
-    TRANSCRIPT_HEADER_RE, SHA256_RE,
+    ROLE_UNKNOWN, TRANSCRIPT_HEADER_RE,
+    _OWNER_ROLE_RE, _ASSISTANT_ROLE_RE,
 )
 
 IR_VERSION = 1
@@ -50,6 +51,7 @@ AUDIT_NAME = "compile-audit.md"
 RND_DIRNAME = "_rnd"
 
 COMPILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
+PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 ITEM_ID_RE = re.compile(r"^RND-\d{3,}$")
 FIND_ID_RE = re.compile(r"^FIND-\d{3,}$")
 RQ_ID_RE = re.compile(r"^RQ-\d{3,}$")
@@ -83,21 +85,93 @@ COVERAGE_STATES = ("WELL_EXPLORED", "PARTIALLY_EXPLORED", "NEEDS_RESEARCH",
 # lens" is an owner claim — both must rest on at least one OWNER_DECISION item.
 OWNER_BACKED_STATES = ("OWNER_DECISION", "INTENTIONALLY_DEFERRED")
 
-# INTAKE != BACKLOG, enforced at the vocabulary level: these keys may not appear
-# ANYWHERE in an IR, so there is no field for a priority signal to hide in. An idea
-# mentioned twenty times is one item with twenty provenance entries, never a
-# heavier one.
-PRIORITIZATION_KEYS = {"priority", "importance", "rank", "weight", "urgency",
-                       "frequency"}
-SCORE_KEYS = {"score"}
-LIFECYCLE_KEYS = {"status", "implement_now", "task", "plan", "backlog",
-                  "milestone", "deadline"}
-DISPOSITION_KEYS = {"disposition"}
+# INTAKE != BACKLOG, enforced at the vocabulary level: no key ANYWHERE in an IR may
+# carry a priority/score/lifecycle/disposition WORD as one of its segments, so there
+# is no field for a backlog to hide in. An idea mentioned twenty times is one item
+# with twenty provenance entries, never a heavier one.
+#
+# Matched by EXACT SEGMENT (word + plural/inflection), over both `_`/`-`/space AND
+# camelCase boundaries. Two independent reviews shaped this: the first showed an
+# exact-KEY set let `priority_level`/`urgency_class`/`priorities` through, and a naive
+# stem-PREFIX fix then (a) still missed camelCase `lovabilityScore`/`itemRank` and
+# (b) over-fired on innocent words that merely START with a stem (`plane`, `plant`,
+# `planning_notes`, `taskonomy`). Exact-segment over camelCase-split keys catches the
+# real ordering/lifecycle fields in any casing and leaves innocent compounds alone.
+# The cleverly-disguised ordering (a field named to dodge the vocabulary) is the
+# compile audit's job — RND_BACKLOG_LAUNDERING — not the key guard's.
+_FORBIDDEN_SEGMENTS = {}
+for _word, _code in (
+    # prioritization / ranking / frequency-recency weighting
+    ("priority", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("priorities", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("prioritization", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("prioritisation", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("importance", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("rank", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("ranks", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("ranking", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("rankings", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("weight", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("weights", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("weighting", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("urgency", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("frequency", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("frequencies", "RND_PRIORITIZATION_FORBIDDEN"),
+    ("recency", "RND_PRIORITIZATION_FORBIDDEN"),
+    # score
+    ("score", "RND_SCORE_FORBIDDEN"),
+    ("scores", "RND_SCORE_FORBIDDEN"),
+    ("scoring", "RND_SCORE_FORBIDDEN"),
+    # lifecycle / work
+    ("status", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("task", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("tasks", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("plan", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("plans", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("backlog", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("backlogs", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("milestone", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("milestones", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("deadline", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("deadlines", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("sprint", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("sprints", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("roadmap", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("implement", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    ("implementation", "RND_LIFECYCLE_FIELD_FORBIDDEN"),
+    # disposition (Recompile's verdict vocabulary)
+    ("disposition", "RND_DISPOSITION_FORBIDDEN"),
+    ("dispositions", "RND_DISPOSITION_FORBIDDEN"),
+):
+    _FORBIDDEN_SEGMENTS[_word] = _code
+
+_CAMEL_1 = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_SEGMENT_SPLIT_RE = re.compile(r"[_\-\s]+")
+
+
+def _key_segments(key):
+    s = _CAMEL_2.sub(r"\1 \2", _CAMEL_1.sub(r"\1 \2", str(key)))
+    return [seg for seg in _SEGMENT_SPLIT_RE.split(s.lower()) if seg]
+
+
+def _forbidden_key(key):
+    """(code, matched-segment) if any segment of `key` IS a forbidden word (across
+    `_`/`-`/space and camelCase boundaries), else (None, None)."""
+    for seg in _key_segments(key):
+        code = _FORBIDDEN_SEGMENTS.get(seg)
+        if code:
+            return code, seg
+    return None, None
 
 # Referenced, never copied: the IR points into the corpus and must not become a
 # second copy of it. Caps are generous for a claim and tight for a quote.
 CLAIM_MAX = 1000
 QUOTE_MAX = 500
+# An RQ-backed OWNER_DECISION must quote a SUBSTANTIAL run of the owner's answer, not
+# a stray letter — the floor that closes the single-character substring bypass.
+_QUOTE_MIN_CHARS = 16
+_QUOTE_MIN_WORDS = 3
 
 AUDIT_CODES = (
     "RND_BACKLOG_LAUNDERING", "RND_AUTHORITY_LAUNDERING",
@@ -160,6 +234,57 @@ def load_ir(corpus, compile_id):
     return data, findings
 
 
+# --------------------------------------------------- genuine message roles --
+
+# A genuine message header OPENS a message block: it sits at the very start of the
+# source region, or the non-blank line immediately before it is a horizontal-rule
+# separator (`---`/`***`/`___`) — which is exactly how the capture pipeline frames
+# every turn. An `## Meddelande N — <roll>` line sitting INSIDE a message body is
+# not a block opener, and an independent review proved why this matters: without
+# this anchor, a header pasted into an assistant turn's body mints a phantom owner
+# turn out of assistant/external text, and OWNER_DECISION would trust it. The shared
+# `parse_transcript_roles` (used by v3 too) stays untouched; this is a stricter,
+# v4-local reading laid over the owner-authority surface RND_COMPILE adds.
+_SEPARATOR_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})\Z")
+
+
+def _opens_block(region, start):
+    before = region[:start].rstrip()
+    if not before:
+        return True                       # the region's first header
+    last_line = before.rsplit("\n", 1)[-1].strip()
+    return bool(_SEPARATOR_RE.fullmatch(last_line))
+
+
+def genuine_message_roles(region):
+    """({message number: role}, well_formed) over BLOCK-OPENING headers only.
+
+    well_formed is False when the block-opening headers do not number a contiguous
+    1..N — a shape the owner-authority gate treats as fail-closed, since an
+    out-of-sequence header is exactly what an injected one produces.
+    """
+    roles = {}
+    numbers = []
+    for m in TRANSCRIPT_HEADER_RE.finditer(region):
+        if not _opens_block(region, m.start()):
+            continue
+        n = int(m.group(1))
+        numbers.append(n)
+        label = m.group(2)
+        is_owner = bool(_OWNER_ROLE_RE.search(label))
+        is_assistant = bool(_ASSISTANT_ROLE_RE.search(label))
+        if is_owner == is_assistant:
+            role = ROLE_UNKNOWN
+        else:
+            role = ROLE_OWNER if is_owner else ROLE_ASSISTANT
+        if n in roles and roles[n] != role:
+            roles[n] = ROLE_UNKNOWN
+        else:
+            roles[n] = role
+    well_formed = numbers == list(range(1, len(numbers) + 1))
+    return roles, well_formed
+
+
 # ------------------------------------------------------------- source set ---
 
 def parse_msg_range(spec):
@@ -178,12 +303,19 @@ class BoundSource(object):
 
     def __init__(self, corpus, rec):
         self.rec = rec
+        self.base = Path(corpus).resolve()
         self.source_id = str(rec.get("source_id", "")).strip()
-        self.path = Path(corpus) / str(rec.get("path", "")).strip()
+        self.rel = str(rec.get("path", "")).strip()
+        self.path = Path(corpus) / self.rel
         self.recorded_sha = str(rec.get("source_sha256", "")).strip().lower()
         self.excluded = str(rec.get("excluded", "")).strip()
+        # An independent oracle for the header-injection residual: the count the
+        # capture recorded for this revision, cross-checked against the genuine
+        # block-opening headers parsed from the bytes.
+        self.recorded_count = rec.get("message_count")
         self._text = None
         self._roles = None
+        self._well_formed = None
         self._count = None
 
     def read(self):
@@ -191,9 +323,27 @@ class BoundSource(object):
             self._text = self.path.read_text(encoding="utf-8")
         return self._text
 
+    def _within_corpus(self):
+        try:
+            self.path.resolve().relative_to(self.base)
+            return True
+        except ValueError:
+            return False
+
     def verify(self, compile_id, findings):
         """Raw evidence survives synthesis — checked, not assumed."""
         if self.excluded:
+            return False
+        # A bound source must live INSIDE the corpus. An independent review showed a
+        # manifest/IR `path` with `../` binds an external file as an authoritative
+        # source at validate time — the same escape the CLI now blocks, on the path
+        # actually consumed.
+        if Path(self.rel).is_absolute() or not self._within_corpus():
+            findings.append(Finding(
+                compile_id, "RND_SOURCE_PATH_ESCAPES",
+                "%s: path %r resolves outside the corpus root — a compile binds "
+                "only captured material under the corpus" % (self.source_id,
+                                                             self.rel)))
             return False
         if not self.path.exists():
             findings.append(Finding(compile_id, "RND_SOURCE_FILE_MISSING",
@@ -208,19 +358,38 @@ class BoundSource(object):
                 "this compile was derived from is not the evidence on disk"
                 % (self.source_id, actual[:12], self.recorded_sha[:12])))
             return False
+        # Genuine block-opening headers must number what the capture recorded — a
+        # transcript carrying MORE headers than turns has an injected one.
+        if isinstance(self.recorded_count, int) and self.recorded_count >= 0 \
+                and self.message_count() != self.recorded_count:
+            findings.append(Finding(
+                compile_id, "RND_SOURCE_MESSAGE_COUNT_MISMATCH",
+                "%s: %d block-opening message headers on disk, but the capture "
+                "recorded %d turns — an extra header is what an injected owner "
+                "turn produces" % (self.source_id, self.message_count(),
+                                   self.recorded_count)))
+            return False
         return True
 
-    def roles(self):
+    def _parse(self):
         if self._roles is None:
-            region, _ = transcript_source_region(self.read())
-            self._roles = parse_transcript_roles(region)
+            region, found = transcript_source_region(self.read())
+            if not found:
+                self._roles, self._well_formed, self._count = {}, False, 0
+            else:
+                self._roles, self._well_formed = genuine_message_roles(region)
+                self._count = len(self._roles)
+
+    def roles(self):
+        self._parse()
         return self._roles
 
+    def well_formed(self):
+        self._parse()
+        return self._well_formed
+
     def message_count(self):
-        if self._count is None:
-            region, found = transcript_source_region(self.read())
-            self._count = (len(TRANSCRIPT_HEADER_RE.findall(region))
-                           if found else 0)
+        self._parse()
         return self._count
 
 
@@ -255,36 +424,55 @@ def project_review_queue_owner_answers(corpus, project):
 
 # ------------------------------------------------------- vocabulary guards --
 
-def scan_forbidden_keys(node, path, findings, compile_id):
-    """No field exists for a backlog to hide in — recursively."""
+def _norm(s):
+    return re.sub(r"\s+", " ", str(s).strip().lower())
+
+
+_MESSAGES = {
+    "RND_DISPOSITION_FORBIDDEN":
+        "%s: %r opens a disposition stem — KEEP/ADAPT/MERGE/… is Recompile's "
+        "verdict against fresh repo reality, never Intake's",
+    "RND_SCORE_FORBIDDEN":
+        "%s: %r opens a score stem — no single-number reduction; lovability and "
+        "its relatives are diagnostic signals, not a score",
+    "RND_PRIORITIZATION_FORBIDDEN":
+        "%s: %r opens a priority stem — INTAKE != BACKLOG, and frequency/recency/"
+        "importance carry no weight here",
+    "RND_LIFECYCLE_FIELD_FORBIDDEN":
+        "%s: %r opens a lifecycle stem — a compile never holds lifecycle, tasks "
+        "or plans",
+}
+# A pure priority TOKEN encoded into a free-text list value — the tags-as-backlog
+# smell an independent review flagged. Kept narrow so a real tag like
+# "ranking-algorithms" is untouched: only a bare rank token (`P0`, `p3`) or a
+# `key:number` micro-record is refused as an ordering smuggled past the key guard.
+_PRIORITY_TOKEN_RE = re.compile(
+    r"^(?:p\d+|prio(?:rity)?\s*[:=-]?\s*\d+|rank\s*[:=-]?\s*\d+|"
+    r"#\d+|\d+/\d+)$", re.I)
+
+
+def scan_forbidden_keys(node, path, findings, compile_id, in_tags=False):
+    """No field exists for a backlog to hide in — recursively, by STEM PREFIX on
+    every key segment, plus a narrow check for a rank token smuggled into a tags
+    list value."""
     if isinstance(node, dict):
         for key, value in node.items():
-            lk = str(key).strip().lower()
-            base = lk.rsplit("_", 1)[-1]
             here = "%s.%s" % (path, key)
-            if lk in DISPOSITION_KEYS:
-                findings.append(Finding(
-                    compile_id, "RND_DISPOSITION_FORBIDDEN",
-                    "%s: KEEP/ADAPT/MERGE/… is Recompile's verdict against fresh "
-                    "repo reality, never Intake's" % here))
-            elif lk in SCORE_KEYS or base in SCORE_KEYS:
-                findings.append(Finding(
-                    compile_id, "RND_SCORE_FORBIDDEN",
-                    "%s: no single-number reduction — lovability and its relatives "
-                    "are diagnostic signals, not a score" % here))
-            elif lk in PRIORITIZATION_KEYS or base in PRIORITIZATION_KEYS:
-                findings.append(Finding(
-                    compile_id, "RND_PRIORITIZATION_FORBIDDEN",
-                    "%s: INTAKE != BACKLOG — frequency/recency/importance carry no "
-                    "weight here" % here))
-            elif lk in LIFECYCLE_KEYS:
-                findings.append(Finding(
-                    compile_id, "RND_LIFECYCLE_FIELD_FORBIDDEN",
-                    "%s: a compile never holds lifecycle, tasks or plans" % here))
-            scan_forbidden_keys(value, here, findings, compile_id)
+            code, stem = _forbidden_key(key)
+            if code:
+                findings.append(Finding(compile_id, code,
+                                        _MESSAGES[code] % (here, str(key))))
+            scan_forbidden_keys(value, here, findings, compile_id,
+                                in_tags=str(key).strip().lower() == "tags")
     elif isinstance(node, list):
         for idx, value in enumerate(node):
-            scan_forbidden_keys(value, "%s[%d]" % (path, idx), findings, compile_id)
+            scan_forbidden_keys(value, "%s[%d]" % (path, idx), findings,
+                                compile_id, in_tags=in_tags)
+    elif in_tags and isinstance(node, str) and _PRIORITY_TOKEN_RE.match(node.strip()):
+        findings.append(Finding(
+            compile_id, "RND_PRIORITIZATION_FORBIDDEN",
+            "%s: tag %r is a bare rank token — a de-facto ordering encoded in a "
+            "free-text field is still a backlog" % (path, node.strip())))
 
 
 # ------------------------------------------------------------- validation ---
@@ -450,6 +638,8 @@ def validate_compile(corpus, compile_id):
         prov = prov if isinstance(prov, list) else []
         resolved_any = False
         roles_seen = set()
+        owner_specific = False   # a targeted owner-decision finding already fired
+        item_quote = str(item.get("quote", "")).strip()
         for p in prov:
             if not isinstance(p, dict):
                 findings.append(Finding(cid, "RND_PROVENANCE_UNBOUND",
@@ -469,7 +659,34 @@ def validate_compile(corpus, compile_id):
                         "review queue" % (iid, rq)))
                 else:
                     resolved_any = True
-                    roles_seen.add(ROLE_OWNER)
+                    if kind == "OWNER_DECISION":
+                        # One answered RQ is not a blank cheque for any claim: the
+                        # decision must QUOTE a SUBSTANTIAL run of the owner's own
+                        # words from that very answer — an independent review showed
+                        # a single letter ("is", "e") satisfied a bare substring
+                        # test and laundered an unrelated fabricated decision. The
+                        # quote proves the owner SAID it; whether the derived claim
+                        # faithfully reflects those words is the compile audit's
+                        # job (RND_OWNER_PROVENANCE_LAUNDERED / RND_SECOND_TRUTH),
+                        # exactly as for a message-cited owner turn — the two owner
+                        # paths are deliberately symmetric.
+                        qn = _norm(item_quote)
+                        if (len(qn) >= _QUOTE_MIN_CHARS
+                                and len(qn.split()) >= _QUOTE_MIN_WORDS
+                                and qn in _norm(rq_answers[rq])):
+                            roles_seen.add(ROLE_OWNER)
+                        else:
+                            findings.append(Finding(
+                                cid, "RND_OWNER_DECISION_RQ_UNSUPPORTED",
+                                "%s: an OWNER_DECISION backed by %s must `quote` a "
+                                "substantial run (>=%d chars, >=%d words) of the "
+                                "owner's OWN answer — an answered RQ backs the "
+                                "decision it answers, never an unrelated claim "
+                                "pinned beside a stray letter"
+                                % (iid, rq, _QUOTE_MIN_CHARS, _QUOTE_MIN_WORDS)))
+                            owner_specific = True
+                    else:
+                        roles_seen.add(ROLE_OWNER)   # owner words as evidence
                 continue
             sid = str(p.get("source_id", "")).strip()
             b = sources.get(sid)
@@ -478,13 +695,21 @@ def validate_compile(corpus, compile_id):
                                         "%s cites %r, which the source set does "
                                         "not bind" % (iid, sid or "?")))
                 continue
-            if not b.path.exists() or (
-                    b.recorded_sha
-                    and transcript_source_sha256(b.read()) != b.recorded_sha):
-                continue      # the per-source finding is already recorded once
+            # A source whose path escapes the corpus, is missing, whose bytes no
+            # longer hash to the bound identity, or whose header count disagrees
+            # with the capture, resolves NOTHING and grants no role — its per-source
+            # finding is already recorded once by verify(). Never read or trust
+            # out-of-corpus or tampered bytes here.
+            if (Path(b.rel).is_absolute() or not b._within_corpus()
+                    or not b.path.exists()
+                    or (b.recorded_sha
+                        and transcript_source_sha256(b.read()) != b.recorded_sha)
+                    or (isinstance(b.recorded_count, int)
+                        and b.message_count() != b.recorded_count)):
+                continue
             spec = p.get("messages")
             if spec is None:
-                resolved_any = True     # whole-source citation
+                resolved_any = True     # whole-source citation grants NO role
                 continue
             rng = parse_msg_range(spec)
             count = b.message_count()
@@ -492,13 +717,18 @@ def validate_compile(corpus, compile_id):
                 findings.append(Finding(
                     cid, "RND_PROVENANCE_OUT_OF_RANGE",
                     "%s cites %s msg %s of a %d-message capture — an unreachable "
-                    "citation is what an invented claim produces"
-                    % (iid, sid, spec, count)))
+                    "citation is what an invented claim (or an injected header) "
+                    "produces" % (iid, sid, spec, count)))
                 continue
             resolved_any = True
+            if not b.well_formed():
+                # Block-opening headers that do not number 1..N mean the transcript
+                # was tampered/injected: no role from it is trustworthy.
+                roles_seen.add(ROLE_UNKNOWN)
+                continue
             roles = b.roles()
             for n in range(rng[0], rng[1] + 1):
-                roles_seen.add(roles.get(n, "unknown"))
+                roles_seen.add(roles.get(n, ROLE_UNKNOWN))
         if not prov or not resolved_any:
             findings.append(Finding(cid, "RND_ITEM_UNSOURCED",
                                     "%s: every derived item cites the evidence "
@@ -509,6 +739,8 @@ def validate_compile(corpus, compile_id):
             # supplies the backing the assistant turns lack.
             if ROLE_OWNER in roles_seen:
                 owner_backed.add(iid)
+            elif owner_specific:
+                pass                      # a targeted finding already fired
             elif ROLE_ASSISTANT in roles_seen:
                 findings.append(Finding(
                     cid, "RND_OWNER_DECISION_ASSISTANT_ONLY",
@@ -851,6 +1083,13 @@ def cmd_init(args):
 
     sources, note = [], ""
     if args.project:
+        # A project name is a corpus-relative slug, never a path — an independent
+        # review showed `--project ../evilproj` binding a manifest outside the
+        # corpus. Same discipline as the compile id.
+        if not PROJECT_RE.match(args.project or ""):
+            print("FAIL: --project %r is not a project slug — a compile binds a "
+                  "swept project by name, never by path" % args.project)
+            return 1
         manifest, err = read_json(Path(corpus) / "_projects" / args.project
                                   / "project-manifest.json")
         if err or not isinstance(manifest, dict):
@@ -874,6 +1113,9 @@ def cmd_init(args):
                    "revision": last.get("revision"),
                    "path": str(last.get("path", "")).strip(),
                    "source_sha256": str(last.get("source_sha256", "")).strip()}
+            mc = last.get("message_count")
+            if isinstance(mc, int):
+                rec["message_count"] = mc
             if not rec["source_sha256"]:
                 # legacy revision — recompute from bytes, exactly as capture does
                 p = Path(corpus) / rec["path"]
@@ -890,16 +1132,35 @@ def cmd_init(args):
         if excluded:
             note = "EXCLUDED_SOURCES=%d (uncaptured — visible, not absorbed)" % excluded
     elif args.source:
+        base = Path(corpus).resolve()
         for idx, rel in enumerate(args.source):
-            p = Path(corpus) / rel
-            if not p.exists():
+            # already-captured material only: an explicit source must live INSIDE
+            # the corpus. Reject absolute paths and any `..`/symlink that resolves
+            # outside — an independent review showed both bound uncaptured,
+            # unswept, unverified external files as authoritative sources.
+            if Path(rel).is_absolute():
+                print("FAIL: --source %s is absolute — a compile consumes "
+                      "already-captured material inside the corpus, never an "
+                      "arbitrary path" % rel)
+                return 1
+            resolved = (base / rel).resolve()
+            try:
+                rel_norm = resolved.relative_to(base)
+            except ValueError:
+                print("FAIL: --source %s escapes the corpus root (%s) — a compile "
+                      "binds only captured material under the corpus" % (rel, base))
+                return 1
+            if not resolved.exists():
                 print("FAIL: explicit source %s does not exist under the corpus"
                       % rel)
                 return 1
+            text = resolved.read_text(encoding="utf-8")
+            region, found = transcript_source_region(text)
+            _roles, _ = genuine_message_roles(region) if found else ({}, False)
             sources.append({
-                "source_id": "EXP-%03d" % (idx + 1), "path": rel,
-                "source_sha256": transcript_source_sha256(
-                    p.read_text(encoding="utf-8")),
+                "source_id": "EXP-%03d" % (idx + 1), "path": str(rel_norm),
+                "source_sha256": transcript_source_sha256(text),
+                "message_count": len(_roles),
             })
         source_set = {"kind": "explicit", "sources": sources}
     else:

@@ -234,6 +234,41 @@ dismissal path — findings are remediated or they stand. Codes
     RND_COLLAPSED_TO_SINGLE_IDEA     a mixed corpus flattened into "one buildable idea"
     RND_COVERAGE_OVERSTATED          a lens called explored beyond its basis
 
+## Boundaries the audit owns, not `validate` — recorded honestly
+
+`validate` is mechanical and fail-closed over everything a machine can decide: the
+vocabulary, provenance binding, role-aware owner backing, the closed ontology, and
+the **negative** side of coverage — no lens omitted, `UNKNOWN` whenever the basis is
+empty, `UNKNOWN` never carrying a basis, and every non-UNKNOWN state citing item ids
+that exist. What it deliberately does **not** decide is judgement, and saying so is
+part of the honest record (an independent review pressed on exactly these):
+
+- **Positive coverage is the audit's call.** `validate` proves a `WELL_EXPLORED`
+  lens cites real items; it cannot prove those items genuinely explore that lens.
+  Overstatement is `RND_COVERAGE_OVERSTATED` — a **compile-audit** code, not a
+  validate code — for the same reason the distillation audit, not the validator,
+  judges whether a brief's decisions are semantically right.
+- **A backlog can still be encoded in free text.** The key-stem guard refuses every
+  priority/score/lifecycle field, and a bare rank *token* in a `tags` value
+  (`P0`, `#3`) is refused too — but a de-facto ordering smuggled into prose (`claim`,
+  `note`) or into item **order** is a semantic smell the audit hunts
+  (`RND_BACKLOG_LAUNDERING`), not something the vocabulary guard can see. Item order
+  in the IR carries no meaning and no tool reads it as rank.
+- **Claim fidelity is judgement.** `validate` caps a claim's length and binds its
+  provenance; whether the claim faithfully states what the source said is
+  `RND_SECOND_TRUTH`, an audit finding.
+- **Role truth is inherited from capture, and header framing is the boundary.** The
+  owner gate resolves roles only from block-opening headers and refuses an
+  out-of-sequence one, which closes header text pasted into a message body. What it
+  cannot distinguish is a capture that reproduces the builder's exact turn framing —
+  a conversation whose subject matter *is* this transcript format — the same
+  documented residual the single-mode capture carries; the source-set hash binds the
+  bytes, and the audit reads the words.
+
+These are the same shape as the frozen skill's accepted residual risks: mechanical
+where a machine can be trusted, independent-audit where judgement is required, and
+never a false claim that structure proves semantics.
+
 ## What RND_COMPILE never does
 
 No capture of new authority from external text. No IMPLEMENTERA NU question. No Plan

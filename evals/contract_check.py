@@ -744,6 +744,20 @@ CHECKS = [
     ("README.md", "RD15 the README explains the third mode honestly", [
         "RND_COMPILE",
         "typad, härledd", "aldrig en backlog"]),
+    ("references/rnd-compile-template.md",
+     "RD16 the audit/validate boundary is recorded honestly", [
+        "## Boundaries the audit owns, not `validate` — recorded honestly",
+        "Positive coverage is the audit's call",
+        "RND_COVERAGE_OVERSTATED",
+        "A backlog can still be encoded in free text",
+        "Item order in the IR carries no meaning and no tool reads it as rank",
+        "Claim fidelity is judgement",
+        "never a false claim that structure proves semantics"]),
+    ("references/rnd-compile-template.md",
+     "RD17 role framing closes header injection, records the residual", [
+        "The owner gate resolves roles only from block-opening headers",
+        "closes header text pasted into a message body",
+        "a conversation whose subject matter *is* this transcript format"]),
 ]
 
 
