@@ -542,6 +542,16 @@ def t_boundary(tmp):
     check("T11b a bypass instruction is caught wherever it is written, not only in "
           "the playbook", set(_mentions([probe])) - set(PINNED_MENTIONS) != set())
 
+    # Mixed case is a FOLLOWABLE path on a case-insensitive filesystem (`~/.Claude/
+    # projects` is the same directory), and it is one of the shapes the M-1 fix names
+    # as closed — so the `(?i:)` flag is load-bearing, and this proves it. Dropping the
+    # flag makes this the one probe that reopens the case-game hole.
+    for variant in ("~/.Claude/projects/x.jsonl", "~/.CLAUDE/sessions/y",
+                    "read ~/.Claude and go into projects"):
+        probe.write_text(variant, encoding="utf-8")
+        check("T11c-case a mixed-case runtime path is caught too — %r" % variant[:24],
+              set(_mentions([probe])) - set(PINNED_MENTIONS) != set())
+
     # A count would miss this one: delete a protective mention, add a permissive one.
     swapped = Path(tmp) / "swapped.md"
     playbook_text = (ROOT / "references" / "extraction.md").read_text(encoding="utf-8")

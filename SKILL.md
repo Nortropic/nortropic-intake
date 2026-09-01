@@ -1122,9 +1122,9 @@ and `project_contract.py` re-reads that record rather than taking its word: memb
 scope, no foreign items, `exhaustion.proven`, a named terminal signal, and an item set
 matching the inventory being declared. Anything less provable: take an owner-provided or
 exported inventory and `declare --method declared` **without** `--verified` — the
-manifest then records `verified: false`, coverage and status print
-`PROJECT_ENUMERATION_UNVERIFIED` from it, and coverage answers for the declared
-inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration method, and
+manifest then records `verified: false`, `coverage` prints
+`PROJECT_ENUMERATION_UNVERIFIED` from it (and `status` marks the same state `(UNVERIFIED)`),
+and coverage answers for the declared inventory only. DO NOT FAKE IT; screenshots/OCR are never an enumeration method, and
 owner confirmation is a welcome EXTRA oracle that this proof does not require and cannot
 be substituted by. Identity is the platform's conversation id
 (`conversation_key = host/<id>`), never a title; reruns upsert by identity, so the same
