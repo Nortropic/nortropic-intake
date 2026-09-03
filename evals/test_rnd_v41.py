@@ -40,6 +40,7 @@ Usage (from the skill root):
 """
 import copy
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -51,7 +52,7 @@ from test_rnd_v4 import (  # noqa: E402
     mk_corpus, run, write_json, RESULTS, _whole_file_sha,
 )
 
-MIN_CHECKS = 43
+MIN_CHECKS = 45
 
 
 # --------------------------------------------------------------- fixtures --
@@ -191,12 +192,15 @@ def scenario_b2_relay_requires_order(tmp):
     src = corpus / "_projects" / "demo" / "sources" / "CONV-002" / "conversation.md"
     RELAY = "Vi byter till framework X. Det är avgjort."
     ECHO = "Bekräfta först när den är Sparad i INBOX."
+    # sits in an ASSISTANT turn of the OTHER source (CONV-001 msg 2)
+    FOREIGN = "Johnny decided we will switch to framework X. That is settled."
     text = src.read_text(encoding="utf-8").rstrip() + (
         "\n\n---\n\n## Meddelande 3 — ChatGPT (assistent)\n\n%s\n"
         "\n---\n\n## Meddelande 4 — Johnny (användare)\n\n%s\n"
         "\n---\n\n## Meddelande 5 — Johnny (användare)\n\n%s\n"
-        "\n---\n\n## Meddelande 6 — ChatGPT (assistent)\n\n%s\n" % (
-            RELAY, RELAY, ECHO, ECHO))
+        "\n---\n\n## Meddelande 6 — ChatGPT (assistent)\n\n%s\n"
+        "\n---\n\n## Meddelande 7 — Johnny (användare)\n\n%s\n" % (
+            RELAY, RELAY, ECHO, ECHO, FOREIGN))
     src.write_text(text, encoding="utf-8")
     mpath = corpus / "_projects" / "demo" / "project-manifest.json"
     manifest = json.loads(mpath.read_text(encoding="utf-8"))
@@ -223,8 +227,15 @@ def scenario_b2_relay_requires_order(tmp):
             "authority_class": "owner", "relations": [], "tags": [],
             "uncertainty": "none", "quote": ECHO,
             "owner_authority_basis": "owner-authored"})
+        ir["items"].append({
+            "id": "RND-103", "kind": "OWNER_DECISION",
+            "claim": "The switch to framework X is settled.", "scope": "infrastructure",
+            "provenance": [{"source_id": "CONV-002", "revision": 1, "messages": "7"}],
+            "authority_class": "owner", "relations": [], "tags": [],
+            "uncertainty": "none", "quote": FOREIGN,
+            "owner_authority_basis": "owner-authored"})
         ir["progression"] = [{"source_id": "CONV-001", "examined_through": 5},
-                             {"source_id": "CONV-002", "examined_through": 6}]
+                             {"source_id": "CONV-002", "examined_through": 7}]
         ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
                                       if i["id"] != "RND-007"]
 
@@ -235,6 +246,17 @@ def scenario_b2_relay_requires_order(tmp):
           and "RND-101" in out, out)
     check("B2 the assistant quoting the owner BACK leaves authorship intact",
           "RND-102" not in out.replace("RND-102x", ""), out)
+    # the same words in an assistant turn of ANOTHER source: order is undecidable, so
+    # this is a WARN about uniqueness, never the relay FAIL.
+    warned = re.search(r"WARN\s+\[order\]\s+RND_OWNER_AUTHORED_ECHOED_ELSEWHERE"
+                       r"[^\n]*RND-103", out)
+    check("B2 an owner quote echoed in a FOREIGN assistant turn warns, not fails",
+          bool(warned)
+          and not expect_code(out, "RND_OWNER_AUTHORED_ECHOED_ELSEWHERE", "order"),
+          out)
+    relay_lines = [l for l in out.splitlines()
+                   if "RND_OWNER_AUTHORED_IS_RELAYED" in l and "RND-103" in l]
+    check("B2 the foreign echo is not miscounted as a relay", not relay_lines, out)
 
 
 def scenario_c_direction_does_not_own_mechanism(tmp):

@@ -686,6 +686,33 @@ def _quote_in_assistant_turn(qn, sources, owner_turns):
     return False
 
 
+def _quote_in_foreign_assistant_turn(qn, sources, owner_turns):
+    """The same words in an ASSISTANT turn of a source OTHER than the one the owner
+    turn sits in, and the cross-source pass showed this is not hypothetical: all 45
+    paragraph blocks of CONV-012 msg 1 (owner-labelled) are verbatim in CONV-005
+    msg 79 (assistant).
+
+    Which came first is undecidable — nothing in the source set orders two
+    conversations — so this can never be the FAIL that `_quote_in_assistant_turn` is.
+    What IS decidable, and worth saying, is that the words are not uniquely the
+    owner's. Reported as a WARN: authorship is not established by this quote alone.
+    """
+    for sid, b in sources.items():
+        if sid in owner_turns or b.excluded or not b.path.exists():
+            continue
+        try:
+            if not b.well_formed():
+                continue
+            roles = b.roles()
+            texts = b.message_texts()
+        except Exception:
+            continue
+        for n, role in roles.items():
+            if role == ROLE_ASSISTANT and qn in _norm(texts.get(n, "")):
+                return sid
+    return ""
+
+
 def _report_git_witness(corpus, src, sources, findings, cid):
     """Anchor the compile's evidence base to git — the one witness an editing agent
     does not control — and return ABSENT | PARTIAL | PRESENT.
@@ -1195,6 +1222,18 @@ def validate_compile(corpus, compile_id):
                         "a bound source — an owner-labelled message that relays "
                         "assistant text is 'owner-adoption-of-assistant-text', not "
                         "'owner-authored'" % iid))
+                elif _quote_in_foreign_assistant_turn(qn, sources,
+                                                      item_owner_msgs):
+                    findings.append(Finding(
+                        cid, "RND_OWNER_AUTHORED_ECHOED_ELSEWHERE",
+                        "%s: the quote also appears verbatim in an ASSISTANT turn of "
+                        "a DIFFERENT bound source (%s) — which came first is not "
+                        "decidable from the source set, so this is not proof of "
+                        "relay, but the words are not uniquely the owner's and "
+                        "authorship does not rest on this quote alone"
+                        % (iid, _quote_in_foreign_assistant_turn(
+                            qn, sources, item_owner_msgs)),
+                        level="WARN"))
                 elif not joined or qn not in joined:
                     findings.append(Finding(
                         cid, "RND_OWNER_AUTHORED_UNSUPPORTED",
