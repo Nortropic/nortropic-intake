@@ -646,12 +646,30 @@ def scan_forbidden_keys(node, path, findings, compile_id, in_tags=False):
 
 # --------------------------------------------------------------- git witness --
 
-def _quote_in_assistant_turn(qn, sources):
-    """True when the normalised quote sits verbatim inside any ASSISTANT turn of any
-    bound, verified source. Cheap and decidable: it answers "were these words already
-    said by the assistant?", never the undecidable "did the owner mean them?"."""
-    for b in sources.values():
-        if b.excluded or not b.path.exists():
+def _quote_in_assistant_turn(qn, sources, owner_turns):
+    """True when the normalised quote sits verbatim inside an ASSISTANT turn that
+    PRECEDES the owner turn carrying it, in the same source.
+
+    Relaying is a claim about origin: the owner can only pass on words the assistant
+    had already written. Order is therefore part of the concept, not a refinement of
+    it — an assistant turn that quotes the owner BACK, later in the same thread, is
+    the assistant citing the owner and leaves the owner's authorship untouched.
+    Dropping the order test would push a genuinely owner-authored decision down to a
+    weaker basis, which loses owner authority exactly as surely as granting authority
+    the owner never had.
+
+    Order is only decidable inside one transcript: message numbers totally order a
+    source, and nothing in the source set orders two conversations against each other
+    (they carry one shared export date). Cross-source echoes are therefore NOT read as
+    relays — consistent with this contract's rule that a guard answers "were these
+    words already there?" and never an undecidable question.
+
+    `owner_turns` maps source_id -> {message numbers of the owner turns cited by this
+    item}; the earliest is the one whose authorship is under test.
+    """
+    for sid, turns in owner_turns.items():
+        b = sources.get(sid)
+        if b is None or b.excluded or not b.path.exists() or not turns:
             continue
         try:
             if not b.well_formed():
@@ -660,8 +678,10 @@ def _quote_in_assistant_turn(qn, sources):
             texts = b.message_texts()
         except Exception:
             continue
+        first_owner = min(turns)
         for n, role in roles.items():
-            if role == ROLE_ASSISTANT and qn in _norm(texts.get(n, "")):
+            if (role == ROLE_ASSISTANT and n < first_owner
+                    and qn in _norm(texts.get(n, ""))):
                 return True
     return False
 
@@ -1020,6 +1040,7 @@ def validate_compile(corpus, compile_id):
         owner_specific = False   # a targeted owner-decision finding already fired
         item_quote = str(item.get("quote", "")).strip()
         item_owner_text = []     # v4.1: the owner's own words in the cited ranges
+        item_owner_msgs = {}     # v4.1: sid -> {owner turn numbers} this item cites
         for p in prov:
             if not isinstance(p, dict):
                 findings.append(Finding(cid, "RND_PROVENANCE_UNBOUND",
@@ -1113,6 +1134,7 @@ def validate_compile(corpus, compile_id):
                 if r == ROLE_OWNER and semantic:
                     # v4.1: an owner turn a compile CITES is a turn it accounted for.
                     cited_owner_msgs.setdefault(sid, set()).add(n)
+                    item_owner_msgs.setdefault(sid, set()).add(n)
                     item_owner_text.append(b.message_texts().get(n, ""))
             if semantic and str(item.get("authority_class", "")).strip() == \
                     "evidence" and _URL_RE.search(
@@ -1159,10 +1181,10 @@ def validate_compile(corpus, compile_id):
                         "— the owner's own words are the evidence for the claim that "
                         "they are the owner's own words" % iid))
                 elif joined and qn in joined and _quote_in_assistant_turn(
-                        qn, sources):
+                        qn, sources, item_owner_msgs):
                     # The decisive case the r38 review found: CONV-012 msg 1 is an
                     # owner-LABELLED turn whose 7,126 content characters are verbatim
-                    # an earlier ASSISTANT turn the owner pasted back. Both blind
+                    # an EARLIER ASSISTANT turn the owner pasted back. Both blind
                     # slots read it as owner voice. Text the owner relayed is text
                     # the owner adopted, never text the owner authored — and unlike
                     # "did he mean it", that is decidable: the same words are sitting
@@ -1681,6 +1703,51 @@ def render_coverage(corpus, compile_id, ir):
             basis = ", ".join(str(b).strip() for b in (row.get("basis") or []))
         lines.append("| %s | %s | %s |" % (lens, state, basis))
     lines.append("")
+
+    # v4.1: the version-2 sections. The lens table alone cannot show what the twelve
+    # lenses do not see, which owner turns a compile accounted for, how far each
+    # source was read, or what was found only BETWEEN conversations. A rendering that
+    # omits them reproduces, one layer up, the blindness the semantic rules exist to
+    # close. Gated on version 2 so a published version-1 rendering is byte-identical.
+    if int(ir.get("rnd_ir_version") or IR_VERSION) >= IR_VERSION_SEMANTIC:
+        unlensed = [u for u in (ir.get("unlensed") or []) if isinstance(u, dict)]
+        lines.append("## Unlensed — distinctions the twelve lenses do not see")
+        lines.append("")
+        if not unlensed:
+            lines.append("    none declared")
+        for u in unlensed:
+            lines.append("| %s | %s |" % (
+                str(u.get("distinction", "?")).strip(),
+                ", ".join(str(i).strip() for i in (u.get("items") or []))))
+        lines.append("")
+
+        xs = [x for x in (ir.get("cross_source") or []) if isinstance(x, dict)]
+        lines.append("## Cross-source — meaning found only BETWEEN conversations")
+        lines.append("")
+        if not xs:
+            lines.append("    none declared")
+        for x in xs:
+            srcs = sorted({str(pp.get("source_id", "")).strip()
+                           for pp in (x.get("provenance") or [])
+                           if isinstance(pp, dict)})
+            lines.append("| %s | %s | %s |" % (
+                str(x.get("id", "?")).strip(),
+                str(x.get("claim", x.get("statement", ""))).strip()[:200],
+                ", ".join(srcs)))
+        lines.append("")
+
+        prog = [p for p in (ir.get("progression") or []) if isinstance(p, dict)]
+        ledger = [e for e in (ir.get("owner_turn_ledger") or []) if isinstance(e, dict)]
+        counts = {}
+        for e in ledger:
+            counts[str(e.get("reason", "?")).strip()] = counts.get(
+                str(e.get("reason", "?")).strip(), 0) + 1
+        lines.append("    SOURCES_EXAMINED_THROUGH=%d" % len(prog))
+        lines.append("    OWNER_TURN_LEDGER=%d (%s)" % (
+            len(ledger),
+            ", ".join("%s %d" % (k, counts[k]) for k in sorted(counts)) or "—"))
+        lines.append("")
+
     for standing in STANDING_LINES:
         lines.append("    " + standing)
     lines.append("")

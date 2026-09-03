@@ -48,10 +48,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_rnd_v4 import (  # noqa: E402
     GOOD_ITEMS, base_coverage, check, control_clean, expect_code, install_compile,
-    mk_corpus, run, write_json, RESULTS,
+    mk_corpus, run, write_json, RESULTS, _whole_file_sha,
 )
 
-MIN_CHECKS = 40
+MIN_CHECKS = 43
 
 
 # --------------------------------------------------------------- fixtures --
@@ -167,6 +167,74 @@ def scenario_b_relayed_text_is_not_owner_authored(tmp):
           not expect_code(out, "RND_OWNER_AUTHORED_IS_RELAYED", "adopted")
           and not expect_code(out, "RND_OWNER_AUTHORED_UNSUPPORTED", "adopted"), out)
     check("B control still clean in the same run", control_clean(out), out)
+
+
+
+
+def scenario_b2_relay_requires_order(tmp):
+    """B (order): relaying is a claim about ORIGIN, so it needs the assistant text to
+    come FIRST.
+
+    Two shapes look identical to a rule that only asks "do these words also sit in an
+    assistant turn?":
+
+      relay  assistant says it, THEN the owner pastes it back  -> not owner-authored
+      echo   the owner says it, THEN the assistant quotes back -> still the owner's
+
+    r38 RND-010 is the second shape (CONV-023: owner msg 14, assistant msg 28). An
+    unordered rule demotes it and strips owner authority the owner really has — the
+    same class of loss as granting authority he never had, in the other direction.
+    Order is decidable inside one transcript and undecidable across two, which is why
+    the rule reads message numbers within a source and never compares sources.
+    """
+    corpus = mk_corpus(tmp)
+    src = corpus / "_projects" / "demo" / "sources" / "CONV-002" / "conversation.md"
+    RELAY = "Vi byter till framework X. Det är avgjort."
+    ECHO = "Bekräfta först när den är Sparad i INBOX."
+    text = src.read_text(encoding="utf-8").rstrip() + (
+        "\n\n---\n\n## Meddelande 3 — ChatGPT (assistent)\n\n%s\n"
+        "\n---\n\n## Meddelande 4 — Johnny (användare)\n\n%s\n"
+        "\n---\n\n## Meddelande 5 — Johnny (användare)\n\n%s\n"
+        "\n---\n\n## Meddelande 6 — ChatGPT (assistent)\n\n%s\n" % (
+            RELAY, RELAY, ECHO, ECHO))
+    src.write_text(text, encoding="utf-8")
+    mpath = corpus / "_projects" / "demo" / "project-manifest.json"
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        if entry["source_id"] == "CONV-002":
+            rev = entry["revisions"][0]
+            rev["sha256"] = _whole_file_sha(text)
+            rev["message_count"] = text.count("## Meddelande ")
+    write_json(mpath, manifest)
+
+    def add(ir):
+        ir["items"].append({
+            "id": "RND-101", "kind": "OWNER_DECISION",
+            "claim": "The system switches to framework X.", "scope": "infrastructure",
+            "provenance": [{"source_id": "CONV-002", "revision": 1, "messages": "4"}],
+            "authority_class": "owner", "relations": [], "tags": [],
+            "uncertainty": "none", "quote": RELAY,
+            "owner_authority_basis": "owner-authored"})
+        ir["items"].append({
+            "id": "RND-102", "kind": "OWNER_DECISION",
+            "claim": "An intake save is confirmed only once the effect is verified.",
+            "scope": "intake", "provenance": [
+                {"source_id": "CONV-002", "revision": 1, "messages": "5"}],
+            "authority_class": "owner", "relations": [], "tags": [],
+            "uncertainty": "none", "quote": ECHO,
+            "owner_authority_basis": "owner-authored"})
+        ir["progression"] = [{"source_id": "CONV-001", "examined_through": 5},
+                             {"source_id": "CONV-002", "examined_through": 6}]
+        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
+                                      if i["id"] != "RND-007"]
+
+    v2_ir(corpus, "order", mutate=add)
+    rc, out = run(corpus, "validate")
+    check("B2 the owner pasting EARLIER assistant text is refused as owner-authored",
+          expect_code(out, "RND_OWNER_AUTHORED_IS_RELAYED", "order")
+          and "RND-101" in out, out)
+    check("B2 the assistant quoting the owner BACK leaves authorship intact",
+          "RND-102" not in out.replace("RND-102x", ""), out)
 
 
 def scenario_c_direction_does_not_own_mechanism(tmp):
@@ -420,6 +488,7 @@ def main():
         scenario_b_relayed_text_is_not_owner_authored,
         scenario_c_direction_does_not_own_mechanism,
         scenario_d_assistant_claim_is_not_owner,
+        scenario_b2_relay_requires_order,
         scenario_d_progression,
         scenario_e_negative_knowledge,
         scenario_f_evidence_survives_the_conclusion,
