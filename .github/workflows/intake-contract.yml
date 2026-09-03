@@ -57,6 +57,9 @@ jobs:
       - name: v4 RND_COMPILE suite (typed IR, coverage lens, laundering refusals)
         run: python3 evals/test_rnd_v4.py
 
+      - name: v4.1 semantic-coverage suite (owner ledger, standing, progression, A–J)
+        run: python3 evals/test_rnd_v41.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e

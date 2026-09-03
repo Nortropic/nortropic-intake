@@ -1312,6 +1312,69 @@ reality — never Intake's. What Intake MAY preserve is the owner's explicit
 reject/defer as an OWNER_DECISION with provenance: a fact about the past, not a
 disposition of the future.
 
+**v4.1 — semantic coverage (`rnd_ir_version: 2`).** v4.0 validates STRUCTURE and
+PROVENANCE INTEGRITY; it cannot ask whether a compile UNDERSTOOD its corpus. An
+external SOURCE→IR falsification of `improvements-r38` measured the gap: `validate`
+reported 0 FAIL / 0 WARN over a compile carrying 619 MATERIAL semantic omissions, and
+the six items thirty-one audit rounds were fought to ADD could be deleted again with
+the contract still green. v4.1 adds obligations, removes nothing, widens no closed
+vocabulary and weakens no guard — so a compile that passes v4.1 also passes v4.0, and
+a semantic PASS can never be bought by relaxing the contract. The rules are VERSIONED:
+a published `rnd_ir_version: 1` compile is validated by exactly the rules it was
+published against and stays byte-reproducible.
+
+*Owner authority gets a second, orthogonal axis.* `authority_class` says WHOSE
+authority; `owner_authority_basis` says HOW it was acquired — `owner-authored`,
+`owner-directive`, `owner-adoption-of-assistant-text`, `owner-attestation`,
+`owner-answered-rq`, `contested`. It is REQUIRED on every OWNER_DECISION
+(`RND_OWNER_BASIS_MISSING`), closed (`RND_OWNER_BASIS_INVALID`) and refused anywhere
+else (`RND_OWNER_BASIS_MISPLACED`). `owner-authored` is the one basis a machine can
+falsify and so it must earn its keep: the quote must sit inside an owner TURN of the
+cited ranges (`RND_OWNER_AUTHORED_UNSUPPORTED`, `RND_OWNER_AUTHORED_UNQUOTED`) and
+must not also appear verbatim in an ASSISTANT turn of a bound source
+(`RND_OWNER_AUTHORED_IS_RELAYED`) — an owner-labelled message that relays assistant
+text is adoption, not authorship. CLAIM ABOUT OWNER ≠ OWNER CLAIM; OWNER-LABELLED
+MESSAGE ≠ OWNER-AUTHORED CONTENT.
+
+*Every owner turn is accounted for.* Byte volume must not decide what survives, and
+an importance score would only be Goodharted, so the obligation attaches to a
+distinction that can be counted without ranking anything: the owner's own turns. Each
+one is either cited by an item's provenance or listed in `owner_turn_ledger` with a
+closed reason — `pasted-machine-output`, `interface-submission`,
+`acknowledgement-only`, `question-only`, `duplicate-restatement`,
+`no-material-content` (`RND_OWNER_TURN_UNACCOUNTED`, `RND_OWNER_LEDGER_MISSING`,
+`RND_OWNER_LEDGER_REASON_INVALID`). "Unimportant" is not a reason a corpus may give
+for dropping the owner's voice.
+
+*Negative knowledge has a home.* `standing` — `PROPOSAL`, `REJECTED`, `DEFERRED`,
+`SUPERSEDED`, `HISTORICAL`, `CURRENT_CANDIDATE` — is EPISTEMIC state in the corpus,
+never work state: it orders nothing and mints no kind (`RND_STANDING_INVALID`), and
+`SUPERSEDED` requires something that actually supersedes it
+(`RND_STANDING_UNSUPPORTED`). This is how a later Recompile stops rediscovering a
+killed idea as a live requirement.
+
+*A range is not a final state.* `progression` records, per bound source, how far the
+compile read before fixing semantic state; anything short of the whole conversation
+fails (`RND_PROGRESSION_INCOMPLETE`, `RND_PROGRESSION_MISSING`). EXACT SOURCE RANGE ≠
+FINAL SEMANTIC STATE — the correction five messages later is in the same conversation.
+
+*A conclusion may not outlive its evidence.* An `evidence` item whose cited range
+rests on an external reference retains it in `evidence_refs`
+(`RND_EVIDENCE_DISCARDED`, `RND_EVIDENCE_REF_INVALID`), so the conclusion stays
+falsifiable and re-researchable.
+
+*The instrument reports its own blindness.* `unlensed` is mandatory — an empty list
+is a valid answer, an absent field is a question never asked
+(`RND_UNLENSED_DECLARATION_MISSING`) — and every item sits in a lens basis or is
+declared unlensed (`RND_ITEM_UNLENSED_UNDECLARED`). Known lenses are retrieval
+scaffolding; they never define what the world is allowed to contain.
+
+*Cross-source meaning is derived and bound.* `cross_source` may carry meaning that
+emerges BETWEEN conversations, citing at least two bound sources
+(`RND_CROSS_SOURCE_SINGLE_SOURCE`, `RND_CROSS_SOURCE_UNBOUND`) and never acquiring
+owner authority (`RND_CROSS_SOURCE_AUTHORITY`) — a synthesis was authored by no one,
+least of all the owner.
+
 **Negative space is first-class.** Every compile answers a baseline coverage lens of
 twelve rows — truth/trust, professional excellence, organization, executive
 function, continuity/operate-forever, identity/data/economics, learning/evolution,
