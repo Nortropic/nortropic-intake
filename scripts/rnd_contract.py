@@ -1715,6 +1715,9 @@ def render_coverage(corpus, compile_id, ir):
         lines.append("")
         if not unlensed:
             lines.append("    none declared")
+        else:
+            lines.append("| distinction | items |")
+            lines.append("|---|---|")
         for u in unlensed:
             lines.append("| %s | %s |" % (
                 str(u.get("distinction", "?")).strip(),
@@ -1726,6 +1729,9 @@ def render_coverage(corpus, compile_id, ir):
         lines.append("")
         if not xs:
             lines.append("    none declared")
+        else:
+            lines.append("| id | meaning | sources |")
+            lines.append("|---|---|---|")
         for x in xs:
             srcs = sorted({str(pp.get("source_id", "")).strip()
                            for pp in (x.get("provenance") or [])
