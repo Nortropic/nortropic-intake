@@ -68,7 +68,7 @@ transcript_source_sha256 = _ic.transcript_source_sha256
 
 PASSED, FAILED = [], []
 ACTIVATION = {}
-MIN_CHECKS = 34
+MIN_CHECKS = 36
 
 
 def check(name, ok, detail=""):
@@ -206,15 +206,24 @@ covered, _ = att.reconcile(
 check("B6  CONTROL: the same body reconciles once both identities are declared",
       covered != "DISAGREE", covered)
 
+# Found by an adversarial pass over _covered, not by a fixture that expected it.
+undated, _ = att.reconcile(1, sig_u, [{"original_filename": "Inklistrad text.txt"}])
+check("B7  an UNDATED declaration cannot cover two DATED uploads of that name",
+      undated == "DISAGREE",
+      "`\"\" in stamp` is always true, so one undated entry silently covered both "
+      "AMR-004 uploads and dissolved the contradiction")
+check("B8  CONTROL: an undated declaration still covers an undated observation",
+      att._covered(("plan.md", ""), [{"original_filename": "plan.md"}]) is True)
+
 silent = att.reconcile(None, {"filecite_sites": 9, "named_upload_identities": []})[0]
-check("B7  a SILENT header over a file-citing body is UNKNOWN, never DISAGREE",
+check("B9  a SILENT header over a file-citing body is UNKNOWN, never DISAGREE",
       silent == "UNKNOWN",
       "silence is not a claim; accusing it would flood the real findings")
 
 # The corpus's own negative control, in miniature: many discussed paths, no uploads.
 paths = transcript([("Johnny (användare)",
                      "Se ~/nortropic/a.md och ~/nortropic/b.md och /Users/x/c.md")])
-check("B8  paths merely DISCUSSED do not count as uploads",
+check("B10 paths merely DISCUSSED do not count as uploads",
       att.observed_lower_bound(att.observed_signals(paths)) == 0,
       "the first draft scored the real CONV-008 negative control at 7 phantom uploads")
 

@@ -170,14 +170,24 @@ def _covered(identity, declared_identities):
     """Is an observed (name, stamp) upload present in the declared surface?
 
     Matched on the stamp as well as the name, because the same filename uploaded
-    twice is two attachments. A declared entry that names the file but not the
-    occasion does not cover a second occasion of it.
+    twice is two attachments. A declared entry naming the file but not the OCCASION
+    does not cover a dated upload: an adversarial pass over this function found that
+    `ds in stamp` is always true when `ds` is empty, so one undated declaration of
+    `Inklistrad text.txt` silently covered BOTH of the AMR-004 uploads and dissolved
+    the contradiction it was written to expose. An undated declaration is now exactly
+    as weak as it sounds - it can cover an undated observation and nothing else.
     """
     name, stamp = identity
+    name = name.strip().lower()
+    stamp = (stamp or "").strip()
     for d in declared_identities or ():
         dn = str((d or {}).get("original_filename") or "").strip().lower()
         ds = str((d or {}).get("uploaded_at") or "").strip()
-        if dn == name.strip().lower() and (not stamp or stamp in ds or ds in stamp):
+        if dn != name:
+            continue
+        if not stamp:
+            return True
+        if ds and (stamp in ds or ds in stamp):
             return True
     return False
 
