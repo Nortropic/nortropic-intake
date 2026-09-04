@@ -67,9 +67,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, fails, fm_str, git_head_blob, git_immutability,
     parse_transcript_roles, read_frontmatter, read_json, report, sha256_file,
-    sha256_text, transcript_source_sha256, write_json, ROLE_UNKNOWN,
+    sha256_text, source_surface_identity, transcript_source_sha256, write_json,
+    full_source_capture, ROLE_UNKNOWN,
 )
 import context_contract as ctx  # noqa: E402
+import attachment_surface as att  # noqa: E402
 
 PROJECT_MANIFEST_VERSION = 1
 PROJECTS_DIR = "_projects"
@@ -87,6 +89,7 @@ RQ_ID_RE = re.compile(r"^RQ-\d{3,}$")
 # A conversation is identified by host + platform conversation id — never by title.
 KEY_RE = re.compile(r"^[a-z0-9.-]+/[A-Za-z0-9_-]{8,}$")
 FAIL_STAGES = ("discover", "capture", "verify", "extract", "route")
+ATTACHMENT_MANIFEST_RE = re.compile(r"^attachments-r\d+\.json$")
 
 # What an adversarial sweep audit is allowed to conclude. A finding outside this set
 # is commentary, not a falsification attempt.
@@ -97,7 +100,8 @@ SWEEP_AUDIT_CODES = (
     "EXTERNAL_EVIDENCE_PROMOTED_TO_INSTRUCTION", "SOURCE_EPISODE_MISSING",
     "SILENT_CAPTURE_FAILURE", "DUPLICATE_IDEA_SLUG", "INDEX_STATE_DUPLICATE",
     "ROUTING_RELATION_INCONSISTENT", "FALSE_COMPLETENESS",
-    "RERUN_IDEMPOTENCY_VIOLATION",
+    "RERUN_IDEMPOTENCY_VIOLATION", "ATTACHMENT_SURFACE_UNRECONCILED",
+    "ATTACHMENT_MATERIAL_UNAVAILABLE",
 )
 AUDIT_SEVERITIES = ("material", "minor")
 
@@ -829,11 +833,133 @@ def _validate_sources(proj, data, findings):
         for path in sorted(proj.sources_dir.rglob("*")):
             if path.is_file():
                 rel = proj.rel(path)
+                # An attachment manifest is not a captured revision; it is the record
+                # of what the revision did NOT capture. It has its own validation in
+                # `_validate_attachments`, so it is recognised here rather than
+                # reported as an unrecorded capture.
+                if ATTACHMENT_MANIFEST_RE.match(path.name):
+                    continue
                 if rel not in recorded_paths:
                     findings.append(Finding(
                         proj.name, "MANIFEST_TREE_MISMATCH",
                         "%s exists on disk but no manifest revision records it — an "
                         "unrecorded capture reads as coverage nobody can check" % rel))
+
+
+
+def bound_revision(source):
+    """The revision the project actually stands on — extracted, else the latest.
+
+    Attachment surface is a property of a REVISION, never of a conversation. r38 held
+    a live example: CONV-001 r1 declares 54 attachments and r2 declares 55, and the
+    count moved without the body identity moving at all, because the declaration lives
+    in the builder header that source identity excludes.
+    """
+    revisions = source.get("revisions") or []
+    if not revisions:
+        return None
+    want = source.get("extracted_revision")
+    for r in revisions:
+        if want and r.get("revision") == want:
+            return r
+    return revisions[-1]
+
+
+def attachment_records(proj, data):
+    """One source-surface record per bound revision, measured from the bytes.
+
+    Declared and observed are read independently from the captured transcript, so the
+    reconciliation cannot be satisfied by editing a manifest.
+    """
+    records = []
+    for s in data.get("sources") or []:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("source_id", "")).strip()
+        rev = bound_revision(s)
+        if not sid or not rev:
+            continue
+        target = proj.corpus / str(rev.get("path", "")).strip()
+        if not target.is_file():
+            continue
+        raw = target.read_text(encoding="utf-8")
+        declared, phrase = att.declared_attachments(raw)
+        signals = att.observed_signals(raw)
+
+        number = rev.get("revision")
+        mpath = att.manifest_path(proj.source_dir(sid), number)
+        manifest, merr = (None, None)
+        if mpath.is_file():
+            manifest, merr = att.load_manifest(mpath)
+        rows = (manifest or {}).get("attachments") or []
+        recon, floor = att.reconcile(declared, signals, rows)
+        records.append({
+            "source_id": sid, "revision": number,
+            "source_sha256": transcript_source_sha256(raw),
+            "declared_count": declared, "declared_phrase": phrase,
+            "observed_count": floor, "reconciliation": recon,
+            "signals": signals, "attachments": rows,
+            "manifest_path": mpath, "manifest": manifest, "manifest_error": merr,
+        })
+    return records
+
+
+def _validate_attachments(proj, data, findings):
+    """The source-surface gate: a body digest is not a captured source surface.
+
+    Structural only, and the report says so. This cannot prove an attachment MEANS
+    what an item claims; it proves the surface is internally consistent, that bytes
+    claimed present are present, and that nothing asserts a completeness it has not
+    earned.
+    """
+    for rec in attachment_records(proj, data):
+        sid, number = rec["source_id"], rec["revision"]
+        if rec["manifest_error"]:
+            findings.append(Finding(
+                proj.name, "ATTACHMENT_MANIFEST_UNREADABLE",
+                "%s r%s: %s" % (sid, number, rec["manifest_error"])))
+            continue
+        if rec["manifest"] is not None:
+            findings.extend(att.validate_manifest(
+                rec["manifest"], sid, number, proj.name, proj.corpus))
+
+        recon = rec["reconciliation"]
+        if recon == "DISAGREE":
+            uncovered = [i for i in rec["signals"]["named_upload_identities"]
+                         if not att._covered(i, rec["attachments"])]
+            findings.append(Finding(
+                proj.name, "ATTACHMENT_SURFACE_UNRECONCILED",
+                "%s r%s declares %s attachment(s) but its own messages evidence at "
+                "least %d%s — a declared surface contradicted by the body is a source "
+                "whose completeness nobody can assert"
+                % (sid, number,
+                   "no" if rec["declared_count"] is None else rec["declared_count"],
+                   rec["observed_count"],
+                   (", including uploads the declaration omits: "
+                    + "; ".join("%s @ %s" % i for i in uncovered)) if uncovered else "")))
+        elif recon == "UNKNOWN" and rec["manifest"] is not None:
+            # Silence is tolerable until someone writes a manifest. Once written, the
+            # manifest is a positive claim and may not rest on an undecidable surface.
+            findings.append(Finding(
+                proj.name, "ATTACHMENT_SURFACE_UNRECONCILED",
+                "%s r%s carries an attachment manifest, but declared and observed "
+                "evidence do not reconcile (UNKNOWN) — record the basis or leave the "
+                "surface explicitly unresolved, never implicitly complete"
+                % (sid, number)))
+
+        for a in rec["attachments"]:
+            if not isinstance(a, dict):
+                continue
+            status = str(a.get("capture_status", "")).strip().upper()
+            if str(a.get("materiality", "")).strip().upper() == "MATERIAL" \
+                    and not att.attachment_bytes_available(status):
+                findings.append(Finding(
+                    proj.name, "ATTACHMENT_MATERIAL_UNAVAILABLE",
+                    "%s r%s %s is MATERIAL and %s — the source surface is incomplete "
+                    "in a way that blocks semantic qualification; this stays visible "
+                    "rather than being inferred away"
+                    % (sid, number, a.get("attachment_id"), status),
+                    level="WARN"))
 
 
 def _validate_idea_links(proj, s, sid, findings):
@@ -973,6 +1099,7 @@ def validate_project(proj):
         return findings, None
     _validate_enumeration(proj, data, findings)
     _validate_sources(proj, data, findings)
+    _validate_attachments(proj, data, findings)
     _validate_inventory_history(proj, data, findings)
     validate_review_queue(proj, data, findings)
     validate_sweep_audit(proj, data, findings, require=False)
@@ -1691,6 +1818,88 @@ def cmd_capture(proj, args):
     return 0 if ok else 1
 
 
+def cmd_attachments(proj, args):
+    """Report the attachment source surface, and the identity that now covers it.
+
+    Prints two digests side by side on purpose. BODY_SOURCE_IDENTITY is the old one
+    and is unchanged — every checkpoint minted under it stays reproducible, because a
+    historical measurement is not improved by being redefined afterwards. The new
+    FULL_SOURCE_SURFACE_IDENTITY covers body AND attachments, so an attachment that
+    arrives, vanishes or is replaced moves it while the body digest sits still. That
+    is the difference r38 could not represent.
+    """
+    findings = []
+    data = load_manifest(proj, findings)
+    if data is None or fails(findings):
+        for f in findings:
+            print(f)
+        return 1
+
+    records = attachment_records(proj, data)
+    if args.source:
+        records = [r for r in records if r["source_id"] == args.source]
+        if not records:
+            print("no bound revision for %s" % args.source)
+            return 2
+
+    body_lines = sorted("BODY %s r%s %s" % (r["source_id"], r["revision"],
+                                            r["source_sha256"]) for r in records)
+    body_digest = sha256_text("\n".join(body_lines) + "\n")
+    surface_digest, surface_lines = source_surface_identity(records)
+
+    totals = {"declared": 0, "manifested": 0, "with_bytes": 0,
+              "material_without_bytes": 0}
+    recon_counts = {}
+    print("%-10s %-4s %-9s %-9s %-11s %s"
+          % ("SOURCE", "REV", "DECLARED", "OBSERVED", "RECONCILE", "FULL_SOURCE_CAPTURE"))
+    for r in records:
+        rows = r["attachments"]
+        cap = full_source_capture(rows, r["reconciliation"], r["declared_count"])
+        totals["declared"] += (r["declared_count"] or 0)
+        totals["manifested"] += len(rows)
+        totals["with_bytes"] += sum(
+            1 for a in rows if att.attachment_bytes_available(a.get("capture_status")))
+        totals["material_without_bytes"] += sum(
+            1 for a in rows
+            if str(a.get("materiality", "")).strip().upper() == "MATERIAL"
+            and not att.attachment_bytes_available(a.get("capture_status")))
+        recon_counts[r["reconciliation"]] = recon_counts.get(r["reconciliation"], 0) + 1
+        print("%-10s r%-3s %-9s %-9d %-11s %s"
+              % (r["source_id"], r["revision"],
+                 "-" if r["declared_count"] is None else r["declared_count"],
+                 r["observed_count"], r["reconciliation"], cap))
+        if args.verbose:
+            s = r["signals"]
+            print("           signals: filecite_sites=%d turns=%d upload_phrases=%d "
+                  "named_uploads=%d"
+                  % (s["filecite_sites"], s["filecite_turns"], s["upload_phrases"],
+                     len(s["named_upload_identities"])))
+            for name, stamp in s["named_upload_identities"]:
+                print("             named upload: %s @ %s" % (name, stamp))
+
+    print()
+    print("SOURCES=%d" % len(records))
+    print("DECLARED_ATTACHMENT_TOTAL=%d" % totals["declared"])
+    print("MANIFESTED_ATTACHMENT_TOTAL=%d" % totals["manifested"])
+    print("ATTACHMENTS_WITH_BYTES=%d" % totals["with_bytes"])
+    print("MATERIAL_WITHOUT_BYTES=%d" % totals["material_without_bytes"])
+    for k in ("AGREE", "DISAGREE", "UNKNOWN"):
+        print("RECONCILIATION_%s=%d" % (k, recon_counts.get(k, 0)))
+    print()
+    print("BODY_SOURCE_IDENTITY=%s" % body_digest)
+    print("FULL_SOURCE_SURFACE_IDENTITY=%s" % surface_digest)
+    print()
+    print("These are DIFFERENT QUESTIONS and this tool will not conflate them: the "
+          "first says whether the messages are the same, the second whether the "
+          "SOURCE is. A structural result is not semantic understanding — final "
+          "coverage still requires independent source-first falsification.")
+    if args.lines:
+        print()
+        for line in surface_lines:
+            print("  " + line)
+    return 0
+
+
 def cmd_mark(proj, args, kind):
     findings = []
     data = load_manifest(proj, findings)
@@ -2086,6 +2295,13 @@ def main(argv=None):
     p = add("finalize", "end the sweep in an honest terminal state")
     p.add_argument("--at")
 
+    p = add("attachments", "attachment source surface: declared vs observed")
+    p.add_argument("--source", help="limit to one CONV-NNN")
+    p.add_argument("--verbose", action="store_true",
+                   help="show the observed signals behind each verdict")
+    p.add_argument("--lines", action="store_true",
+                   help="print the canonical source-surface identity lines")
+
     p = sub.add_parser("validate", parents=[common], help="structural corpus sweep")
     p.add_argument("--project", action="append")
 
@@ -2124,6 +2340,8 @@ def main(argv=None):
         return cmd_audit_cli(proj, args)
     if args.cmd == "report":
         return cmd_report(proj, args)
+    if args.cmd == "attachments":
+        return cmd_attachments(proj, args)
     if args.cmd == "finalize":
         return cmd_finalize(proj, args)
     return 2

@@ -530,6 +530,168 @@ def source_set_identity(manifest, owner_delta_ids=()):
     return sha256_text("\n".join(lines) + "\n"), lines
 
 
+# -------------------------------------------------- attachment source surface --
+
+# A CONVERSATION BODY IS NOT A COMPLETE CONVERSATION SOURCE SURFACE.
+#
+# `transcript_source_sha256` above answers one question exactly and well: are these
+# the same messages? It was then read as if it answered a second, larger one: is this
+# the whole source? It never did. The r38 attachment falsification measured the gap:
+# 98 attachments were DECLARED across the bound revisions of the improvements sweep,
+# 88 of them had no captured bytes at all, and every one of those bodies still hashed
+# green. The declaration itself lived in the builder's header note - prose, ABOVE the
+# first message header, which is precisely the region source identity excludes by
+# design. So "5 bilagor inventerade" could be edited to "0 bilagor inventerade", or
+# deleted outright, without moving the source digest one bit. That is reproducible:
+# evals/test_attachment_v42.py asserts it directly, so the hole cannot quietly return.
+#
+# The states below are the whole vocabulary. Only three of them mean the historical
+# bytes are actually in hand; everything else is an honest admission of absence, and
+# `attachment_bytes_available` is the single place that distinction is decided.
+ATTACHMENT_CAPTURE_STATES = (
+    "CAPTURED_CONTENT",         # bytes captured inline in the conversation body
+    "RECOVERED_EXACT",          # original historical bytes recovered, identity proven
+    "RECOVERED_DUPLICATE",      # byte-identical historical duplicate recovered
+    "CAPTURED_REFERENCE_ONLY",  # name/reference preserved, bytes absent
+    "DUPLICATE",                # asserted equivalent to another, bytes still absent
+    "UNAVAILABLE",              # expected, never captured
+    "UNKNOWN",                  # identity unresolved - never a synonym for "none"
+)
+ATTACHMENT_BYTES_STATES = frozenset(
+    ("CAPTURED_CONTENT", "RECOVERED_EXACT", "RECOVERED_DUPLICATE"))
+ATTACHMENT_MATERIALITY = ("MATERIAL", "NON_MATERIAL", "UNKNOWN")
+# Declared and observed evidence either agree, disagree, or cannot be compared. The
+# third is a real answer and must never collapse into the first.
+RECONCILIATION_STATES = ("AGREE", "DISAGREE", "UNKNOWN")
+
+
+def attachment_bytes_available(capture_status):
+    """True only when the historical bytes are genuinely in hand.
+
+    `DUPLICATE` is deliberately NOT here. Asserting that two attachments are the same
+    is a claim about two things that are both absent; it resolves an arithmetic
+    question, never an evidentiary one.
+    """
+    return str(capture_status or "").strip().upper() in ATTACHMENT_BYTES_STATES
+
+
+def full_source_capture(attachments, reconciliation="UNKNOWN", declared_count=None):
+    """YES / NO / UNKNOWN - derived, never stored, never asserted by a source.
+
+    The property the r38 defect needed and did not have. A source may answer YES only
+    when every attachment it DECLARES is accounted for, every one of them has bytes,
+    and the declared surface reconciles with what the body independently evidences. A
+    single MATERIAL attachment without bytes is NO. Anything undecidable is UNKNOWN,
+    which is a finding, not a pass.
+
+    `declared_count` is not optional in spirit, only in signature. The first draft of
+    this function omitted it and asked only "does any listed attachment lack bytes?".
+    Run against the frozen r38 corpus it answered YES for CONV-001, which declares 55
+    attachments and has captured the bytes of exactly none: with no manifest written
+    yet the list was empty, an empty list has no member lacking bytes, and the
+    vacuous truth read as complete capture. That is the SAME defect this whole module
+    exists to remove - a body that hashes green standing in for a source that was
+    never captured - reproduced one level up. An attachment the header declares and
+    the manifest does not describe is unaccounted, and unaccounted is never YES.
+    """
+    state = str(reconciliation or "UNKNOWN").strip().upper()
+    if state not in RECONCILIATION_STATES:
+        state = "UNKNOWN"
+    if state == "DISAGREE":
+        return "NO"
+    rows = [a for a in (attachments or []) if isinstance(a, dict)]
+    unresolved = len(rows) != len(attachments or [])
+
+    if declared_count is not None and int(declared_count) > len(rows):
+        # Declared attachments nobody has described. They have no bytes by
+        # construction and their materiality is unknown, so completeness is not
+        # merely unproven - it is unaskable until someone writes them down.
+        return "UNKNOWN"
+
+    for a in rows:
+        status = str(a.get("capture_status", "")).strip().upper()
+        material = str(a.get("materiality", "UNKNOWN")).strip().upper()
+        if attachment_bytes_available(status):
+            continue
+        if material == "MATERIAL":
+            return "NO"
+        unresolved = True
+    if state == "UNKNOWN" or unresolved:
+        return "UNKNOWN"
+    if declared_count is None and not rows:
+        # Nothing declared, nothing described, and the reconciliation only says the
+        # body evidences no files either. That is an absence of evidence about
+        # attachments, not evidence that the source surface is complete.
+        return "UNKNOWN"
+    return "YES"
+
+
+def source_surface_identity(records):
+    """The identity of a whole source SURFACE - body plus attachments.
+
+    Deliberately a SECOND identity standing alongside `transcript_source_sha256`,
+    never a replacement for it. The old body identity is historically valid for
+    exactly what it measured, and every checkpoint minted under it stays reproducible;
+    redefining it retroactively would destroy the evidence that the two are different
+    questions. What changes is that a system holding both can no longer mistake one
+    for the other.
+
+    Each record is one bound source revision:
+
+        {"source_id", "revision", "source_sha256", "declared_count",
+         "observed_count", "reconciliation", "attachments": [...]}
+
+    Canonical lines, sorted so file order and unrelated churn cannot move the digest:
+
+        BODY <source_id> r<revision> <source_sha256>
+        DECL <source_id> r<revision> <declared_count>
+        OBSV <source_id> r<revision> <observed_count> <reconciliation>
+        ATT  <source_id> r<revision> #<ordinal> <capture_status> <materiality> <identity>
+
+    `identity` is the sharpest the record holds: content hash, else platform file id,
+    else original filename, else `-`. An attachment whose bytes arrive later therefore
+    MOVES this digest while leaving the body digest untouched - which is the entire
+    point, and the exact transition the old model could not represent.
+
+    Returns (hex digest, [canonical lines]) so a mismatch can be explained.
+    """
+    lines = []
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        sid = str(rec.get("source_id", "")).strip()
+        if not sid:
+            continue
+        rev = str(rec.get("revision", "")).strip() or "-"
+        body = str(rec.get("source_sha256", "")).strip().lower() or "-"
+        declared = rec.get("declared_count")
+        observed = rec.get("observed_count")
+        recon = str(rec.get("reconciliation", "UNKNOWN")).strip().upper()
+        if recon not in RECONCILIATION_STATES:
+            recon = "UNKNOWN"
+        lines.append("BODY %s r%s %s" % (sid, rev, body))
+        lines.append("DECL %s r%s %s" % (
+            sid, rev, "-" if declared is None else int(declared)))
+        lines.append("OBSV %s r%s %s %s" % (
+            sid, rev, "-" if observed is None else int(observed), recon))
+        for a in rec.get("attachments") or []:
+            if not isinstance(a, dict):
+                continue
+            identity = "-"
+            for field in ("content_sha256", "platform_file_id", "original_filename"):
+                value = str(a.get(field, "") or "").strip()
+                if value:
+                    identity = value.lower() if field == "content_sha256" else value
+                    break
+            lines.append("ATT %s r%s #%s %s %s %s" % (
+                sid, rev, str(a.get("ordinal", "-")).strip() or "-",
+                str(a.get("capture_status", "")).strip().upper() or "-",
+                str(a.get("materiality", "UNKNOWN")).strip().upper() or "UNKNOWN",
+                identity))
+    lines.sort()
+    return sha256_text("\n".join(lines) + "\n"), lines
+
+
 # --------------------------------------------------------- secret hygiene --
 
 # Manifests record WHERE a source lives. They must never turn a credential into

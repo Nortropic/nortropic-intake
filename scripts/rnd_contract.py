@@ -44,6 +44,11 @@ from intake_common import (  # noqa: E402
     _OWNER_ROLE_RE, _ASSISTANT_ROLE_RE,
 )
 
+from intake_common import (  # noqa: E402
+    ATTACHMENT_CAPTURE_STATES as _ATT_STATES,
+    attachment_bytes_available as _att_has_bytes,
+)
+
 IR_VERSION = 1
 # v4.1 — the SEMANTIC COVERAGE obligations. Strictly ADDITIVE and VERSIONED: an
 # `rnd_ir_version: 1` compile validates under exactly the v4.0 rules it was published
@@ -1081,6 +1086,8 @@ def validate_compile(corpus, compile_id):
 
         # --- v4.1 evidence_refs integrity (root cause E) ---------------------
         refs = item.get("evidence_refs")
+        attachment_absent_refs = set()
+        attachment_present_refs = set()
         if semantic and refs is not None:
             if not isinstance(refs, list):
                 findings.append(Finding(cid, "RND_EVIDENCE_REF_INVALID",
@@ -1134,6 +1141,61 @@ def validate_compile(corpus, compile_id):
                             "so a reader who cannot reach it still knows what the "
                             "conclusion rested on" % iid))
                         continue
+
+                    # --- attachment evidence (root cause E: ACT-05) -------
+                    #
+                    # The attachment qualification found "every material attachment
+                    # has an evidence_ref" VACUOUS BY CONSTRUCTION: the IR had no
+                    # attachment field, so the rule could never activate on anything.
+                    # An evidence_ref could only point at a message range, which is
+                    # precisely what an attachment is NOT.
+                    #
+                    # The minimum representation, and no ontology beyond it: a ref may
+                    # name the attachment it rests on, must say what state that
+                    # attachment is in, and may not quietly borrow the authority of
+                    # bytes nobody has.
+                    #
+                    # The field is `attachment_capture`, not `attachment_status`.
+                    # `status` is a reserved lifecycle segment - an IR carries no
+                    # lifecycle anywhere, in any key - and the first draft of this
+                    # rule tripped RND_LIFECYCLE_FIELD_FORBIDDEN on its own
+                    # fixtures. The vocabulary guard was right and the new field
+                    # was renamed to obey it.
+                    aid = str(ref.get("attachment_id", "")).strip()
+                    astatus = str(ref.get("attachment_capture", "")).strip().upper()
+                    ahash = str(ref.get("attachment_sha256", "")).strip()
+                    if aid or astatus or ahash:
+                        if not aid:
+                            findings.append(Finding(
+                                cid, "RND_ATTACHMENT_REF_INVALID",
+                                "%s: an evidence_ref carries attachment detail with no "
+                                "attachment_id — provenance that names no entity binds "
+                                "to nothing" % iid))
+                        elif astatus not in _ATT_STATES:
+                            findings.append(Finding(
+                                cid, "RND_ATTACHMENT_REF_INVALID",
+                                "%s: evidence_ref %s carries attachment_capture=%r, "
+                                "expected one of %s — an attachment whose capture "
+                                "state is unstated reads as captured"
+                                % (iid, aid, ref.get("attachment_capture"),
+                                   ", ".join(_ATT_STATES))))
+                        elif not _att_has_bytes(astatus):
+                            attachment_absent_refs.add(iid)
+                            if ahash:
+                                findings.append(Finding(
+                                    cid, "RND_ATTACHMENT_REF_INVALID",
+                                    "%s: evidence_ref %s is %s yet carries an "
+                                    "attachment_sha256 — a hash of bytes nobody holds "
+                                    "is a claim of possession" % (iid, aid, astatus)))
+                            if ref.get("source_evidence_absent") is not True:
+                                findings.append(Finding(
+                                    cid, "RND_ATTACHMENT_EVIDENCE_ABSENT_UNMARKED",
+                                    "%s: evidence_ref %s rests on an attachment that "
+                                    "is %s, but does not set source_evidence_absent — "
+                                    "an absent document must not read like a read one"
+                                    % (iid, aid, astatus)))
+                        else:
+                            attachment_present_refs.add(iid)
                     # A token-match test was tried here and REMOVED. It rejected
                     # `Gauntlet`, `Recompile`, `Claude Code` and `Ägarplanet` when
                     # each was verbatim in the cited range: the tokeniser is ASCII
@@ -1150,6 +1212,37 @@ def validate_compile(corpus, compile_id):
                     # can make. What stays is what is decidable: the ref resolves to
                     # a real range in a bound source, and is not merely the range's
                     # own link pasted back.
+
+
+        # --- root cause F: no semantic completion of absent sources ----------
+        #
+        # AMR-001 is the shape to catch. RND-371 stated, with uncertainty "low", that
+        # a review returned "negative-rule corrections". The frozen transcript proves
+        # four correction groups ending "4/4 = FIXED" and not one negative rule: the
+        # specific content was filled in from a document whose bytes are absent.
+        #
+        # Downstream prose can establish that a document existed, that someone
+        # reported a result, that a workflow reacted. It cannot establish the
+        # propositions allegedly inside it. So an item resting on an absent
+        # attachment may not also claim low uncertainty - that is the inversion, and
+        # it is the same defect whether the missing bytes made the claim easier or
+        # harder to check.
+        if attachment_absent_refs and not attachment_present_refs:
+            unc = str(item.get("uncertainty", "")).strip().lower()
+            if unc.startswith("low"):
+                findings.append(Finding(
+                    cid, "RND_ATTACHMENT_UNCERTAINTY_INVERTED",
+                    "%s rests only on attachment evidence whose bytes are absent, yet "
+                    "records uncertainty %r. Absence of the source is not confidence "
+                    "about its contents; an unavailable document cannot license a "
+                    "low-uncertainty claim about what it said"
+                    % (iid, str(item.get("uncertainty"))[:60])))
+            if str(item.get("authority_class", "")).strip().lower() == "evidence":
+                findings.append(Finding(
+                    cid, "RND_ATTACHMENT_AUTHORITY_OVERSTATED",
+                    "%s is authority_class=evidence but every attachment it cites is "
+                    "unavailable — describing a document nobody can open is derived "
+                    "interpretation, not evidence" % iid))
 
         if str(item.get("activation_condition", "")).strip():
             activation_count += 1

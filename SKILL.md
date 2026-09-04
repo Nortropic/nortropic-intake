@@ -1170,6 +1170,55 @@ audit called it a `RERUN_IDEMPOTENCY_VIOLATION`, and it was one. Revisions writt
 `source_sha256` existed are handled by recomputing it from the bytes on disk, so a legacy
 corpus reaches the same no-op without being migrated.
 
+**P2.5 — Attachment source surface.** `attachments --project P` reads, for every
+bound revision, what the header DECLARES and what the message bodies independently
+EVIDENCE, and reconciles the two. This is a separate obligation from P2 because it
+answers a separate question:
+
+    CONVERSATION BODY  ≠  COMPLETE CONVERSATION SOURCE SURFACE
+
+when attachments exist. `source_sha256` says whether these are the same messages. It
+has never said whether this is the whole source, and the r38 attachment falsification
+measured what happens when the two are read as one: **98 attachments declared across
+the bound revisions of the improvements sweep, 88 of them with no captured bytes at
+all, and every body hashing green.** Worse, the declaration itself lived in the chip
+note — prose ABOVE the first message header, which is exactly the region source
+identity excludes by design. `5 bilagor inventerade` could be edited to `0 bilagor
+inventerade`, or deleted outright, and the source digest would not move one bit.
+`evals/test_attachment_v42.py` asserts that blindness directly, so it cannot quietly
+return.
+
+Two readings, never one. **Declared** is what the builder's header claims — prose
+about the conversation, exactly as trustworthy as any other assertion. **Observed**
+is what the messages themselves emit: platform file-citation markers, upload
+announcements, and named uploads carrying an upload stamp. They reconcile to
+`AGREE`, `DISAGREE` or `UNKNOWN`, and the third is a real answer that is never
+rounded toward the first. A silent header over a file-citing body is `UNKNOWN` —
+silence is not a claim, so it cannot be contradicted, but it cannot be trusted as
+"none" either.
+
+**Completeness is derived and cannot be asserted.** `FULL_SOURCE_CAPTURE` is `YES`
+only when every declared attachment is described, every one of them has bytes, and
+the surface reconciles. One MATERIAL attachment without bytes is `NO`. Anything
+undecidable is `UNKNOWN`. Run against the frozen r38 corpus today, **no source
+reaches YES** — which is the honest state of that corpus, and the state the old model
+could not express.
+
+**Where the bytes are absent, say so.** `CAPTURED_CONTENT`, `RECOVERED_EXACT` and
+`RECOVERED_DUPLICATE` mean the historical bytes are in hand. `CAPTURED_REFERENCE_ONLY`,
+`DUPLICATE`, `UNAVAILABLE` and `UNKNOWN` mean they are not, and `DUPLICATE` is
+deliberately not a bytes state: asserting that two attachments are the same resolves
+an arithmetic question, never an evidentiary one. A recovered attachment must carry
+`recovery_provenance` strong enough to prove it is THE attachment bound to that frozen
+revision — never a current URL standing in for a historical snapshot, and never bytes
+synthesised from an assistant's summary of them.
+
+**Never generalise from a filename.** The two `Inklistrad text.txt` uploads that
+falsified the r38 declared surface are a symptom, not the rule. A detector keyed to
+that name would have caught exactly those two files and read as coverage. What is
+detected is the CONTRADICTION — a body evidencing an upload identity the declaration
+does not contain — which is why the same rule catches uploads nobody has met yet.
+
 **P3 — Extract.** Distill each verified conversation with the normal Phase 2
 templates — zero, one or several ideas per conversation. Deliver each conversation
 into each extracted idea package as an episode transcript (byte-identical copy), then
