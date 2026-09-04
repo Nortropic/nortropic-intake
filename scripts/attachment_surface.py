@@ -41,12 +41,35 @@ import json
 import re
 
 from intake_common import (
-    ATTACHMENT_CAPTURE_STATES, ATTACHMENT_MATERIALITY, RECONCILIATION_STATES,
-    RECONCILIATION_UNRECONCILED, Finding, attachment_bytes_available,
-    full_source_capture, sha256_file, transcript_source_region,
+    ATTACHMENT_CAPTURE_STATES, ATTACHMENT_MATERIALITY, BYTE_IDENTITY_STATES,
+    RECONCILIATION_STATES, RECONCILIATION_UNRECONCILED,
+    RECOVERY_EXHAUSTION_STATES, SEMANTIC_ACCESSIBILITY_STATES, Finding,
+    attachment_bytes_available, full_source_capture, semantically_readable,
+    sha256_file, transcript_source_region,
 )
 
-ATTACHMENT_MANIFEST_VERSION = 1
+ATTACHMENT_MANIFEST_VERSION = 2
+# Version 1 manifests keep validating under the rules they were written against; the
+# v2 obligations below are additive and bind only v2. r38's own manifests are v1 and
+# are not reinterpreted by this change.
+SUPPORTED_ATTACHMENT_MANIFEST_VERSIONS = (1, 2)
+
+# A redundancy escape closes a finding by asserting the surviving text preserves what
+# the attachment protected. r38 showed the escape is safe for MEANING and unsafe for
+# EVIDENCE: a contemporaneous observation can carry the concept forward and can never
+# carry forward the ability to check itself against the thing observed. So an escape
+# must name the dimension it claims to preserve, and the evidentiary dimensions below
+# cannot be closed by a derived observation at all.
+REDUNDANCY_DIMENSIONS = (
+    "CONCEPTUAL_MEANING",          # closable by a faithful contemporaneous observation
+    "EXACT_VISUAL_STRUCTURE",      # not closable
+    "AUTHORSHIP_VISIBLE_ONLY_IN_PRIMARY",   # not closable
+    "LABELS_OR_RELATIONS",         # not closable
+    "PRIMARY_FALSIFIABILITY",      # not closable
+)
+REDUNDANCY_NOT_CLOSABLE_BY_OBSERVATION = frozenset((
+    "EXACT_VISUAL_STRUCTURE", "AUTHORSHIP_VISIBLE_ONLY_IN_PRIMARY",
+    "LABELS_OR_RELATIONS", "PRIMARY_FALSIFIABILITY"))
 ATT_ID_RE = re.compile(r"^ATT-[A-Za-z0-9]+-\d{3,}$")
 
 # ---------------------------------------------------------------- declared --
@@ -409,11 +432,11 @@ def validate_manifest(data, source_id, revision, slug, corpus=None):
     if not isinstance(data, dict):
         fail("ATTACHMENT_MANIFEST_UNREADABLE", "manifest is not an object")
         return findings
-    if data.get("attachment_manifest_version") != ATTACHMENT_MANIFEST_VERSION:
+    mver = data.get("attachment_manifest_version")
+    if mver not in SUPPORTED_ATTACHMENT_MANIFEST_VERSIONS:
         fail("ATTACHMENT_MANIFEST_VERSION_INVALID",
-             "attachment_manifest_version=%r, expected %d"
-             % (data.get("attachment_manifest_version"),
-                ATTACHMENT_MANIFEST_VERSION))
+             "attachment_manifest_version=%r, expected one of %s"
+             % (mver, list(SUPPORTED_ATTACHMENT_MANIFEST_VERSIONS)))
     if str(data.get("source_id", "")).strip() != source_id:
         fail("ATTACHMENT_MANIFEST_SOURCE_MISMATCH",
              "manifest source_id=%r, expected %s"
@@ -494,10 +517,95 @@ def validate_manifest(data, source_id, revision, slug, corpus=None):
                 fail("ATTACHMENT_HASH_WITHOUT_BYTES",
                      "%s is %s yet carries a content_sha256 — a hash of nothing is a "
                      "claim of possession" % (aid, status))
+        # --- orthogonal semantic-access axis (never a bytes claim) -------
+        sacc = str(a.get("semantic_accessibility", "")).strip().upper()
+        bid = str(a.get("byte_identity", "")).strip().upper()
+        if sacc and sacc not in SEMANTIC_ACCESSIBILITY_STATES:
+            fail("ATTACHMENT_SEMANTIC_ACCESS_INVALID",
+                 "%s: semantic_accessibility=%r, expected one of %s"
+                 % (aid, a.get("semantic_accessibility"),
+                    ", ".join(SEMANTIC_ACCESSIBILITY_STATES)))
+        if bid and bid not in BYTE_IDENTITY_STATES:
+            fail("ATTACHMENT_BYTE_IDENTITY_INVALID",
+                 "%s: byte_identity=%r, expected one of %s"
+                 % (aid, a.get("byte_identity"), ", ".join(BYTE_IDENTITY_STATES)))
+        # THE LOAD-BEARING REFUSAL. Readability must never be spent as capture.
+        if sacc == "SOURCE_BOUND_READABLE_EXTERNAL" and attachment_bytes_available(status):
+            fail("ATTACHMENT_SEMANTIC_ACCESS_MISUSED",
+                 "%s claims capture_status=%s AND "
+                 "semantic_accessibility=SOURCE_BOUND_READABLE_EXTERNAL. That state exists "
+                 "precisely for a source readable WITHOUT its bytes; asserting both is how "
+                 "semantic access gets spent as byte capture" % (aid, status))
+        if sacc == "SOURCE_BOUND_READABLE_EXTERNAL" and bid == "ESTABLISHED":
+            fail("ATTACHMENT_SEMANTIC_ACCESS_MISUSED",
+                 "%s is readable externally yet claims byte_identity=ESTABLISHED — "
+                 "reading a source never identifies its historical bytes" % aid)
+        if mver >= 2 and not attachment_bytes_available(status) and not sacc:
+            fail("ATTACHMENT_SEMANTIC_ACCESS_MISSING",
+                 "%s has no bytes (%s) and states no semantic_accessibility. A v2 manifest "
+                 "must say whether the content is still readable by some route, because "
+                 "'no bytes' and 'no meaning' are different losses" % (aid, status))
+
+        # --- redundancy escape: meaning yes, falsifiability never ---------
+        red = a.get("redundancy_escape")
+        if red is not None:
+            if not isinstance(red, dict):
+                fail("ATTACHMENT_REDUNDANCY_ESCAPE_INVALID",
+                     "%s: redundancy_escape is not an object" % aid)
+            else:
+                dims = red.get("dimensions_protected")
+                dims = dims if isinstance(dims, list) else []
+                if not dims:
+                    fail("ATTACHMENT_REDUNDANCY_ESCAPE_INVALID",
+                         "%s: a redundancy escape must name the dimensions it claims to "
+                         "preserve; an unnamed escape cannot be checked" % aid)
+                bad = [d for d in dims if str(d).strip().upper() not in REDUNDANCY_DIMENSIONS]
+                if bad:
+                    fail("ATTACHMENT_REDUNDANCY_ESCAPE_INVALID",
+                         "%s: unknown redundancy dimension(s) %s" % (aid, bad))
+                blocked = [d for d in dims
+                           if str(d).strip().upper() in REDUNDANCY_NOT_CLOSABLE_BY_OBSERVATION]
+                if blocked and not str(red.get("adjudication_record", "")).strip():
+                    fail("ATTACHMENT_REDUNDANCY_ESCAPE_OVERREACHES",
+                         "%s claims a derived observation preserves %s. A contemporaneous "
+                         "observation carries MEANING and never the primary artefact's "
+                         "falsification value, so an evidentiary dimension needs an explicit "
+                         "adjudication_record — static code cannot decide it and must not "
+                         "pretend to" % (aid, blocked))
+
         if status == "DUPLICATE" and not str(a.get("duplicate_of", "")).strip():
             fail("ATTACHMENT_DUPLICATE_UNBOUND",
                  "%s is DUPLICATE but names no duplicate_of — an unbound equivalence "
                  "claim cannot be checked" % aid)
+
+    # --- recovery exhaustion: a claim about the SEARCH, never about the source ---
+    rex = data.get("recovery_exhaustion")
+    if rex is not None:
+        if not isinstance(rex, dict):
+            fail("ATTACHMENT_RECOVERY_EXHAUSTION_INVALID",
+                 "recovery_exhaustion is not an object")
+        else:
+            st = str(rex.get("state", "")).strip().upper()
+            if st not in RECOVERY_EXHAUSTION_STATES:
+                fail("ATTACHMENT_RECOVERY_EXHAUSTION_INVALID",
+                     "recovery_exhaustion state=%r, expected one of %s"
+                     % (rex.get("state"), ", ".join(RECOVERY_EXHAUSTION_STATES)))
+            if st == "KNOWN_IRRECOVERABLE_IN_CURRENT_HISTORICAL_SURFACE":
+                basis = rex.get("basis")
+                if not (isinstance(basis, list) and basis):
+                    fail("ATTACHMENT_RECOVERY_EXHAUSTION_UNPROVEN",
+                         "declaring the surface irrecoverable requires a basis: what "
+                         "establishes the source EXISTED, which surfaces were searched, "
+                         "and why no usable locator remains. Exhaustion is earned, not "
+                         "asserted, or it becomes a way to stop looking early")
+                for k in ("source_existence_established", "surfaces_searched"):
+                    if not str(rex.get(k, "")).strip() and not rex.get(k):
+                        fail("ATTACHMENT_RECOVERY_EXHAUSTION_UNPROVEN",
+                             "irrecoverable claim is missing %r" % k)
+            if rex.get("source_never_existed") is not None:
+                fail("ATTACHMENT_RECOVERY_EXHAUSTION_OVERREACHES",
+                     "recovery_exhaustion may not carry source_never_existed. Exhausting a "
+                     "search establishes that nothing was found, never that nothing was there")
 
     # Completeness is DERIVED here and compared against whatever the manifest stored,
     # so a manifest can never talk its way to YES.

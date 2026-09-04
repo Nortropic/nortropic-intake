@@ -66,6 +66,9 @@ jobs:
       - name: v4.2 attachment evidence suite (proves ACT-05 is no longer vacuous)
         run: python3 evals/test_attachment_ir_v42.py
 
+      - name: v4.3 intake hardening suite (the six distinctions r38 paid for)
+        run: python3 evals/test_intake_v43.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e
@@ -110,7 +113,12 @@ jobs:
           # The attachment surface is its own module, so it is its own mutation
           # target. Both v4.2 suites depend on it: the first calls it directly, the
           # second reaches it through rnd_contract's shared vocabulary.
-          guard attachment_surface test_attachment_v42 test_project_v3
+          guard attachment_surface test_attachment_v42 test_project_v3 test_intake_v43
+          # v4.3 spans all three modules: the orthogonal axes live in intake_common, the
+          # manifest rules in attachment_surface, the epistemic-limit and owner-authorship
+          # rules in rnd_contract. Each is its own mutation target.
+          guard intake_common    test_intake_v43
+          guard rnd_contract     test_intake_v43
           cp /tmp/real/*.py scripts/
           # The discovery suite runs the SHIPPED adapter, so its mutation is that file.
           # The v3 suite depends on it too: its enumeration-evidence fixtures are the

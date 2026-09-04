@@ -560,6 +560,56 @@ ATTACHMENT_CAPTURE_STATES = (
 ATTACHMENT_BYTES_STATES = frozenset(
     ("CAPTURED_CONTENT", "RECOVERED_EXACT", "RECOVERED_DUPLICATE"))
 ATTACHMENT_MATERIALITY = ("MATERIAL", "NON_MATERIAL", "UNKNOWN")
+
+# SEMANTIC ACCESS IS A DIFFERENT AXIS FROM BYTE CAPTURE, AND r38 PROVED IT.
+#
+# Two CONV-007 attachments were readable in full through an external interface while
+# their historical bytes were never exported into any harness. Under a one-axis model
+# the only honest label for them was UNAVAILABLE, which was true about bytes and false
+# about meaning — and the tempting repair, inventing a capture state that meant
+# "readable", would have bought FULL_SOURCE_CAPTURE with semantics instead of bytes.
+#
+# So this is a SECOND, ORTHOGONAL axis. Nothing here is consulted by
+# `attachment_bytes_available` or `full_source_capture`, and that separation is
+# asserted directly in evals/test_intake_v43.py. A source may be
+# SOURCE_BOUND_READABLE_EXTERNAL and still, correctly, hold
+# SOURCE_CAPTURE_COMPLETENESS = NO.
+SEMANTIC_ACCESSIBILITY_STATES = (
+    "BYTES_IN_HAND",                 # the capture axis already holds the bytes
+    "SOURCE_BOUND_READABLE_EXTERNAL",  # historically bound, readable elsewhere, no bytes
+    "REFERENCE_ONLY",                # name/reference known, content not readable
+    "UNAVAILABLE",                   # neither bytes nor readable content
+    "UNKNOWN",
+)
+# Whether the ORIGINAL historical bytes are identified. Readability never establishes it.
+BYTE_IDENTITY_STATES = ("ESTABLISHED", "NOT_ESTABLISHED")
+
+# Three-valued on purpose. Missing historical proof is neither truth nor falsity, and
+# a corpus that can only say VERIFIED or REFUTED will eventually say one of them about
+# something it does not know. UNVERIFIED is the positive answer for "the surviving
+# representation cannot settle this", and it must travel with the claim.
+VERIFICATION_STATES = ("VERIFIED", "UNVERIFIED", "REFUTED")
+
+# Recovery exhaustion is a statement about the SEARCH, never about the source. It says
+# no usable locator remains, so further broad sweeps are unjustified until genuinely new
+# evidence appears. It never converts UNAVAILABLE into captured and never means the
+# source did not exist.
+RECOVERY_EXHAUSTION_STATES = (
+    "RECOVERY_SEARCH_NOT_EXHAUSTED",
+    "KNOWN_IRRECOVERABLE_IN_CURRENT_HISTORICAL_SURFACE",
+)
+
+
+def semantically_readable(semantic_accessibility):
+    """True when the historical CONTENT can be read, by any route.
+
+    Deliberately NOT a bytes predicate and deliberately not consulted by
+    `attachment_bytes_available` or `full_source_capture`. Answering yes here says
+    a future reader can learn what the source said; it says nothing about whether
+    the corpus holds it.
+    """
+    return str(semantic_accessibility or "").strip().upper() in (
+        "BYTES_IN_HAND", "SOURCE_BOUND_READABLE_EXTERNAL")
 # Declared and observed evidence either agree, disagree, or cannot be compared. The
 # third is a real answer and must never collapse into the first.
 #

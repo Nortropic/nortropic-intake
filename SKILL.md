@@ -1219,6 +1219,62 @@ that name would have caught exactly those two files and read as coverage. What i
 detected is the CONTRADICTION — a body evidencing an upload identity the declaration
 does not contain — which is why the same rule catches uploads nobody has met yet.
 
+**P2.6 — Epistemic status travels with the claim.** Six distinctions the Improvements
+r38 qualification campaign paid eight adjudications and seven recovery rematches to
+establish. They are stated here once because every one of them was learned by getting it
+wrong first.
+
+**Byte capture is not semantic access.** Two r38 attachments were readable in full
+through an external interface while their historical bytes were never exported into any
+harness. `capture_status` answers *do we hold the bytes*; `semantic_accessibility`
+answers *can the content still be read, by any route*. They are separate fields on
+purpose, and `SOURCE_BOUND_READABLE_EXTERNAL` is refused wherever bytes are also
+claimed — otherwise readability gets spent as capture and `SOURCE_CAPTURE_COMPLETENESS`
+goes green on meaning instead of evidence.
+
+**Semantic completeness is not historical truth proof.** Qualification asks whether the
+corpus preserves what was claimed, what supported it, what is checkable, what is not,
+the right uncertainty, and any negative knowledge. It does not ask the qualifier to
+re-prove the past. A finding may close while the underlying historical claim stays
+`UNVERIFIED`, provided the uncertainty travels with it.
+
+**UNKNOWN and UNVERIFIED are positive information.** The verification vocabulary is
+three-valued — `VERIFIED` / `UNVERIFIED` / `REFUTED` — because a corpus that can only
+say verified or refuted will eventually say one of them about something it does not
+know. Where r38 recovered three role-separated reviews with distinct reasoning but no
+stable reviewer identity, the correct record is `REVIEW_STRUCTURE=ROLE_SEPARATED`,
+`REVIEW_REASONING_DISTINCT=SUPPORTED`, `ACTOR_INDEPENDENCE=UNVERIFIED`. Never
+`VERIFIED`, and never `FALSE`.
+
+**Semantic redundancy is not primary-evidence preservation.** A contemporaneous derived
+observation can carry a concept forward. It can never carry forward the ability to check
+itself against the thing observed. So a redundancy escape names the dimension it claims
+to preserve: `CONCEPTUAL_MEANING` closes on the surviving text, while
+`EXACT_VISUAL_STRUCTURE`, `AUTHORSHIP_VISIBLE_ONLY_IN_PRIMARY`, `LABELS_OR_RELATIONS`
+and `PRIMARY_FALSIFIABILITY` require an explicit adjudication record. Static code does
+not decide whether a paraphrase preserved a meaning, and it must not pretend to.
+
+**Uploading is not authoring.** An owner turn that carries an attachment does not make
+the attachment's contents owner-authored, and neither does pasting machine output or
+relaying assistant prose inside an owner-labelled turn. An owner-turn ledger entry may
+record `attachment_dependency`, but typing the content's author as `OWNER` is refused;
+use `UNVERIFIED` or name where it was actually authored. In r38 a six-word owner turn
+whose whole payload was six attachments had been filed as `duplicate-restatement` —
+true of the prose, and enough to steer a hydration pass away from the only turn that
+could have settled an authorship question.
+
+**Exhausting a search is not proving absence.** `KNOWN_IRRECOVERABLE_IN_CURRENT_HISTORICAL_SURFACE`
+says no usable locator remains and further broad sweeps are unjustified until genuinely
+new evidence appears. It is earned — it requires what establishes the source existed,
+which surfaces were searched, and why nothing remains — and it never converts
+`UNAVAILABLE` into captured. `source_never_existed` is refused outright.
+
+A claim that materially rests on a carrier nobody holds must say so in a machine-readable
+`epistemic_limit`, from `rnd_ir_version` 3 onward. A free-text caveat is not enough: a
+validator has to be able to tell *source claims X* from *X independently verified* from
+*the claim survives but its carrier cannot now be checked*. Versions 1 and 2 keep
+validating under the rules they were published against.
+
 **P3 — Extract.** Distill each verified conversation with the normal Phase 2
 templates — zero, one or several ideas per conversation. Deliver each conversation
 into each extracted idea package as an episode transcript (byte-identical copy), then
