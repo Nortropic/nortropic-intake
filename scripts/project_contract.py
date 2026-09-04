@@ -102,6 +102,9 @@ SWEEP_AUDIT_CODES = (
     "ROUTING_RELATION_INCONSISTENT", "FALSE_COMPLETENESS",
     "RERUN_IDEMPOTENCY_VIOLATION", "ATTACHMENT_SURFACE_UNRECONCILED",
     "ATTACHMENT_MATERIAL_UNAVAILABLE", "ATTACHMENT_ARTIFACT_UNCLAIMED",
+    "ATTACHMENT_SURFACE_KNOWN_UNRESOLVED", "ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES",
+    "ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND", "ATTACHMENT_ACKNOWLEDGEMENT_UNWARRANTED",
+    "ATTACHMENT_ACKNOWLEDGEMENT_INVALID",
 )
 AUDIT_SEVERITIES = ("material", "minor")
 
@@ -872,6 +875,25 @@ def bound_revision(source):
     return revisions[-1]
 
 
+def answered_rqs(proj):
+    """RQ id -> True when the OWNER has answered it in the review queue.
+
+    An acknowledgement is the RECORD of an owner decision, never the decision. So
+    the decision is looked up where owner decisions actually live, and a manifest
+    that names an unanswered RQ is refused rather than believed.
+    """
+    if not proj.queue.exists():
+        return {}
+    out = {}
+    for e in parse_review_queue(proj.queue):
+        if str(e.get("owner_answer", "")).strip():
+            out[e["id"]] = True
+        for rid in re.findall(r"\bRQ-\d+\b", str(e.get("resolves", ""))):
+            if str(e.get("owner_answer", "")).strip():
+                out[rid] = True
+    return out
+
+
 def attachment_records(proj, data):
     """One source-surface record per bound revision, measured from the bytes.
 
@@ -899,12 +921,19 @@ def attachment_records(proj, data):
         if mpath.is_file():
             manifest, merr = att.load_manifest(mpath)
         rows = (manifest or {}).get("attachments") or []
-        recon, floor = att.reconcile(declared, signals, rows)
+        # The EVIDENCE verdict is computed first and kept, so what the sources say
+        # is always visible beside what the owner accepted about them.
+        evidence_recon, floor = att.reconcile(declared, signals, rows)
+        ack = att.owner_acknowledgement(manifest or {})
+        recon = att.apply_acknowledgement(evidence_recon, ack)
         records.append({
             "source_id": sid, "revision": number,
             "source_sha256": transcript_source_sha256(raw),
             "declared_count": declared, "declared_phrase": phrase,
-            "observed_count": floor, "reconciliation": recon,
+            "observed_count": floor,
+            "evidence_reconciliation": evidence_recon,
+            "reconciliation": recon,
+            "owner_acknowledgement": ack,
             "signals": signals, "attachments": rows,
             "manifest_path": mpath, "manifest": manifest, "manifest_error": merr,
         })
@@ -945,6 +974,7 @@ def _validate_attachments(proj, data, findings):
     earned.
     """
     records = attachment_records(proj, data)
+    answered = answered_rqs(proj)
     _validate_attachment_artifacts(proj, records, findings)
     for rec in records:
         sid, number = rec["source_id"], rec["revision"]
@@ -958,19 +988,41 @@ def _validate_attachments(proj, data, findings):
                 rec["manifest"], sid, number, proj.name, proj.corpus))
 
         recon = rec["reconciliation"]
+        if rec["owner_acknowledgement"] is not None:
+            findings.extend(att.validate_acknowledgement(
+                rec["manifest"] or {}, proj.name, sid, number,
+                rec["evidence_reconciliation"], answered))
+
+        uncovered = [i for i in rec["signals"]["named_upload_identities"]
+                     if not att._covered(i, rec["attachments"])]
+        contradiction = (
+            "%s r%s declares %s attachment(s) but its own messages evidence at "
+            "least %d%s"
+            % (sid, number,
+               "no" if rec["declared_count"] is None else rec["declared_count"],
+               rec["observed_count"],
+               (", including uploads the declaration omits: "
+                + "; ".join("%s @ %s" % i for i in uncovered)) if uncovered else ""))
+
         if recon == "DISAGREE":
-            uncovered = [i for i in rec["signals"]["named_upload_identities"]
-                         if not att._covered(i, rec["attachments"])]
             findings.append(Finding(
                 proj.name, "ATTACHMENT_SURFACE_UNRECONCILED",
-                "%s r%s declares %s attachment(s) but its own messages evidence at "
-                "least %d%s — a declared surface contradicted by the body is a source "
-                "whose completeness nobody can assert"
-                % (sid, number,
-                   "no" if rec["declared_count"] is None else rec["declared_count"],
-                   rec["observed_count"],
-                   (", including uploads the declaration omits: "
-                    + "; ".join("%s @ %s" % i for i in uncovered)) if uncovered else "")))
+                "%s — a declared surface contradicted by the body is a source whose "
+                "completeness nobody can assert" % contradiction))
+        elif recon == "KNOWN_UNRESOLVED":
+            # Deliberately still reported, and still carrying the full arithmetic.
+            # The owner accepted that this gap is permanent; nobody accepted that it
+            # should become quiet. FULL_SOURCE_CAPTURE stays NO and the
+            # unavailable-material findings below are untouched.
+            findings.append(Finding(
+                proj.name, "ATTACHMENT_SURFACE_KNOWN_UNRESOLVED",
+                "%s. Acknowledged by the owner via %s as a permanent historical "
+                "evidence gap: KNOWN AND ACCEPTED AS UNRESOLVED, which is not "
+                "RESOLVED. FULL_SOURCE_CAPTURE remains NO and the true historical "
+                "count remains unasserted."
+                % (contradiction,
+                   (rec["owner_acknowledgement"] or {}).get("rq", "?")),
+                level="WARN"))
         elif recon == "UNKNOWN" and rec["manifest"] is not None:
             # Silence is tolerable until someone writes a manifest. Once written, the
             # manifest is a positive claim and may not rest on an undecidable surface.
@@ -1884,8 +1936,9 @@ def cmd_attachments(proj, args):
     totals = {"declared": 0, "manifested": 0, "with_bytes": 0,
               "material_without_bytes": 0}
     recon_counts = {}
-    print("%-10s %-4s %-9s %-9s %-11s %s"
-          % ("SOURCE", "REV", "DECLARED", "OBSERVED", "RECONCILE", "FULL_SOURCE_CAPTURE"))
+    print("%-10s %-4s %-9s %-9s %-17s %s"
+          % ("SOURCE", "REV", "DECLARED", "OBSERVED", "RECONCILE",
+             "FULL_SOURCE_CAPTURE"))
     for r in records:
         rows = r["attachments"]
         cap = full_source_capture(rows, r["reconciliation"], r["declared_count"])
@@ -1898,10 +1951,15 @@ def cmd_attachments(proj, args):
             if str(a.get("materiality", "")).strip().upper() == "MATERIAL"
             and not att.attachment_bytes_available(a.get("capture_status")))
         recon_counts[r["reconciliation"]] = recon_counts.get(r["reconciliation"], 0) + 1
-        print("%-10s r%-3s %-9s %-9d %-11s %s"
+        print("%-10s r%-3s %-9s %-9d %-17s %s"
               % (r["source_id"], r["revision"],
                  "-" if r["declared_count"] is None else r["declared_count"],
                  r["observed_count"], r["reconciliation"], cap))
+        if r["reconciliation"] != r["evidence_reconciliation"]:
+            print("           evidence says %s; owner acknowledged it as %s via %s "
+                  "(KNOWN AND ACCEPTED AS UNRESOLVED — not RESOLVED)"
+                  % (r["evidence_reconciliation"], r["reconciliation"],
+                     (r["owner_acknowledgement"] or {}).get("rq", "?")))
         if args.verbose:
             s = r["signals"]
             print("           signals: filecite_sites=%d turns=%d upload_phrases=%d "
@@ -1917,8 +1975,24 @@ def cmd_attachments(proj, args):
     print("MANIFESTED_ATTACHMENT_TOTAL=%d" % totals["manifested"])
     print("ATTACHMENTS_WITH_BYTES=%d" % totals["with_bytes"])
     print("MATERIAL_WITHOUT_BYTES=%d" % totals["material_without_bytes"])
-    for k in ("AGREE", "DISAGREE", "UNKNOWN"):
+    for k in ("AGREE", "DISAGREE", "UNKNOWN", "KNOWN_UNRESOLVED"):
         print("RECONCILIATION_%s=%d" % (k, recon_counts.get(k, 0)))
+    print()
+    # THREE STATES, NEVER ONE. A corpus can be internally healthy while accurately
+    # declaring that its source evidence is incomplete; collapsing these forces a
+    # false choice between editing the frozen witness and carrying a permanent red
+    # that stops meaning anything. Both destroy the record.
+    unreconciled = sum(1 for r in records if r["evidence_reconciliation"] == "DISAGREE"
+                       and r["owner_acknowledgement"] is None)
+    incomplete = sum(1 for r in records
+                     if full_source_capture(r["attachments"], r["reconciliation"],
+                                            r["declared_count"]) != "YES")
+    print("CORPUS_INTEGRITY=%s   (is the corpus internally consistent and honest "
+          "about itself?)" % ("PASS" if unreconciled == 0 else "FAIL"))
+    print("SOURCE_CAPTURE_COMPLETENESS=%s   (%d/%d sources cannot assert full "
+          "capture)" % ("NO" if incomplete else "YES", incomplete, len(records)))
+    print("SEMANTIC_QUALIFICATION=NOT_ESTABLISHED_HERE   (a static validator cannot "
+          "confer it; see the note below)")
     print()
     print("BODY_SOURCE_IDENTITY=%s" % body_digest)
     print("FULL_SOURCE_SURFACE_IDENTITY=%s" % surface_digest)

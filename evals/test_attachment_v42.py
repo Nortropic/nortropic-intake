@@ -68,7 +68,7 @@ transcript_source_sha256 = _ic.transcript_source_sha256
 
 PASSED, FAILED = [], []
 ACTIVATION = {}
-MIN_CHECKS = 36
+MIN_CHECKS = 58
 
 
 def check(name, ok, detail=""):
@@ -337,6 +337,72 @@ clean_findings = vm(manifest(
     recon="AGREE", declared=1, full_source_capture="YES"))
 check("G1  a fully captured, reconciled, correctly-stated manifest produces NO findings",
       clean_findings == [], [f.code for f in clean_findings])
+
+# ==================== H. owner acknowledgement: bounded, not a loophole =======
+print("\n--- H. an owner may acknowledge a gap; an owner may not fill one ---")
+
+def ack(**kw):
+    base = {"state": "KNOWN_UNRESOLVED", "rq": "RQ-032",
+            "acknowledges": "declared 5, body evidences 7",
+            "evidence_gap_remains": True}
+    base.update(kw)
+    return base
+
+ANSWERED = {"RQ-032": True}
+
+def va(a, evidence="DISAGREE", answered=ANSWERED):
+    return att.validate_acknowledgement({"owner_acknowledgement": a}, "fixture",
+                                        "CONV-013", 1, evidence, answered)
+
+# The single permitted transition, asserted exhaustively.
+check("H1  the ONLY transition is DISAGREE -> KNOWN_UNRESOLVED",
+      [att.apply_acknowledgement(st, ack())
+       for st in ("AGREE", "DISAGREE", "UNKNOWN", "KNOWN_UNRESOLVED")]
+      == ["AGREE", "KNOWN_UNRESOLVED", "UNKNOWN", "KNOWN_UNRESOLVED"])
+check("H2  no acknowledgement can ever produce AGREE",
+      all(att.apply_acknowledgement(st, ack(state=bad)) != "AGREE"
+          for st in ("DISAGREE", "UNKNOWN", "KNOWN_UNRESOLVED")
+          for bad in ("KNOWN_UNRESOLVED", "RESOLVED", "RECONCILED", "AGREE")))
+check("H3  an acknowledged surface still cannot reach FULL_SOURCE_CAPTURE=YES, "
+      "even with every attachment captured",
+      full_source_capture(
+          [att_row("ATT-013-001", "CAPTURED_CONTENT", "MATERIAL",
+                   content_sha256="a" * 64)], "KNOWN_UNRESOLVED", 1) == "NO",
+      "the owner accepted that a gap is permanent, not that capture is complete")
+
+activates("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES", va(ack(state="RESOLVED")),
+          "H4  an acknowledgement claiming RESOLVED is refused")
+activates("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES", va(ack(state="RECONCILED")),
+          "H5  an acknowledgement claiming RECONCILED is refused")
+for field in ("resolved_count", "actual_count", "true_count", "gap_closed",
+              "full_source_capture"):
+    activates("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES", va(ack(**{field: 7})),
+              "H6:%-18s asserting the missing evidence is refused" % field)
+activates("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES",
+          va(ack(evidence_gap_remains=False)),
+          "H7  an acknowledgement that does not say the gap REMAINS is refused")
+
+# An acknowledgement is the RECORD of an owner decision, never the decision.
+activates("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND", va(ack(rq="")),
+          "H8  an acknowledgement naming no RQ is refused")
+activates("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND", va(ack(rq="RQ-999")),
+          "H9  an acknowledgement naming an RQ the owner never answered is refused")
+activates("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND", va(ack(), answered=None),
+          "H10 an acknowledgement is refused when the queue cannot be read")
+
+# It may only stand over a contradiction that actually exists.
+activates("ATTACHMENT_ACKNOWLEDGEMENT_UNWARRANTED", va(ack(), evidence="AGREE"),
+          "H11 an acknowledgement over a RECONCILING surface is refused")
+activates("ATTACHMENT_ACKNOWLEDGEMENT_UNWARRANTED", va(ack(), evidence="UNKNOWN"),
+          "H12 an acknowledgement over an UNDECIDED surface is refused")
+activates("ATTACHMENT_ACKNOWLEDGEMENT_INVALID", va(ack(acknowledges="")),
+          "H13 an acknowledgement that does not say WHAT is acknowledged is refused")
+
+activates("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES", va(ack()),
+          "H14 CONTROL: a correctly bounded acknowledgement is accepted",
+          expect=False)
+check("H15 CONTROL: and it produces no findings at all", va(ack()) == [],
+      [f.code for f in va(ack())])
 
 # ============================ activation report ==============================
 print("\n" + "=" * 72)

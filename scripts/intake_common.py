@@ -562,7 +562,20 @@ ATTACHMENT_BYTES_STATES = frozenset(
 ATTACHMENT_MATERIALITY = ("MATERIAL", "NON_MATERIAL", "UNKNOWN")
 # Declared and observed evidence either agree, disagree, or cannot be compared. The
 # third is a real answer and must never collapse into the first.
-RECONCILIATION_STATES = ("AGREE", "DISAGREE", "UNKNOWN")
+#
+# KNOWN_UNRESOLVED is the fourth, and it is NOT a fourth flavour of agreement. It
+# means: the contradiction is real, it was put to the owner, and the owner
+# acknowledged that the historical evidence gap must REMAIN. An owner may
+# acknowledge that a gap is permanent. An owner may NOT make missing historical
+# evidence exist by deciding that it does. So this state sits beside DISAGREE in
+# every consequence that matters - `full_source_capture` still answers NO, the
+# unavailable-material findings still stand - and differs only in that the corpus is
+# no longer accused of hiding something it has, in fact, written down.
+RECONCILIATION_STATES = ("AGREE", "DISAGREE", "UNKNOWN", "KNOWN_UNRESOLVED")
+# The states in which the declared surface is known NOT to reconcile. Kept as one
+# name so no future caller can handle DISAGREE and quietly forget its acknowledged
+# twin.
+RECONCILIATION_UNRECONCILED = frozenset(("DISAGREE", "KNOWN_UNRESOLVED"))
 
 
 def attachment_bytes_available(capture_status):
@@ -597,7 +610,10 @@ def full_source_capture(attachments, reconciliation="UNKNOWN", declared_count=No
     state = str(reconciliation or "UNKNOWN").strip().upper()
     if state not in RECONCILIATION_STATES:
         state = "UNKNOWN"
-    if state == "DISAGREE":
+    if state in RECONCILIATION_UNRECONCILED:
+        # An owner acknowledgement moves the corpus from "accused of hiding a
+        # contradiction" to "accurately declaring one". It does not move the SOURCE
+        # one byte closer to captured, so the answer here is identical to DISAGREE.
         return "NO"
     rows = [a for a in (attachments or []) if isinstance(a, dict)]
     unresolved = len(rows) != len(attachments or [])
