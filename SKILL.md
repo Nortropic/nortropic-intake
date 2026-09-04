@@ -1060,7 +1060,7 @@ graph database.
                          report --project P [--write] | validate [--project P …]
                          finalize --project P        # honest terminal state, never a hidden gap
 
-    rnd_contract.py      init --compile C (--project P | --source PATH …) [--title T] [--at D]
+    rnd_contract.py      init --compile C (--project P | --source PATH …) [--title T] [--at D] [--semantic]
                          validate [--compile C] | coverage --compile C
                          render --compile C [--write] | audit --compile C | status --compile C
                          # reads the corpus, writes ONLY _rnd/<compile>/ — no plan,
@@ -1312,6 +1312,14 @@ reality — never Intake's. What Intake MAY preserve is the owner's explicit
 reject/defer as an OWNER_DECISION with provenance: a fact about the past, not a
 disposition of the future.
 
+**RND_COMPILE emits version 2.** Run `init --semantic`, which stamps
+`rnd_ir_version: 2` and binds every obligation below. Without the flag a compile is
+stamped version 1 and validated by the v4.0 rules ONLY — the semantic layer binds
+nothing it is not asked to bind, so a compile that omits the flag is not a compile
+that passed these rules, it is one that never faced them. Version 1 remains supported
+so published compiles stay reproducible under exactly the contract they were
+published against; it is not the version to write new work in.
+
 **v4.1 — semantic coverage (`rnd_ir_version: 2`).** v4.0 validates STRUCTURE and
 PROVENANCE INTEGRITY; it cannot ask whether a compile UNDERSTOOD its corpus. An
 external SOURCE→IR falsification of `improvements-r38` measured the gap: `validate`
@@ -1430,7 +1438,7 @@ unremediated material finding keeps `RND_COMPILE_AUDITED=NO`.
 
 **The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
 
-    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D]
+    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D] [--semantic]
                      validate [--compile C]      # falsify one compile, or all
                      coverage --compile C        # lens table + standing laws
                      render --compile C [--write]  # deterministic RND-COVERAGE.md
