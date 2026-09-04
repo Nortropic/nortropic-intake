@@ -101,7 +101,7 @@ SWEEP_AUDIT_CODES = (
     "SILENT_CAPTURE_FAILURE", "DUPLICATE_IDEA_SLUG", "INDEX_STATE_DUPLICATE",
     "ROUTING_RELATION_INCONSISTENT", "FALSE_COMPLETENESS",
     "RERUN_IDEMPOTENCY_VIOLATION", "ATTACHMENT_SURFACE_UNRECONCILED",
-    "ATTACHMENT_MATERIAL_UNAVAILABLE",
+    "ATTACHMENT_MATERIAL_UNAVAILABLE", "ATTACHMENT_ARTIFACT_UNCLAIMED",
 )
 AUDIT_SEVERITIES = ("material", "minor")
 
@@ -839,6 +839,13 @@ def _validate_sources(proj, data, findings):
                 # reported as an unrecorded capture.
                 if ATTACHMENT_MANIFEST_RE.match(path.name):
                     continue
+                # Recovered attachment BYTES live under sources/<ID>/attachments/.
+                # They are recorded too, just not in the revision list — the
+                # attachment manifest names each one and re-hashes it on every
+                # validate, and `_validate_attachment_artifacts` below closes the
+                # other direction so nothing can hide in here unreferenced.
+                if path.parent.name == "attachments":
+                    continue
                 if rel not in recorded_paths:
                     findings.append(Finding(
                         proj.name, "MANIFEST_TREE_MISMATCH",
@@ -904,6 +911,31 @@ def attachment_records(proj, data):
     return records
 
 
+def _validate_attachment_artifacts(proj, records, findings):
+    """Every byte under sources/<ID>/attachments/ is claimed by a manifest.
+
+    The mirror of the exemption above. Skipping a directory in the tree sweep buys
+    exactly one thing — silence — unless something else closes it, and an unclaimed
+    file sitting among recovered attachments is precisely the "reads as coverage
+    nobody can check" shape the tree sweep exists to prevent.
+    """
+    claimed = set()
+    for rec in records:
+        for a in rec["attachments"]:
+            if isinstance(a, dict):
+                rel = str(a.get("artifact_path", "")).strip()
+                if rel:
+                    claimed.add(rel)
+    for sdir in sorted(proj.sources_dir.glob("*/attachments")):
+        for path in sorted(sdir.rglob("*")):
+            if path.is_file() and proj.rel(path) not in claimed:
+                findings.append(Finding(
+                    proj.name, "ATTACHMENT_ARTIFACT_UNCLAIMED",
+                    "%s sits among the attachment artifacts but no attachment "
+                    "manifest names it — an unreferenced artifact is evidence "
+                    "nobody can bind to a source" % proj.rel(path)))
+
+
 def _validate_attachments(proj, data, findings):
     """The source-surface gate: a body digest is not a captured source surface.
 
@@ -912,7 +944,9 @@ def _validate_attachments(proj, data, findings):
     claimed present are present, and that nothing asserts a completeness it has not
     earned.
     """
-    for rec in attachment_records(proj, data):
+    records = attachment_records(proj, data)
+    _validate_attachment_artifacts(proj, records, findings)
+    for rec in records:
         sid, number = rec["source_id"], rec["revision"]
         if rec["manifest_error"]:
             findings.append(Finding(

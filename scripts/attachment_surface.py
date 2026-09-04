@@ -202,6 +202,14 @@ def reconcile(declared, signals, declared_identities=()):
     if uncovered:
         # A positive declaration contradicted by an upload identity it omits.
         return "DISAGREE", max(floor, declared + len(uncovered))
+    if len(declared_identities or ()) > declared:
+        # The manifest describes MORE attachments than the header declares. This is
+        # the AMR-004 shape after someone writes it down, and it must stay visible:
+        # the first draft let a manifest listing the two omitted uploads flip
+        # CONV-013 from DISAGREE to AGREE, because every observed identity was now
+        # "covered". Documenting a contradiction is not resolving it - the header is
+        # still wrong, and the surface still does not reconcile.
+        return "DISAGREE", max(floor, len(declared_identities))
     if declared < floor:
         return "DISAGREE", floor
     if declared == 0 and floor == 0:
@@ -301,10 +309,15 @@ def validate_manifest(data, source_id, revision, slug, corpus=None):
         if attachment_bytes_available(status):
             digest = str(a.get("content_sha256", "")).strip().lower()
             rel = str(a.get("artifact_path", "")).strip()
-            if not digest:
+            inline = str(a.get("inline_binding", "")).strip()
+            if not digest and not (status == "CAPTURED_CONTENT" and inline):
                 fail("ATTACHMENT_BYTES_UNHASHED",
                      "%s claims %s but carries no content_sha256 — bytes in hand are "
-                     "bytes that can be re-verified" % (aid, status))
+                     "bytes that can be re-verified%s"
+                     % (aid, status,
+                        " (an inline capture may instead name the message range that "
+                        "holds it, which the source digest already covers)"
+                        if status == "CAPTURED_CONTENT" else ""))
             if status in ("RECOVERED_EXACT", "RECOVERED_DUPLICATE"):
                 if not str(a.get("recovery_provenance", "")).strip():
                     fail("ATTACHMENT_RECOVERY_UNPROVENANCED",
