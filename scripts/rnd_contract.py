@@ -46,6 +46,7 @@ from intake_common import (  # noqa: E402
 
 from intake_common import (  # noqa: E402
     ATTACHMENT_CAPTURE_STATES as _ATT_STATES,
+    VERIFICATION_STATES as _VERIF_STATES,
     attachment_bytes_available as _att_has_bytes,
 )
 
@@ -67,7 +68,13 @@ IR_VERSION = 1
 # UNDERSTOOD the corpus. Each rule below turns one of those blind spots into a
 # question the compile must answer in the file itself.
 IR_VERSION_SEMANTIC = 2
-SUPPORTED_IR_VERSIONS = (IR_VERSION, IR_VERSION_SEMANTIC)
+# Version 3 adds ONE mandatory obligation: a claim that materially rests on a carrier
+# nobody holds must say so in a machine-readable way. Versions 1 and 2 keep validating
+# under the rules they were published against — improvements-r38 (v1) and the r38-c1..c4
+# lineage (v2) are not reinterpreted by this addition, which is why it is a new version
+# rather than a strengthening of the old one.
+IR_VERSION_EPISTEMIC = 3
+SUPPORTED_IR_VERSIONS = (IR_VERSION, IR_VERSION_SEMANTIC, IR_VERSION_EPISTEMIC)
 IR_NAME = "rnd-ir.json"
 RENDER_NAME = "RND-COVERAGE.md"
 AUDIT_NAME = "compile-audit.md"
@@ -825,7 +832,11 @@ def validate_compile(corpus, compile_id):
     # version-1 compile is validated by exactly the rules it was published against,
     # so an already-published witness stays green and byte-reproducible; the newer
     # rules are opt-in per compile and never retroactive.
-    semantic = (ir_version == IR_VERSION_SEMANTIC)
+    # v3 is a SUPERSET of v2, not a replacement: everything the semantic layer
+    # obliges still applies, plus the epistemic-limit rule. A version that silently
+    # dropped the v2 obligations would be a downgrade wearing a higher number.
+    semantic = ir_version in (IR_VERSION_SEMANTIC, IR_VERSION_EPISTEMIC)
+    epistemic = (ir_version == IR_VERSION_EPISTEMIC)
     if not semantic:
         # Silence here reads as approval: `validate` said "every compile holds its
         # contract" over a version-1 compile that the semantic rules never touched.
@@ -1244,6 +1255,56 @@ def validate_compile(corpus, compile_id):
                     "unavailable — describing a document nobody can open is derived "
                     "interpretation, not evidence" % iid))
 
+
+        # --- v3: a claim resting on an absent carrier must say so ------------
+        #
+        # r38's decisive IR defect was not a false sentence. RND-025 carried provenance
+        # span CONV-007 r2 42-101 at authority_class=evidence with uncertainty "low as
+        # captured events", while the two carriers that span turns on — a night log and a
+        # 279-case report — were attachment chips whose bytes were never captured. Nothing
+        # in the item said so. A Recompile would have inherited the chain as
+        # executed-and-published with no signal that the evidence was gone.
+        #
+        # So from version 3: if any evidence_ref rests on an attachment in a non-bytes
+        # state, the ITEM must carry a machine-readable epistemic limit. A free-text
+        # caveat is not enough — a validator has to be able to tell "source claims X"
+        # from "X independently verified" from "the claim survives but its carrier
+        # cannot now be checked".
+        if epistemic and attachment_absent_refs and iid in attachment_absent_refs:
+            lim = item.get("epistemic_limit")
+            if not isinstance(lim, dict) or not lim:
+                findings.append(Finding(
+                    cid, "RND_EPISTEMIC_LIMIT_MISSING",
+                    "%s rests on attachment evidence whose bytes nobody holds and carries "
+                    "no epistemic_limit record. Name the carrier availability, whose "
+                    "observation survives in its place, and what that observation cannot "
+                    "independently establish" % iid))
+            else:
+                for key in ("primary_carrier_availability", "primary_source_falsifiability"):
+                    if not str(lim.get(key, "")).strip():
+                        findings.append(Finding(
+                            cid, "RND_EPISTEMIC_LIMIT_INCOMPLETE",
+                            "%s: epistemic_limit is missing %r — the record exists to make "
+                            "the limit checkable, not to look like it was considered"
+                            % (iid, key)))
+                unver = lim.get("unverified")
+                if unver is not None and not (isinstance(unver, list) and unver):
+                    findings.append(Finding(
+                        cid, "RND_EPISTEMIC_LIMIT_INCOMPLETE",
+                        "%s: epistemic_limit.unverified must list what the surviving "
+                        "representation cannot establish, or be omitted" % iid))
+                for key, val in list(lim.items()):
+                    if not str(key).endswith("_verification"):
+                        continue
+                    v = str(val).strip().upper()
+                    if v and v not in _VERIF_STATES:
+                        findings.append(Finding(
+                            cid, "RND_VERIFICATION_STATE_INVALID",
+                            "%s: epistemic_limit.%s=%r — use one of %s. Missing historical "
+                            "proof is neither truth nor falsity, and UNVERIFIED is the "
+                            "positive answer for it"
+                            % (iid, key, val, ", ".join(_VERIF_STATES))))
+
         if str(item.get("activation_condition", "")).strip():
             activation_count += 1
         rp = item.get("reality_pointer")
@@ -1636,6 +1697,37 @@ def validate_compile(corpus, compile_id):
                     findings.append(Finding(cid, "RND_OWNER_LEDGER_INVALID",
                                             "ledger entry is not an object"))
                     continue
+                # --- UPLOADING IS NOT AUTHORING -------------------------------
+                #
+                # CONV-001 msg 61 is six words whose entire payload was six
+                # attachments, and the ledger classified it 'duplicate-restatement'
+                # — true of the text, and enough to steer a hydration pass away from
+                # the only turn that could have settled whether a note attributed to
+                # the owner was his words or a caption in a forwarded image. A reason
+                # describes the PROSE; an attachment dependency is a separate fact and
+                # needs its own field.
+                if e.get("attachment_dependency") is not None:
+                    if e.get("attachment_dependency") is not True:
+                        findings.append(Finding(
+                            cid, "RND_OWNER_LEDGER_INVALID",
+                            "attachment_dependency is a flag: set it true or omit it"))
+                    aca = str(e.get("attachment_content_author", "")).strip().upper()
+                    if aca == "OWNER":
+                        findings.append(Finding(
+                            cid, "RND_OWNER_UPLOAD_TREATED_AS_AUTHORSHIP",
+                            "%s msg %s: an owner turn carrying an attachment does not make "
+                            "the attachment's CONTENT owner-authored. Uploading, pasting "
+                            "machine output, and relaying assistant prose inside an "
+                            "owner-labelled turn are all carriage, not authorship. Use "
+                            "UNVERIFIED, or name where the content was actually authored"
+                            % (str(e.get("source_id", "?")), str(e.get("messages", "?")))))
+                    elif aca and aca not in _VERIF_STATES and aca != "SEPARATELY_SOURCED":
+                        findings.append(Finding(
+                            cid, "RND_OWNER_LEDGER_INVALID",
+                            "attachment_content_author=%r — use one of %s, or "
+                            "SEPARATELY_SOURCED"
+                            % (e.get("attachment_content_author"),
+                               ", ".join(_VERIF_STATES))))
                 lsid = str(e.get("source_id", "")).strip()
                 reason = str(e.get("reason", "")).strip()
                 rng = parse_msg_range(e.get("messages"))
