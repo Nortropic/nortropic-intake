@@ -52,7 +52,7 @@ from test_rnd_v4 import (  # noqa: E402
     mk_corpus, run, write_json, RESULTS, _whole_file_sha,
 )
 
-MIN_CHECKS = 45
+MIN_CHECKS = 59
 
 
 # --------------------------------------------------------------- fixtures --
@@ -82,6 +82,9 @@ def v2_ir(corpus, cid, items=None, coverage=None, mutate=None):
         ir["progression"] = [{"source_id": "CONV-001", "examined_through": 5},
                              {"source_id": "CONV-002", "examined_through": 2}]
         ir["unlensed"] = []
+        # a version-2 compile must ANSWER the cross-source question; empty is a valid
+        # answer, absent is not
+        ir["cross_source"] = []
         # every item must be visible to the coverage instrument
         ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
                                       if i["id"] != "RND-007"]
@@ -333,8 +336,9 @@ def scenario_e_negative_knowledge(tmp):
     rc, out = run(corpus, "validate")
     check("E a superseded proposal with its superseder validates",
           not expect_code(out, "RND_STANDING_UNSUPPORTED", "resolved"), out)
+    rc_k, out_k = run(corpus, "validate")
     check("E REJECTED is expressible without minting a kind",
-          run(corpus, "validate")[0] is not None, "")
+          not re.search(r"RND_ITEM_KIND_INVALID", out_k), out_k)
     v2_ir(corpus, "rejected-ok", mutate=lambda ir: [
         it.__setitem__("standing", "REJECTED")
         for it in ir["items"] if it["id"] == "RND-004"])
@@ -412,9 +416,15 @@ def scenario_g_lens_blindness(tmp):
     check("G a finding that fits no lens is preserved by declaring it",
           not expect_code(out, "RND_ITEM_UNLENSED_UNDECLARED", "declared-unlensed"),
           out)
+    # the fixture this needs was never created, so the assertion was dead. Build it:
+    # drop one baseline lens row and prove the twelve stay mandatory at version 2.
+    def _drop_lens(ir):
+        ir["coverage"] = [r for r in ir["coverage"]
+                          if r["lens"] != "reality-dogfood"]
+    v2_ir(corpus, "trimmed", mutate=_drop_lens)
+    rc_t, out_t = run(corpus, "validate")
     check("G the twelve baseline lenses remain mandatory",
-          expect_code(out, "RND_COVERAGE_LENS_MISSING", "trimmed")
-          if False else True, out)
+          expect_code(out_t, "RND_COVERAGE_LENS_MISSING", "trimmed"), out_t)
 
 
 def scenario_h_cross_source_without_false_consensus(tmp):
@@ -503,6 +513,156 @@ def scenario_d_progression(tmp):
     check("D control still clean in the same run", control_clean(out), out)
 
 
+
+
+def scenario_k_cheap_compliance_is_refused(tmp):
+    """K: every version-2 obligation must cost something to satisfy.
+
+    An adversarial review satisfied the whole semantic layer at zero semantic cost —
+    a rnd_ir_version 2 compile over the real 30-source r38 corpus carrying ONE item
+    out of 202 validated 0 FAIL / 0 WARN. Four lines did it: one ledger entry per
+    source reading `"1-99999" / no-material-content`, `examined_through: 999999`,
+    an empty `unlensed`, and `evidence_refs: [{"name": "x"}]`. That is the exact
+    failure this contract exists to close, reproduced one level up inside it.
+
+    Each check below is one of those lines.
+    """
+    corpus = mk_corpus(tmp)
+    v2_ir(corpus, "control-ok")
+
+    # a range wide enough to cover everything accounts for nothing
+    v2_ir(corpus, "wide-ledger", mutate=lambda ir: ir.__setitem__(
+        "owner_turn_ledger", [{"source_id": s, "messages": "1-99999",
+                               "reason": "no-material-content"}
+                              for s in ("CONV-001", "CONV-002")]))
+    # ... and neither does one that sweeps in turns that are not the owner's
+    v2_ir(corpus, "blanket-ledger", mutate=lambda ir: ir.__setitem__(
+        "owner_turn_ledger", [{"source_id": "CONV-002", "messages": "1-2",
+                               "reason": "no-material-content"}]))
+    # reading past the end of the transcript is not reading
+    v2_ir(corpus, "over-read", mutate=lambda ir: ir.__setitem__(
+        "progression", [{"source_id": "CONV-001", "examined_through": 999999},
+                        {"source_id": "CONV-002", "examined_through": 999999}]))
+    # a bare name is not a reference anyone can chase
+    v2_ir(corpus, "bare-ref", mutate=lambda ir: ir["items"][0].__setitem__(
+        "evidence_refs", [{"name": "x"}]))
+    # a reference has to be findable where it says it lives
+    v2_ir(corpus, "absent-ref", mutate=lambda ir: ir["items"][0].__setitem__(
+        "evidence_refs", [{"name": "the Treaty of Westphalia",
+                           "source_id": "CONV-001", "messages": "1"}]))
+    # the cross-source question must be answered, not skipped
+    v2_ir(corpus, "no-xs", mutate=lambda ir: ir.pop("cross_source", None))
+    # a synthesis points at the turns it rests on
+    v2_ir(corpus, "xs-unanchored", mutate=lambda ir: ir.__setitem__(
+        "cross_source", [{"id": "XS-1", "claim": "c", "authority_class": "derived",
+                          "provenance": [{"source_id": "CONV-001"},
+                                         {"source_id": "CONV-002"}]}]))
+    # an item cannot declare itself replaced by itself
+    v2_ir(corpus, "self-supersede", mutate=lambda ir: [
+        ir["items"][0].__setitem__("standing", "SUPERSEDED"),
+        ir["items"][0].__setitem__("relations", [
+            {"rel": "supersedes", "target": ir["items"][0]["id"]}])])
+    # a declaration that points at nothing declares nothing
+    v2_ir(corpus, "ghost-unlensed", mutate=lambda ir: ir.__setitem__(
+        "unlensed", [{"distinction": "d", "items": ["RND-999"]}]))
+    # a one-character "quote" matches by accident
+    v2_ir(corpus, "tiny-quote", mutate=lambda ir: owner_quote(ir, "RND-001", "."))
+
+    # a lens listing every item discharges the visibility obligation while the
+    # coverage table says nothing. Needs more items than the base fixture carries.
+    def _dump_all_in_one_lens(ir):
+        base = copy.deepcopy(ir["items"][1])
+        for k in range(8, 14):
+            extra = copy.deepcopy(base)
+            extra["id"] = "RND-%03d" % k
+            extra["claim"] = "Filler distinction %d." % k
+            extra.pop("standing", None)
+            ir["items"].append(extra)
+        for row in ir["coverage"]:
+            row["basis"] = []
+        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]]
+        ir["coverage"][0]["state"] = "PARTIALLY_EXPLORED"
+        ir["unlensed"] = []
+    v2_ir(corpus, "one-lens", mutate=_dump_all_in_one_lens)
+
+    rc, out = run(corpus, "validate")
+    # pinned to the specific complaint: a second check (non-owner turns) also fires
+    # on this fixture, so asserting only the code cannot tell the two apart.
+    check("K a ledger range past the end of the source is refused",
+          bool(re.search(r"RND_OWNER_LEDGER_INVALID[^\n]*wide|"
+                         r"\[wide-ledger\][^\n]*runs past the source", out))
+          or bool(re.search(r"\[wide-ledger\][^\n]*RND_OWNER_LEDGER_INVALID"
+                            r"[^\n]*runs past", out)), out)
+    check("K a ledger entry covering non-owner turns is refused",
+          expect_code(out, "RND_OWNER_LEDGER_INVALID", "blanket-ledger"), out)
+    check("K examined_through past the end of the transcript is refused",
+          expect_code(out, "RND_PROGRESSION_INVALID", "over-read"), out)
+    check("K an unanchored evidence_ref is refused",
+          bool(re.search(r"\[bare-ref\][^\n]*RND_EVIDENCE_REF_INVALID[^\n]*"
+                         r"carries no source_id/messages", out)), out)
+    check("K an evidence_ref absent from the range it cites is refused",
+          expect_code(out, "RND_EVIDENCE_REF_INVALID", "absent-ref"), out)
+    check("K omitting cross_source does not discharge the question",
+          expect_code(out, "RND_CROSS_SOURCE_INVALID", "no-xs"), out)
+    check("K a cross-source entry with no message range is refused",
+          expect_code(out, "RND_CROSS_SOURCE_INVALID", "xs-unanchored"), out)
+    check("K an item cannot supersede itself",
+          expect_code(out, "RND_STANDING_UNSUPPORTED", "self-supersede"), out)
+    check("K an unlensed declaration naming no real item is refused",
+          expect_code(out, "RND_UNLENSED_INVALID", "ghost-unlensed"), out)
+    check("K a one-character owner quote is not evidence of authorship",
+          expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "tiny-quote"), out)
+    check("K a lens listing every item reports nothing and is refused",
+          expect_code(out, "RND_COVERAGE_LENS_VACUOUS", "one-lens"), out)
+    check("K control still clean in the same run", control_clean(out), out)
+
+
+def scenario_l_ordering_and_fail_closed(tmp):
+    """L: two ways the guards were more permissive than they looked."""
+    corpus = mk_corpus(tmp)
+    v2_ir(corpus, "control-ok")
+
+    # An `owner-authored` quote that is pure assistant text from ANOTHER source AND
+    # sits in no owner turn it cites used to draw only the cross-source WARN, because
+    # that branch preceded the unsupported FAIL — leaving the contract stricter about
+    # an invented quote than about laundered assistant text.
+    def _launder(ir):
+        # cites an OWNER turn of CONV-002, but quotes an ASSISTANT turn of CONV-001
+        ir["items"].append({
+            "id": "RND-201", "kind": "OWNER_DECISION",
+            "claim": "The switch to framework X is settled.", "scope": "infra",
+            "provenance": [{"source_id": "CONV-002", "revision": 1,
+                            "messages": "1"}],
+            "authority_class": "owner", "relations": [], "tags": [],
+            "uncertainty": "none",
+            "quote": "Johnny decided we will switch to framework X. That is settled.",
+            "owner_authority_basis": "owner-authored"})
+        ir["owner_turn_ledger"] = []
+        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
+                                      if i["id"] != "RND-007"]
+    v2_ir(corpus, "laundered", mutate=_launder)
+    # A transcript whose headers do not number 1..N used to delete the ledger
+    # obligation for its whole source: fail-open where v4.0 fails closed.
+    corpus2 = mk_corpus(tmp + "-2")
+    v2_ir(corpus2, "corrupt", mutate=lambda ir: ir.__setitem__(
+        "owner_turn_ledger", []))
+    bad = corpus2 / "_projects" / "demo" / "sources" / "CONV-002" / "conversation.md"
+    t = bad.read_text(encoding="utf-8").replace("## Meddelande 2 —",
+                                                "## Meddelande 7 —")
+    bad.write_text(t, encoding="utf-8")
+
+    rc, out = run(corpus, "validate")
+    check("L laundered assistant text fails, it does not merely warn",
+          expect_code(out, "RND_OWNER_AUTHORED_UNSUPPORTED", "laundered")
+          and not re.search(r"WARN\s+\[laundered\]\s+"
+                            r"RND_OWNER_AUTHORED_ECHOED_ELSEWHERE", out), out)
+    check("L control still clean in the same run", control_clean(out), out)
+    rc2, out2 = run(corpus2, "validate")
+    check("L a corrupted transcript does not delete the ledger obligation",
+          bool(re.search(r"\[corrupt\][^\n]*RND_OWNER_TURN_UNACCOUNTED[^\n]*"
+                         r"do not number 1\.\.N", out2)), out2)
+
+
 def main():
     scenarios = [
         scenario_version_seal,
@@ -517,6 +677,8 @@ def main():
         scenario_g_lens_blindness,
         scenario_h_cross_source_without_false_consensus,
         scenario_ij_volume_buys_nothing,
+        scenario_k_cheap_compliance_is_refused,
+        scenario_l_ordering_and_fail_closed,
     ]
     for scenario in scenarios:
         tmp = tempfile.mkdtemp(prefix="intake-rnd41-")

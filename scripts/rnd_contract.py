@@ -354,6 +354,11 @@ def load_ir(corpus, compile_id):
 _SEPARATOR_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})\Z")
 # v4.1: a bare, conservative signal that a cited range rests on something EXTERNAL.
 # Deliberately narrow — a link is unambiguous evidence, where a capitalised word is not.
+# A one-character "quote" satisfied `qn in joined` against any owner turn containing
+# that character. Authorship needs enough words to identify something; 24 normalised
+# characters is roughly a short sentence and is the floor, not a target.
+OWNER_QUOTE_MIN_CHARS = 24
+
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 
 
@@ -1046,6 +1051,44 @@ def validate_compile(corpus, compile_id):
                             cid, "RND_EVIDENCE_REF_INVALID",
                             "%s: every evidence_ref names the entity it retains"
                             % iid))
+                        continue
+                    # `{"name": "x"}` satisfied the old check, and so did a name with
+                    # no relation to the cited text. A reference is a claim that THESE
+                    # words are in THAT range, so it is checked there.
+                    rsid = str(ref.get("source_id", "")).strip()
+                    rmsg = str(ref.get("messages", "")).strip()
+                    if not rsid or not rmsg:
+                        findings.append(Finding(
+                            cid, "RND_EVIDENCE_REF_INVALID",
+                            "%s: evidence_ref %r carries no source_id/messages — an "
+                            "unanchored name cannot be re-researched, which is the "
+                            "whole reason to keep it"
+                            % (iid, str(ref.get("name"))[:60])))
+                        continue
+                    rb = sources.get(rsid)
+                    rrng = parse_msg_range(rmsg)
+                    if rb is None or rb.excluded or not rb.path.exists() or not rrng:
+                        findings.append(Finding(
+                            cid, "RND_EVIDENCE_REF_INVALID",
+                            "%s: evidence_ref %r cites %s msg %s, which the source "
+                            "set does not resolve"
+                            % (iid, str(ref.get("name"))[:60], rsid or "?", rmsg)))
+                        continue
+                    try:
+                        rtexts = rb.message_texts()
+                    except Exception:
+                        rtexts = {}
+                    hay = _norm(" ".join(rtexts.get(n, "")
+                                         for n in range(rrng[0], rrng[1] + 1))).lower()
+                    toks = [t for t in re.findall(r"[A-Za-z0-9][A-Za-z0-9._/-]{4,}",
+                                                  str(ref.get("name", "")))]
+                    if toks and not any(t.lower() in hay for t in toks):
+                        findings.append(Finding(
+                            cid, "RND_EVIDENCE_REF_INVALID",
+                            "%s: evidence_ref %r names nothing that appears in %s msg "
+                            "%s — a reference that cannot be found where it is cited "
+                            "is not evidence"
+                            % (iid, str(ref.get("name"))[:60], rsid, rmsg)))
 
         if str(item.get("activation_condition", "")).strip():
             activation_count += 1
@@ -1163,6 +1206,17 @@ def validate_compile(corpus, compile_id):
                     cited_owner_msgs.setdefault(sid, set()).add(n)
                     item_owner_msgs.setdefault(sid, set()).add(n)
                     item_owner_text.append(b.message_texts().get(n, ""))
+            # Narrow ON PURPOSE, and the narrowing is a known, accepted hole: an
+            # item relabelled `derived` escapes this rule while keeping the same
+            # conclusion over the same cited link. Widening it to `derived` was tried
+            # and reverted — it fired on all seven compiler-synthesis items in r38
+            # (RND-007/018/038/075/104/123/150), whose conclusions are readings ACROSS
+            # sources and do not rest on the URL that happens to sit in a cited range.
+            # A 100% false-positive rate is worse than the hole, and the hole is
+            # self-limiting: taking it means labelling your item less authoritative
+            # than it is, which costs the compiler the claim it wanted to make.
+            # Catching the mislabel itself is a job for semantic review, not for a
+            # rule that cannot read intent.
             if semantic and str(item.get("authority_class", "")).strip() == \
                     "evidence" and _URL_RE.search(
                         "".join(b.message_texts().get(n, "")
@@ -1201,39 +1255,29 @@ def validate_compile(corpus, compile_id):
             if semantic and basis == "owner-authored":
                 qn = _norm(item_quote)
                 joined = _norm(" ".join(item_owner_text))
+                # Order matters and the previous arrangement inverted it: the
+                # cross-source WARN sat BEFORE the unsupported FAIL, so an item whose
+                # quote was pure assistant text lifted from another conversation AND
+                # sat in no owner turn it cites got only a warning, while an item with
+                # a merely invented quote got the failure. The contract was more
+                # permissive toward laundered assistant text than toward fabrication.
+                # Support is now decided first, and only a quote that IS in an owner
+                # turn is asked where else those words live.
                 if not qn:
                     findings.append(Finding(
                         cid, "RND_OWNER_AUTHORED_UNQUOTED",
                         "%s: owner_authority_basis 'owner-authored' carries no quote "
                         "— the owner's own words are the evidence for the claim that "
                         "they are the owner's own words" % iid))
-                elif joined and qn in joined and _quote_in_assistant_turn(
-                        qn, sources, item_owner_msgs):
-                    # The decisive case the r38 review found: CONV-012 msg 1 is an
-                    # owner-LABELLED turn whose 7,126 content characters are verbatim
-                    # an EARLIER ASSISTANT turn the owner pasted back. Both blind
-                    # slots read it as owner voice. Text the owner relayed is text
-                    # the owner adopted, never text the owner authored — and unlike
-                    # "did he mean it", that is decidable: the same words are sitting
-                    # in an assistant turn of a bound source.
+                elif len(qn) < OWNER_QUOTE_MIN_CHARS:
+                    # `qn in joined` is a substring test, so "." passed against any
+                    # owner turn containing a full stop. A quote has to be enough
+                    # words to be the owner's words.
                     findings.append(Finding(
-                        cid, "RND_OWNER_AUTHORED_IS_RELAYED",
-                        "%s: the quote also appears verbatim in an ASSISTANT turn of "
-                        "a bound source — an owner-labelled message that relays "
-                        "assistant text is 'owner-adoption-of-assistant-text', not "
-                        "'owner-authored'" % iid))
-                elif _quote_in_foreign_assistant_turn(qn, sources,
-                                                      item_owner_msgs):
-                    findings.append(Finding(
-                        cid, "RND_OWNER_AUTHORED_ECHOED_ELSEWHERE",
-                        "%s: the quote also appears verbatim in an ASSISTANT turn of "
-                        "a DIFFERENT bound source (%s) — which came first is not "
-                        "decidable from the source set, so this is not proof of "
-                        "relay, but the words are not uniquely the owner's and "
-                        "authorship does not rest on this quote alone"
-                        % (iid, _quote_in_foreign_assistant_turn(
-                            qn, sources, item_owner_msgs)),
-                        level="WARN"))
+                        cid, "RND_OWNER_AUTHORED_UNQUOTED",
+                        "%s: the 'owner-authored' quote is %d characters — too short "
+                        "to identify anything; a substring that matches by accident "
+                        "is not evidence of authorship" % (iid, len(qn))))
                 elif not joined or qn not in joined:
                     findings.append(Finding(
                         cid, "RND_OWNER_AUTHORED_UNSUPPORTED",
@@ -1242,6 +1286,36 @@ def validate_compile(corpus, compile_id):
                         "output is not owner-authored content; the honest basis is "
                         "'owner-directive', 'owner-adoption-of-assistant-text' or "
                         "'contested'" % iid))
+                elif _quote_in_assistant_turn(qn, sources, item_owner_msgs):
+                    # Text the owner relayed is text the owner adopted, never text the
+                    # owner authored. Decidable only WITHIN a source, where message
+                    # numbers order the turns: an assistant turn EARLIER in the same
+                    # transcript is text that already existed when the owner sent it.
+                    # (The r38 case that motivated this rule — CONV-012 msg 1, whose
+                    # content is verbatim CONV-005 msg 79 — is cross-source and msg 1
+                    # of its own transcript, so it is caught by the WARN below, not
+                    # here. The rule does not claim to catch it.)
+                    findings.append(Finding(
+                        cid, "RND_OWNER_AUTHORED_IS_RELAYED",
+                        "%s: the quote also appears verbatim in an EARLIER ASSISTANT "
+                        "turn of the same source — an owner-labelled message that "
+                        "relays assistant text is "
+                        "'owner-adoption-of-assistant-text', not 'owner-authored'"
+                        % iid))
+                else:
+                    foreign = _quote_in_foreign_assistant_turn(
+                        qn, sources, item_owner_msgs)
+                    if foreign:
+                        findings.append(Finding(
+                            cid, "RND_OWNER_AUTHORED_ECHOED_ELSEWHERE",
+                            "%s: the quote sits in a cited owner turn, but the same "
+                            "words also appear verbatim in an ASSISTANT turn of a "
+                            "DIFFERENT bound source (%s). Which came first is not "
+                            "decidable from the source set — nothing orders two "
+                            "conversations — so this is not proof of relay; but the "
+                            "words are not uniquely the owner's and authorship does "
+                            "not rest on this quote alone" % (iid, foreign),
+                            level="WARN"))
 
     # relations — second pass, so forward references are fine
     for iid, item in by_id.items():
@@ -1337,10 +1411,12 @@ def validate_compile(corpus, compile_id):
         # simply declare itself replaced — something must replace it, or a later
         # Recompile cannot tell what is live.
         for iid, standing in standings_seen.items():
+            # `other` ranged over every item INCLUDING this one, so an item could
+            # declare itself replaced by itself and satisfy the rule.
             if standing == "SUPERSEDED" and not any(
                     str(r.get("rel", "")).strip() == "supersedes"
                     and str(r.get("target", "")).strip() == iid
-                    for other in by_id.values()
+                    for oid, other in by_id.items() if oid != iid
                     for r in (other.get("relations") or [])
                     if isinstance(r, dict)):
                 findings.append(Finding(
@@ -1387,10 +1463,59 @@ def validate_compile(corpus, compile_id):
                         % (lsid, e.get("messages"), reason,
                            ", ".join(OWNER_TURN_REASONS))))
                     continue
-                for n in range(rng[0], rng[1] + 1):
+                # A range is a claim about specific turns, so it has to survive
+                # contact with them. Without this, one entry per source reading
+                # `"messages": "1-99999", "reason": "no-material-content"` discharges
+                # the entire owner-voice obligation for a 581-owner-turn corpus —
+                # measured, not hypothetical.
+                lb = sources.get(lsid)
+                if lb is None or lb.excluded or not lb.path.exists():
+                    findings.append(Finding(
+                        cid, "RND_OWNER_LEDGER_INVALID",
+                        "%s: ledger entry names a source the set does not bind"
+                        % lsid))
+                    continue
+                try:
+                    lroles = lb.roles()
+                    ltotal = lb.message_count()
+                except Exception:
+                    lroles, ltotal = {}, 0
+                span = range(rng[0], rng[1] + 1)
+                beyond = [n for n in span if n > ltotal or n < 1]
+                if beyond:
+                    findings.append(Finding(
+                        cid, "RND_OWNER_LEDGER_INVALID",
+                        "%s msg %s: the range runs past the source's %d messages "
+                        "(first out of range: %d) — a ledger entry accounts for turns "
+                        "that exist, and a range wide enough to cover everything "
+                        "accounts for nothing"
+                        % (lsid, e.get("messages"), ltotal, beyond[0])))
+                    continue
+                notowner = [n for n in span if lroles.get(n) != ROLE_OWNER]
+                if notowner:
+                    findings.append(Finding(
+                        cid, "RND_OWNER_LEDGER_INVALID",
+                        "%s msg %s: covers %d turn(s) that are not the owner's "
+                        "(first: msg %d) — the ledger explains why an OWNER turn is "
+                        "uncited; it is not a blanket over the transcript"
+                        % (lsid, e.get("messages"), len(notowner), notowner[0])))
+                    continue
+                for n in span:
                     declared.setdefault(lsid, set()).add(n)
             for sid, b in sorted(sources.items()):
-                if b.excluded or not b.path.exists() or not b.well_formed():
+                if b.excluded or not b.path.exists():
+                    continue
+                if not b.well_formed():
+                    # Fail CLOSED. Skipping here let a corrupted transcript delete the
+                    # ledger obligation for its whole source: break the numbering and
+                    # RND_OWNER_TURN_UNACCOUNTED vanishes with an empty ledger. The
+                    # same predicate is already fail-closed in the v4.0 authority gate.
+                    findings.append(Finding(
+                        cid, "RND_OWNER_TURN_UNACCOUNTED",
+                        "%s: the transcript's message headers do not number 1..N, so "
+                        "no owner turn in it can be accounted for — a source whose "
+                        "roles cannot be read is not a source whose owner voice is "
+                        "absent" % sid))
                     continue
                 owner_turns = {n for n, r in b.roles().items() if r == ROLE_OWNER}
                 unaccounted = sorted(owner_turns
@@ -1429,7 +1554,30 @@ def validate_compile(corpus, compile_id):
                                         "every unlensed entry names its distinction"))
                 continue
             for ref in (u.get("items") or []):
-                declared_unlensed.add(str(ref).strip())
+                r = str(ref).strip()
+                if r not in by_id:
+                    findings.append(Finding(
+                        cid, "RND_UNLENSED_INVALID",
+                        "unlensed entry %r names %r, which is not an item in this "
+                        "compile — a declaration that points at nothing declares "
+                        "nothing" % (str(u.get("distinction", ""))[:60], r)))
+                    continue
+                declared_unlensed.add(r)
+        # A lens listing every item makes the coverage table say nothing while
+        # discharging the visibility obligation for the whole compile.
+        if len(by_id) >= 8:
+            for row in coverage:
+                if not isinstance(row, dict):
+                    continue
+                basis = {str(b).strip() for b in (row.get("basis") or [])}
+                real = basis & set(by_id)
+                if len(real) == len(by_id):
+                    findings.append(Finding(
+                        cid, "RND_COVERAGE_LENS_VACUOUS",
+                        "lens %r lists every item in the compile as its basis — a "
+                        "lens that sees everything distinguishes nothing, and cannot "
+                        "report what it is missing"
+                        % str(row.get("lens", "?"))))
         orphans = sorted(set(by_id) - in_basis - declared_unlensed)
         if orphans:
             findings.append(Finding(
@@ -1472,6 +1620,14 @@ def validate_compile(corpus, compile_id):
                         "%s: examined_through=%d of %d messages — the remainder may "
                         "correct, reverse or supersede what the cited ranges say"
                         % (sid, seen_through, total)))
+                elif seen_through > total:
+                    # Unbounded self-attestation is not evidence of reading: 10**18
+                    # passed. The number has to name a message that exists.
+                    findings.append(Finding(
+                        cid, "RND_PROGRESSION_INVALID",
+                        "%s: examined_through=%d but the source has %d messages — a "
+                        "compile cannot have read past the end of its own transcript"
+                        % (sid, seen_through, total)))
 
         # (E) evidence behind a surviving conclusion. Narrow on purpose: only an
         # `evidence` item whose cited range demonstrably rests on an external link.
@@ -1485,6 +1641,16 @@ def validate_compile(corpus, compile_id):
 
         # (G) cross-source synthesis: allowed, DERIVED, and provenance-bound.
         xs = ir.get("cross_source")
+        if xs is None:
+            # Omitting the key discharged the whole obligation silently. An empty list
+            # is a valid answer — "we looked and found none" — but it has to be said,
+            # exactly as `unlensed` must be said.
+            findings.append(Finding(
+                cid, "RND_CROSS_SOURCE_INVALID",
+                "a version-2 compile answers, explicitly, what meaning exists only "
+                "BETWEEN its conversations — an empty list is a valid answer, an "
+                "absent field is a question never asked"))
+            xs = []
         if xs is not None:
             if not isinstance(xs, list):
                 findings.append(Finding(cid, "RND_CROSS_SOURCE_INVALID",
@@ -1503,6 +1669,33 @@ def validate_compile(corpus, compile_id):
                         "%s: a cross-source synthesis is DERIVED — meaning that "
                         "emerges between conversations was authored by no one, least "
                         "of all the owner" % xid))
+                # An entry citing two source ids with no `messages` at all used to
+                # pass: only set membership was checked, never that the cited turns
+                # exist. A synthesis names where it came from.
+                for pp in (x.get("provenance") or []):
+                    if not isinstance(pp, dict):
+                        continue
+                    psid = str(pp.get("source_id", "")).strip()
+                    pmsg = str(pp.get("messages", "")).strip()
+                    pb = sources.get(psid)
+                    prng = parse_msg_range(pmsg)
+                    if not pmsg or prng is None:
+                        findings.append(Finding(
+                            cid, "RND_CROSS_SOURCE_INVALID",
+                            "%s: provenance into %s names no resolvable message range "
+                            "— a synthesis that cannot point at the turns it rests on "
+                            "is an assertion, not a derivation"
+                            % (xid, psid or "?")))
+                    elif pb is not None and not pb.excluded and pb.path.exists():
+                        try:
+                            ptotal = pb.message_count()
+                        except Exception:
+                            ptotal = 0
+                        if ptotal and prng[1] > ptotal:
+                            findings.append(Finding(
+                                cid, "RND_CROSS_SOURCE_INVALID",
+                                "%s: provenance cites %s msg %s, past the source's %d "
+                                "messages" % (xid, psid, pmsg, ptotal)))
                 srcs = {str(pp.get("source_id", "")).strip()
                         for pp in (x.get("provenance") or [])
                         if isinstance(pp, dict)}
@@ -1748,7 +1941,13 @@ def render_coverage(corpus, compile_id, ir):
     # source was read, or what was found only BETWEEN conversations. A rendering that
     # omits them reproduces, one layer up, the blindness the semantic rules exist to
     # close. Gated on version 2 so a published version-1 rendering is byte-identical.
-    if int(ir.get("rnd_ir_version") or IR_VERSION) >= IR_VERSION_SEMANTIC:
+    try:
+        _rv = int(ir.get("rnd_ir_version") or IR_VERSION)
+    except (TypeError, ValueError):
+        # `"one"` raised ValueError out of render, and a crashing validator reports
+        # nothing at all — strictly worse than v4.0, which reported the bad version.
+        _rv = IR_VERSION
+    if _rv >= IR_VERSION_SEMANTIC:
         unlensed = [u for u in (ir.get("unlensed") or []) if isinstance(u, dict)]
         lines.append("## Unlensed — distinctions the twelve lenses do not see")
         lines.append("")
@@ -1908,7 +2107,8 @@ def cmd_init(args):
         return 1
 
     ir = {
-        "rnd_ir_version": IR_VERSION,
+        "rnd_ir_version": (IR_VERSION_SEMANTIC if getattr(args, "semantic", False)
+                           else IR_VERSION),
         "compile_id": cid,
         "title": args.title or cid,
         "created": args.at or "",
@@ -2056,6 +2256,12 @@ def main(argv=None):
                         "explicit source set")
     p.add_argument("--title")
     p.add_argument("--at", help="YYYY-MM-DD")
+    p.add_argument("--semantic", action="store_true",
+                   help="emit rnd_ir_version 2, which binds the semantic-coverage "
+                        "obligations (owner-turn ledger, progression, standing, "
+                        "typed owner authority, evidence refs, unlensed, "
+                        "cross-source). Without it a compile is validated by the "
+                        "version-1 rules only.")
 
     p = sub.add_parser("validate", parents=[common],
                        help="falsify one compile, or every compile")
