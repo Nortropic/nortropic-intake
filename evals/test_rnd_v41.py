@@ -52,7 +52,7 @@ from test_rnd_v4 import (  # noqa: E402
     mk_corpus, run, write_json, RESULTS, _whole_file_sha,
 )
 
-MIN_CHECKS = 59
+MIN_CHECKS = 75
 
 
 # --------------------------------------------------------------- fixtures --
@@ -85,10 +85,16 @@ def v2_ir(corpus, cid, items=None, coverage=None, mutate=None):
         # a version-2 compile must ANSWER the cross-source question; empty is a valid
         # answer, absent is not
         ir["cross_source"] = []
-        # every item must be visible to the coverage instrument
-        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
-                                      if i["id"] != "RND-007"]
-        ir["coverage"][0]["state"] = "PARTIALLY_EXPLORED"
+        # Every item must be visible to the coverage instrument — but SPREAD across
+        # lenses. The old control dumped all-but-one into a single lens, which is the
+        # vacuity pattern RND_COVERAGE_LENS_VACUOUS now refuses: a control that is
+        # itself vacuous cannot certify anything.
+        ids = [i["id"] for i in ir["items"]]
+        for k, row in enumerate(ir["coverage"][:3]):
+            row["basis"] = sorted(set(row.get("basis") or []) |
+                                  {x for j, x in enumerate(ids) if j % 3 == k})
+            if row["state"] == "UNKNOWN":
+                row["state"] = "PARTIALLY_EXPLORED"
         if mutate:
             mutate(ir)
     return install_compile(corpus, cid, items=items, coverage=coverage, mutate=_v2)
@@ -239,8 +245,10 @@ def scenario_b2_relay_requires_order(tmp):
             "owner_authority_basis": "owner-authored"})
         ir["progression"] = [{"source_id": "CONV-001", "examined_through": 5},
                              {"source_id": "CONV-002", "examined_through": 7}]
-        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
-                                      if i["id"] != "RND-007"]
+        _ids = [i["id"] for i in ir["items"]]
+        for _k, _row in enumerate(ir["coverage"][:3]):
+            _row["basis"] = sorted(set(_row.get("basis") or []) |
+                                   {x for _j, x in enumerate(_ids) if _j % 3 == _k})
 
     v2_ir(corpus, "order", mutate=add)
     rc, out = run(corpus, "validate")
@@ -480,8 +488,10 @@ def scenario_ij_volume_buys_nothing(tmp):
             "uncertainty": "none", "tags": []})
     def pad(ir):
         ir["owner_turn_ledger"] = []
-        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
-                                      if i["id"] != "RND-007"]
+        _ids = [i["id"] for i in ir["items"]]
+        for _k, _row in enumerate(ir["coverage"][:3]):
+            _row["basis"] = sorted(set(_row.get("basis") or []) |
+                                   {x for _j, x in enumerate(_ids) if _j % 3 == _k})
     v2_ir(corpus, "inflated", items=padded, mutate=pad)
     rc, out = run(corpus, "validate")
     check("I sixty extra items do not account for one missing owner turn",
@@ -589,16 +599,14 @@ def scenario_k_cheap_compliance_is_refused(tmp):
     # pinned to the specific complaint: a second check (non-owner turns) also fires
     # on this fixture, so asserting only the code cannot tell the two apart.
     check("K a ledger range past the end of the source is refused",
-          bool(re.search(r"RND_OWNER_LEDGER_INVALID[^\n]*wide|"
-                         r"\[wide-ledger\][^\n]*runs past the source", out))
-          or bool(re.search(r"\[wide-ledger\][^\n]*RND_OWNER_LEDGER_INVALID"
-                            r"[^\n]*runs past", out)), out)
+          bool(re.search(r"FAIL\s+\[wide-ledger\]\s+RND_OWNER_LEDGER_INVALID"
+                         r"[^\n]*runs past the source", out)), out)
     check("K a ledger entry covering non-owner turns is refused",
           expect_code(out, "RND_OWNER_LEDGER_INVALID", "blanket-ledger"), out)
     check("K examined_through past the end of the transcript is refused",
           expect_code(out, "RND_PROGRESSION_INVALID", "over-read"), out)
     check("K an unanchored evidence_ref is refused",
-          bool(re.search(r"\[bare-ref\][^\n]*RND_EVIDENCE_REF_INVALID[^\n]*"
+          bool(re.search(r"FAIL\s+\[bare-ref\]\s+RND_EVIDENCE_REF_INVALID[^\n]*"
                          r"carries no source_id/messages", out)), out)
     check("K an evidence_ref absent from the range it cites is refused",
           expect_code(out, "RND_EVIDENCE_REF_INVALID", "absent-ref"), out)
@@ -638,8 +646,10 @@ def scenario_l_ordering_and_fail_closed(tmp):
             "quote": "Johnny decided we will switch to framework X. That is settled.",
             "owner_authority_basis": "owner-authored"})
         ir["owner_turn_ledger"] = []
-        ir["coverage"][0]["basis"] = [i["id"] for i in ir["items"]
-                                      if i["id"] != "RND-007"]
+        _ids = [i["id"] for i in ir["items"]]
+        for _k, _row in enumerate(ir["coverage"][:3]):
+            _row["basis"] = sorted(set(_row.get("basis") or []) |
+                                   {x for _j, x in enumerate(_ids) if _j % 3 == _k})
     v2_ir(corpus, "laundered", mutate=_launder)
     # A transcript whose headers do not number 1..N used to delete the ledger
     # obligation for its whole source: fail-open where v4.0 fails closed.
@@ -659,8 +669,203 @@ def scenario_l_ordering_and_fail_closed(tmp):
     check("L control still clean in the same run", control_clean(out), out)
     rc2, out2 = run(corpus2, "validate")
     check("L a corrupted transcript does not delete the ledger obligation",
-          bool(re.search(r"\[corrupt\][^\n]*RND_OWNER_TURN_UNACCOUNTED[^\n]*"
-                         r"do not number 1\.\.N", out2)), out2)
+          rc2 != 0 and bool(re.search(
+              r"FAIL\s+\[corrupt\]\s+RND_OWNER_TURN_UNACCOUNTED[^\n]*"
+              r"do not number 1\.\.N", out2)), out2)
+
+
+
+
+def scenario_m_round_two(tmp):
+    """M: the second adversarial review's findings.
+
+    Round 1 raised the price of cheap compliance from four lines of JSON to about
+    sixty lines of Python. Round 2 showed that still buys a green compile: the
+    PUBLISHED 202-item r38 — the one measured at 619 material omissions — passes
+    version 2 unchanged after a mechanical upgrade that stamps `owner-directive` on
+    every owner decision (no quote test), pastes each range's own URL back as an
+    evidence_ref name (so the token test matches by construction), enumerates
+    uncited owner turns as `no-material-content`, and sets `examined_through` from
+    the file. Each check here is one of the moves that made that possible.
+    """
+    corpus = mk_corpus(tmp)
+    # A long owner turn, so "no-material-content" and the word floor have something
+    # real to be wrong about; the base fixture's turns are all one sentence.
+    LONG = ("Jag vill att vi bestämmer den här ordningen nu och håller den: "
+            "kontraktet ska bära beslutet, inte prosan runt omkring det, och "
+            "varje regel ska gå att falsifiera mot källan i stället för mot en "
+            "formulering som råkar finnas i filen. Det är viktigt för mig. "
+            "Se https://example.invalid/kontrakt-v2 för bakgrunden. "
+            "ansvarsfördelningen kontraktsefterlevnaden är kvar att lösa. "
+            "Johnny decided we will switch to framework X. That is settled.")
+    src = corpus / "_projects" / "demo" / "sources" / "CONV-002" / "conversation.md"
+    text = src.read_text(encoding="utf-8").rstrip() + (
+        "\n\n---\n\n## Meddelande 3 — Johnny (användare)\n\n%s\n" % LONG)
+    src.write_text(text, encoding="utf-8")
+    mpath = corpus / "_projects" / "demo" / "project-manifest.json"
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        if entry["source_id"] == "CONV-002":
+            rev = entry["revisions"][0]
+            rev["sha256"] = _whole_file_sha(text)
+            rev["message_count"] = text.count("## Meddelande ")
+    write_json(mpath, manifest)
+
+    def _ledger3(ir):
+        ir["owner_turn_ledger"].append(
+            {"source_id": "CONV-002", "messages": "3",
+             "reason": "duplicate-restatement"})
+        for prow in ir["progression"]:
+            if prow["source_id"] == "CONV-002":
+                prow["examined_through"] = 3
+    v2_ir(corpus, "control-ok", mutate=_ledger3)
+    install_compile(corpus, "v1-here")          # version 1, on purpose
+
+    # excluding most of the corpus excuses you from most of the contract
+    def _excl(ir):
+        _ledger3(ir)
+        for srec in ir["source_set"]["sources"]:
+            if srec.get("source_id") == "CONV-002":
+                srec["excluded"] = "not read"
+        ir["owner_turn_ledger"] = [e for e in ir["owner_turn_ledger"]
+                                   if e["source_id"] != "CONV-002"]
+        ir["progression"] = [p for p in ir["progression"]
+                             if p["source_id"] != "CONV-002"]
+    v2_ir(corpus, "mostly-excluded", mutate=_excl)
+
+    # a basis is a claim about what the owner did; show the words
+    v2_ir(corpus, "directive-unquoted", mutate=lambda ir: [_ledger3(ir)] + [
+        it.__setitem__("owner_authority_basis", "owner-directive")
+        or it.__setitem__("quote", "")
+        for it in ir["items"] if it["kind"] == "OWNER_DECISION"])
+    # a character floor alone let mid-sentence prose stand in for a decision
+    def _twoword(ir):
+        _ledger3(ir)
+        # 26 characters, two words, lifted mid-sentence out of the long owner turn
+        for it in ir["items"]:
+            if it["id"] == "RND-001":
+                it["provenance"] = [{"source_id": "CONV-002", "revision": 1,
+                                     "messages": "3"}]
+                it["quote"] = "formulering som"
+                it["owner_authority_basis"] = "owner-authored"
+    v2_ir(corpus, "two-word-quote", mutate=_twoword)
+    # the range's own link pasted back as the reference name
+    v2_ir(corpus, "url-as-name", mutate=lambda ir: [_ledger3(ir), ir["items"][0].__setitem__(
+        "evidence_refs", [{"name": "https://example.com/x",
+                           "source_id": "CONV-001", "messages": "1"}])])
+    # a name with no token long enough to check was never checked at all
+    v2_ir(corpus, "tokenless-ref", mutate=lambda ir: [_ledger3(ir), ir["items"][0].__setitem__(
+        "evidence_refs", [{"name": "x y", "source_id": "CONV-001",
+                           "messages": "1"}])])
+    # everything declared invisible is not a report of blindness
+    v2_ir(corpus, "unlensed-absorbs", mutate=lambda ir: [
+        _ledger3(ir),
+        [row.__setitem__("basis", []) for row in ir["coverage"]],
+        ir.__setitem__("unlensed", [{"distinction": "everything",
+                                     "items": [i["id"] for i in ir["items"]]}])])
+    # two items superseding each other say nothing is live
+    v2_ir(corpus, "supersede-cycle", mutate=lambda ir: [
+        _ledger3(ir),
+        ir["items"][1].__setitem__("standing", "SUPERSEDED"),
+        ir["items"][2].__setitem__("standing", "SUPERSEDED"),
+        ir["items"][1].__setitem__("relations", [
+            {"rel": "supersedes", "target": ir["items"][2]["id"]}]),
+        ir["items"][2].__setitem__("relations", [
+            {"rel": "supersedes", "target": ir["items"][1]["id"]}])])
+    # two progression rows for one source: last-wins hid the honest number
+    v2_ir(corpus, "dup-progression", mutate=lambda ir: [
+        _ledger3(ir),
+        ir["progression"].append({"source_id": "CONV-001",
+                                  "examined_through": 5})])
+    # a turn with real prose is not "no-material-content"
+    v2_ir(corpus, "reason-contradicted", mutate=lambda ir: ir.__setitem__(
+        "owner_turn_ledger", [{"source_id": "CONV-002", "messages": "1",
+                               "reason": "duplicate-restatement"},
+                              {"source_id": "CONV-002", "messages": "3",
+                               "reason": "no-material-content"}]))
+
+
+    # ONLY the word floor: 40 characters, two words
+    def _wordfloor(ir):
+        _ledger3(ir)
+        for it in ir["items"]:
+            if it["id"] == "RND-001":
+                it["provenance"] = [{"source_id": "CONV-002", "revision": 1,
+                                     "messages": "3"}]
+                it["quote"] = "ansvarsfördelningen kontraktsefterlevnaden"
+                it["owner_authority_basis"] = "owner-authored"
+    v2_ir(corpus, "word-floor-only", mutate=_wordfloor)
+
+    # ONLY the character floor: three words, 14 characters
+    def _charfloor(ir):
+        _ledger3(ir)
+        for it in ir["items"]:
+            if it["id"] == "RND-001":
+                it["provenance"] = [{"source_id": "CONV-002", "revision": 1,
+                                     "messages": "3"}]
+                it["quote"] = "det, och varje"
+                it["owner_authority_basis"] = "owner-authored"
+    v2_ir(corpus, "char-floor-only", mutate=_charfloor)
+
+    # ONLY the bare-URL rule: the URL really is in the cited range, so the token
+    # test would pass it
+    v2_ir(corpus, "url-in-range", mutate=lambda ir: [
+        _ledger3(ir),
+        ir["items"][0].__setitem__(
+            "evidence_refs", [{"name": "https://example.invalid/kontrakt-v2",
+                               "source_id": "CONV-002", "messages": "3"}])])
+
+    # ONLY the echo-scan scoping: the quote sits in a cited owner turn of CONV-002
+    # AND in an assistant turn of CONV-001, and the item ALSO cites an unrelated
+    # owner turn in CONV-001 — the move that used to silence the warning entirely
+    def _echo_bypass(ir):
+        _ledger3(ir)
+        for it in ir["items"]:
+            if it["id"] == "RND-001":
+                it["provenance"] = [
+                    {"source_id": "CONV-002", "revision": 1, "messages": "3"},
+                    {"source_id": "CONV-001", "revision": 1, "messages": "1"}]
+                it["quote"] = ("Johnny decided we will switch to framework X. "
+                               "That is settled.")
+                it["owner_authority_basis"] = "owner-authored"
+    v2_ir(corpus, "echo-bypass", mutate=_echo_bypass)
+
+    rc, out = run(corpus, "validate")
+    check("M excluding most of the source set is reported",
+          expect_code(out, "RND_SOURCE_SET_MOSTLY_EXCLUDED", "mostly-excluded"), out)
+    check("M every owner basis must show the owner's words",
+          expect_code(out, "RND_OWNER_BASIS_UNQUOTED", "directive-unquoted"), out)
+    check("M a two-word owner-authored quote is refused",
+          expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "two-word-quote"), out)
+    check("M an evidence_ref that is just a URL is refused",
+          expect_code(out, "RND_EVIDENCE_REF_INVALID", "url-as-name"), out)
+    # pinned to its own message: the weak-match rule also fires on this input, so
+    # asserting the code alone cannot tell the two branches apart
+    check("M an evidence_ref with no checkable token is refused",
+          bool(re.search(r"FAIL\s+\[tokenless-ref\]\s+RND_EVIDENCE_REF_INVALID"
+                         r"[^\n]*too generic to check or to chase", out)), out)
+    check("M declaring the whole compile unlensed is refused",
+          expect_code(out, "RND_UNLENSED_INVALID", "unlensed-absorbs"), out)
+    check("M a supersession CYCLE is as vacuous as superseding yourself",
+          expect_code(out, "RND_STANDING_UNSUPPORTED", "supersede-cycle"), out)
+    check("M duplicate progression rows are refused",
+          expect_code(out, "RND_PROGRESSION_INVALID", "dup-progression"), out)
+    check("M 'no-material-content' over real prose is refused",
+          expect_code(out, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
+                      "reason-contradicted"), out)
+    check("M a version-1 compile is told the semantic rules did not apply",
+          bool(re.search(r"WARN\s+\[v1-here\]\s+RND_COMPILE_NOT_SEMANTIC",
+                         out)), out)
+    check("M the CHARACTER floor bites on its own",
+          expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "char-floor-only"), out)
+    check("M the WORD floor bites on its own, not only the character floor",
+          expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "word-floor-only"), out)
+    check("M a bare URL is refused even when it IS in the cited range",
+          expect_code(out, "RND_EVIDENCE_REF_INVALID", "url-in-range"), out)
+    check("M citing an unrelated turn in the echoing source does not buy silence",
+          bool(re.search(r"WARN\s+\[echo-bypass\]\s+"
+                         r"RND_OWNER_AUTHORED_ECHOED_ELSEWHERE", out)), out)
+    check("M control still clean in the same run", control_clean(out), out)
 
 
 def main():
@@ -679,6 +884,7 @@ def main():
         scenario_ij_volume_buys_nothing,
         scenario_k_cheap_compliance_is_refused,
         scenario_l_ordering_and_fail_closed,
+        scenario_m_round_two,
     ]
     for scenario in scenarios:
         tmp = tempfile.mkdtemp(prefix="intake-rnd41-")

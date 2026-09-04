@@ -1312,6 +1312,29 @@ reality — never Intake's. What Intake MAY preserve is the owner's explicit
 reject/defer as an OWNER_DECISION with provenance: a fact about the past, not a
 disposition of the future.
 
+**What version 2 does NOT establish, and cannot.** These rules check what is
+mechanically checkable: that a range exists, that a quote sits in an owner turn, that
+a reference resolves where it is cited, that a question was answered rather than
+skipped. They do not check whether the compile UNDERSTOOD its corpus, and no static
+rule over an IR can — meaning is a relation between the corpus and the sources, and
+every obligation a contract can state is dischargeable by a program that reads
+structure. Two independent adversarial reviews demonstrated this rather than argued
+it: the first satisfied the whole layer in four lines of JSON; the second, after those
+holes were closed, upgraded the PUBLISHED 202-item `improvements-r38` — measured
+externally at 619 material semantic omissions — into a green version-2 compile with a
+mechanical script that added no understanding at all.
+
+So: **green here means structurally sound and provenance-bound, not semantically
+covered.** The obligations raise the floor and make specific losses impossible to
+hide — an owner turn cannot vanish unaccounted, a rejection cannot masquerade as a
+live requirement, a conclusion cannot outlive the reference it rests on, an item
+cannot hide from the coverage instrument. That is worth having and it is not the same
+claim. Semantic coverage is established the only way it can be: by independent review
+against blind findings that were produced without seeing the compile, recorded in
+`compile-audit.md` with its method, its counts and its limits. A compile that reports
+`RND_COMPILE_VALID=YES` and cites no such review has not been shown to understand
+anything.
+
 **RND_COMPILE emits version 2.** Run `init --semantic`, which stamps
 `rnd_ir_version: 2` and binds every obligation below. Without the flag a compile is
 stamped version 1 and validated by the v4.0 rules ONLY — the semantic layer binds

@@ -358,6 +358,10 @@ _SEPARATOR_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})\Z")
 # that character. Authorship needs enough words to identify something; 24 normalised
 # characters is roughly a short sentence and is the floor, not a target.
 OWNER_QUOTE_MIN_CHARS = 24
+# symmetric with the RQ-backed owner path, which has required three words since v4.0;
+# a character floor alone let a 26-character run of mid-sentence prose stand in for
+# the owner's decision.
+OWNER_QUOTE_MIN_WORDS = 3
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
 
@@ -702,8 +706,25 @@ def _quote_in_foreign_assistant_turn(qn, sources, owner_turns):
     What IS decidable, and worth saying, is that the words are not uniquely the
     owner's. Reported as a WARN: authorship is not established by this quote alone.
     """
+    # Skipping every source the item cites owner turns FROM let one extra provenance
+    # entry — naming any early owner turn in the source that holds the assistant text
+    # — silence the warning: the guard got blinder the more evidence an item cited.
+    # What legitimately excludes a source is that the QUOTE ITSELF sits in a cited
+    # owner turn there; an unrelated citation elsewhere in that source does not.
+    holding = set()
+    for sid, turns in owner_turns.items():
+        b = sources.get(sid)
+        if b is None or b.excluded or not b.path.exists():
+            continue
+        try:
+            texts = b.message_texts()
+        except Exception:
+            continue
+        if any(qn in _norm(texts.get(n, "")) for n in turns):
+            holding.add(sid)
+
     for sid, b in sources.items():
-        if sid in owner_turns or b.excluded or not b.path.exists():
+        if sid in holding or b.excluded or not b.path.exists():
             continue
         try:
             if not b.well_formed():
@@ -791,6 +812,18 @@ def validate_compile(corpus, compile_id):
     # so an already-published witness stays green and byte-reproducible; the newer
     # rules are opt-in per compile and never retroactive.
     semantic = (ir_version == IR_VERSION_SEMANTIC)
+    if not semantic:
+        # Silence here reads as approval: `validate` said "every compile holds its
+        # contract" over a version-1 compile that the semantic rules never touched.
+        # The version is a CHOICE the compiling agent makes, so name it.
+        findings.append(Finding(
+            cid, "RND_COMPILE_NOT_SEMANTIC",
+            "rnd_ir_version %s — this compile is validated by the version-1 rules "
+            "only. The semantic-coverage obligations (owner-turn ledger, "
+            "progression, typed owner authority, evidence refs, unlensed, "
+            "cross-source) did not apply to it. Green here means structurally "
+            "sound, not semantically covered; `init --semantic` binds them"
+            % ir_version, level="WARN"))
     if str(ir.get("compile_id", "")).strip() != cid:
         findings.append(Finding(cid, "RND_COMPILE_ID_MISMATCH",
                                 "directory %r vs compile_id %r"
@@ -1080,15 +1113,43 @@ def validate_compile(corpus, compile_id):
                         rtexts = {}
                     hay = _norm(" ".join(rtexts.get(n, "")
                                          for n in range(rrng[0], rrng[1] + 1))).lower()
-                    toks = [t for t in re.findall(r"[A-Za-z0-9][A-Za-z0-9._/-]{4,}",
-                                                  str(ref.get("name", "")))]
-                    if toks and not any(t.lower() in hay for t in toks):
+                    rname = str(ref.get("name", "")).strip()
+                    if _URL_RE.fullmatch(rname):
+                        # pasting the range's own link back as the "name" satisfied a
+                        # match test by construction: the token IS the text it is
+                        # checked against. A reference names the thing, and may carry
+                        # the link alongside it.
                         findings.append(Finding(
                             cid, "RND_EVIDENCE_REF_INVALID",
-                            "%s: evidence_ref %r names nothing that appears in %s msg "
-                            "%s — a reference that cannot be found where it is cited "
-                            "is not evidence"
-                            % (iid, str(ref.get("name"))[:60], rsid, rmsg)))
+                            "%s: evidence_ref is a bare URL — name what the link IS, "
+                            "so a reader who cannot reach it still knows what the "
+                            "conclusion rested on" % iid))
+                        continue
+                    toks = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9._/-]{4,}", rname))
+                    if not toks:
+                        # `if toks and ...` meant a name with no >=5-char token was
+                        # never checked at all — `{"name": "x"}` with two extra fields
+                        # was exactly the bypass this rule was written to close.
+                        findings.append(Finding(
+                            cid, "RND_EVIDENCE_REF_INVALID",
+                            "%s: evidence_ref %r is too generic to check or to chase"
+                            % (iid, rname[:60])))
+                        continue
+                    hits = {t for t in toks if t.lower() in hay}
+                    longest = max((len(t) for t in hits), default=0)
+                    if not (len(hits) >= 2 or longest >= 10):
+                        # One short common word matching somewhere in a long range is
+                        # not identification: measured against a whole source, a
+                        # fabricated name hits on words like "Protocol" or "Agents".
+                        # Two hits, or one distinctive one. This does NOT separate
+                        # every fabrication from every real reference — a fake built
+                        # from words genuinely in the range is indistinguishable by
+                        # matching, and that limit is stated in SKILL.md.
+                        findings.append(Finding(
+                            cid, "RND_EVIDENCE_REF_INVALID",
+                            "%s: evidence_ref %r is not identifiable in %s msg %s — "
+                            "one short word in common is not a reference"
+                            % (iid, rname[:60], rsid, rmsg)))
 
         if str(item.get("activation_condition", "")).strip():
             activation_count += 1
@@ -1252,6 +1313,18 @@ def validate_compile(corpus, compile_id):
             # inside an owner TURN, not merely inside an owner-cited RANGE. An owner
             # turn that pastes an agent report is owner-labelled, not owner-authored,
             # and this is what separates them.
+            if semantic and basis and basis != "contested" and \
+                    not str(item_quote).strip():
+                # `owner-directive` had NO quote test at all, which is why a
+                # mechanical upgrade could stamp it on every OWNER_DECISION in a
+                # compile and go green. Every basis except `contested` — which is the
+                # honest "the source does not settle it" — rests on something the
+                # owner said; show it.
+                findings.append(Finding(
+                    cid, "RND_OWNER_BASIS_UNQUOTED",
+                    "%s: owner_authority_basis %r carries no quote — the basis is a "
+                    "claim about what the owner did, and the words are the evidence "
+                    "for it" % (iid, basis)))
             if semantic and basis == "owner-authored":
                 qn = _norm(item_quote)
                 joined = _norm(" ".join(item_owner_text))
@@ -1269,15 +1342,17 @@ def validate_compile(corpus, compile_id):
                         "%s: owner_authority_basis 'owner-authored' carries no quote "
                         "— the owner's own words are the evidence for the claim that "
                         "they are the owner's own words" % iid))
-                elif len(qn) < OWNER_QUOTE_MIN_CHARS:
+                elif len(qn) < OWNER_QUOTE_MIN_CHARS or \
+                        len(qn.split()) < OWNER_QUOTE_MIN_WORDS:
                     # `qn in joined` is a substring test, so "." passed against any
                     # owner turn containing a full stop. A quote has to be enough
                     # words to be the owner's words.
                     findings.append(Finding(
                         cid, "RND_OWNER_AUTHORED_UNQUOTED",
-                        "%s: the 'owner-authored' quote is %d characters — too short "
-                        "to identify anything; a substring that matches by accident "
-                        "is not evidence of authorship" % (iid, len(qn))))
+                        "%s: the 'owner-authored' quote is %d characters / %d words "
+                        "— too short to identify anything; a substring that matches "
+                        "by accident is not evidence of authorship"
+                        % (iid, len(qn), len(qn.split()))))
                 elif not joined or qn not in joined:
                     findings.append(Finding(
                         cid, "RND_OWNER_AUTHORED_UNSUPPORTED",
@@ -1410,18 +1485,39 @@ def validate_compile(corpus, compile_id):
         # (B) standing: SUPERSEDED is a relation, not an adjective. An item may not
         # simply declare itself replaced — something must replace it, or a later
         # Recompile cannot tell what is live.
+        _sup = {}
+        for _oid, _o in by_id.items():
+            for _r in (_o.get("relations") or []):
+                if isinstance(_r, dict) and \
+                        str(_r.get("rel", "")).strip() == "supersedes":
+                    _sup.setdefault(str(_r.get("target", "")).strip(),
+                                    set()).add(_oid)
+
+        def _only_superseded_by_superseded(iid, seen=None):
+            """True when every chain replacing this item is itself SUPERSEDED.
+            Closing the 1-cycle left the 2-cycle open: two items each superseding
+            the other, both SUPERSEDED, said nothing was live and validated."""
+            seen = seen or set()
+            reps = _sup.get(iid, set())
+            if not reps:
+                return True
+            for r in reps:
+                if r in seen:
+                    continue
+                if standings_seen.get(r) != "SUPERSEDED":
+                    return False
+                if not _only_superseded_by_superseded(r, seen | {iid}):
+                    return False
+            return True
+
         for iid, standing in standings_seen.items():
             # `other` ranged over every item INCLUDING this one, so an item could
             # declare itself replaced by itself and satisfy the rule.
-            if standing == "SUPERSEDED" and not any(
-                    str(r.get("rel", "")).strip() == "supersedes"
-                    and str(r.get("target", "")).strip() == iid
-                    for oid, other in by_id.items() if oid != iid
-                    for r in (other.get("relations") or [])
-                    if isinstance(r, dict)):
+            if standing == "SUPERSEDED" and \
+                    _only_superseded_by_superseded(iid):
                 findings.append(Finding(
                     cid, "RND_STANDING_UNSUPPORTED",
-                    "%s: standing SUPERSEDED with nothing superseding it — record "
+                    "%s: standing SUPERSEDED with nothing LIVE superseding it — record "
                     "the item that replaced it, or the corpus cannot say what is "
                     "live" % iid))
 
@@ -1500,8 +1596,40 @@ def validate_compile(corpus, compile_id):
                         "uncited; it is not a blanket over the transcript"
                         % (lsid, e.get("messages"), len(notowner), notowner[0])))
                     continue
+                # A reason was checked against the VOCABULARY and never against the
+                # TURN, so `no-material-content` applied to all 581 owner turns of
+                # the corpus discharged the entire owner-voice obligation. These are
+                # the reasons that are cheaply falsifiable; the rest stay unchecked
+                # and are named as such in SKILL.md.
+                try:
+                    ltexts = lb.message_texts()
+                except Exception:
+                    ltexts = {}
                 for n in span:
-                    declared.setdefault(lsid, set()).add(n)
+                    body = _norm(ltexts.get(n, ""))
+                    if reason == "no-material-content" and len(body) >= 200:
+                        findings.append(Finding(
+                            cid, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
+                            "%s msg %d: %d characters of owner prose is not "
+                            "'no-material-content' — read the turn and say what it "
+                            "actually is" % (lsid, n, len(body))))
+                        break
+                    if reason == "acknowledgement-only" and len(body) >= 400:
+                        findings.append(Finding(
+                            cid, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
+                            "%s msg %d: %d characters is not an acknowledgement"
+                            % (lsid, n, len(body))))
+                        break
+                    # `question-only` is deliberately NOT content-checked. A literal
+                    # "?" test fired on 17 genuine questions in this corpus, because
+                    # the owner writes Swedish that drops the mark ("är det nåt mer vi
+                    # behöver brainstorma innan vi kör igång med detta"). Punctuation
+                    # is a property of a register; length is not. Checking the
+                    # checkable and saying so beats a guard that fails on how someone
+                    # writes.
+                else:
+                    for n in span:
+                        declared.setdefault(lsid, set()).add(n)
             for sid, b in sorted(sources.items()):
                 if b.excluded or not b.path.exists():
                     continue
@@ -1534,6 +1662,20 @@ def validate_compile(corpus, compile_id):
         # (F) lens blindness — the instrument must be able to report its own
         # category blindness. Known lenses are scaffolding, never a definition of
         # what the world is allowed to contain.
+        # Ledger, progression and witness checks all begin `if b.excluded: continue`,
+        # so marking 29 of 30 sources excluded was strictly cheaper than accounting
+        # for them. Exclusion is legitimate — a source with no captured revision is a
+        # gap recorded rather than hidden — but it is not a way to shrink the corpus.
+        _bound = [b for b in sources.values()]
+        _excl = [sid for sid, b in sources.items() if b.excluded]
+        if _bound and len(_bound) >= 2 and len(_excl) * 2 >= len(_bound):
+            findings.append(Finding(
+                cid, "RND_SOURCE_SET_MOSTLY_EXCLUDED",
+                "%d of %d bound sources are excluded — every version-2 obligation "
+                "skips an excluded source, so a compile that excludes most of its "
+                "corpus has excused itself from most of the contract: %s"
+                % (len(_excl), len(_bound), ", ".join(sorted(_excl)[:8]))))
+
         unlensed = ir.get("unlensed")
         if not isinstance(unlensed, list):
             findings.append(Finding(
@@ -1565,19 +1707,36 @@ def validate_compile(corpus, compile_id):
                 declared_unlensed.add(r)
         # A lens listing every item makes the coverage table say nothing while
         # discharging the visibility obligation for the whole compile.
-        if len(by_id) >= 8:
+        # Was: 100% of items, in a `coverage` row, only at >= 8 items. All three
+        # bounds were evadable — at 7 items, by listing all-but-one, and by moving
+        # every item into a single `unlensed` bucket, which had no vacuity rule at
+        # all. The threshold is now 4 (below that a compile is too small to say
+        # anything either way) and the test is "almost everything", not "everything".
+        if len(by_id) >= 4:
+            _cut = max(len(by_id) - 1, int(len(by_id) * 0.9))
             for row in coverage:
                 if not isinstance(row, dict):
                     continue
-                basis = {str(b).strip() for b in (row.get("basis") or [])}
-                real = basis & set(by_id)
-                if len(real) == len(by_id):
+                real = {str(b).strip() for b in (row.get("basis") or [])} & set(by_id)
+                if len(real) >= _cut:
                     findings.append(Finding(
                         cid, "RND_COVERAGE_LENS_VACUOUS",
-                        "lens %r lists every item in the compile as its basis — a "
-                        "lens that sees everything distinguishes nothing, and cannot "
-                        "report what it is missing"
-                        % str(row.get("lens", "?"))))
+                        "lens %r lists %d of %d items as its basis — a lens that sees "
+                        "everything distinguishes nothing, and cannot report what it "
+                        "is missing"
+                        % (str(row.get("lens", "?")), len(real), len(by_id))))
+            for u in unlensed:
+                if not isinstance(u, dict):
+                    continue
+                real = {str(r).strip() for r in (u.get("items") or [])} & set(by_id)
+                if len(real) >= _cut:
+                    findings.append(Finding(
+                        cid, "RND_UNLENSED_INVALID",
+                        "the unlensed entry %r holds %d of %d items — declaring the "
+                        "whole compile invisible to every lens is not a report of "
+                        "category blindness, it is the absence of one"
+                        % (str(u.get("distinction", "?"))[:60], len(real),
+                           len(by_id))))
         orphans = sorted(set(by_id) - in_basis - declared_unlensed)
         if orphans:
             findings.append(Finding(
@@ -1601,15 +1760,23 @@ def validate_compile(corpus, compile_id):
                 "refutation leaves the refuted position standing"))
         else:
             for e in prog:
-                if isinstance(e, dict):
-                    prog_map[str(e.get("source_id", "")).strip()] = \
-                        e.get("examined_through")
+                if not isinstance(e, dict):
+                    continue
+                psid = str(e.get("source_id", "")).strip()
+                if psid in prog_map:
+                    # last-wins let an IR assert both 999999 and the true count
+                    findings.append(Finding(
+                        cid, "RND_PROGRESSION_INVALID",
+                        "%s: more than one progression row — a compile read a source "
+                        "to one place, not to two" % psid))
+                prog_map[psid] = e.get("examined_through")
             for sid, b in sorted(sources.items()):
                 if b.excluded or not b.path.exists():
                     continue
                 total = b.message_count()
                 seen_through = prog_map.get(sid)
-                if not isinstance(seen_through, int):
+                if isinstance(seen_through, bool) or \
+                        not isinstance(seen_through, int):
                     findings.append(Finding(
                         cid, "RND_PROGRESSION_MISSING",
                         "%s: no examined_through — the compile cannot say it checked "
