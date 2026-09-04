@@ -1060,7 +1060,7 @@ graph database.
                          report --project P [--write] | validate [--project P …]
                          finalize --project P        # honest terminal state, never a hidden gap
 
-    rnd_contract.py      init --compile C (--project P | --source PATH …) [--title T] [--at D]
+    rnd_contract.py      init --compile C (--project P | --source PATH …) [--title T] [--at D] [--semantic]
                          validate [--compile C] | coverage --compile C
                          render --compile C [--write] | audit --compile C | status --compile C
                          # reads the corpus, writes ONLY _rnd/<compile>/ — no plan,
@@ -1312,6 +1312,113 @@ reality — never Intake's. What Intake MAY preserve is the owner's explicit
 reject/defer as an OWNER_DECISION with provenance: a fact about the past, not a
 disposition of the future.
 
+**What version 2 does NOT establish, and cannot.** These rules check what is
+mechanically checkable: that a range exists, that a quote sits in an owner turn, that
+a reference resolves where it is cited, that a question was answered rather than
+skipped. They do not check whether the compile UNDERSTOOD its corpus, and no static
+rule over an IR can — meaning is a relation between the corpus and the sources, and
+every obligation a contract can state is dischargeable by a program that reads
+structure. Two independent adversarial reviews demonstrated this rather than argued
+it: the first satisfied the whole layer in four lines of JSON; the second, after those
+holes were closed, upgraded the PUBLISHED 202-item `improvements-r38` — measured
+externally at 619 material semantic omissions — into a green version-2 compile with a
+mechanical script that added no understanding at all.
+
+So: **green here means structurally sound and provenance-bound, not semantically
+covered.** The obligations raise the floor. Stated exactly, because a guard described
+more broadly than it works is the same failure one level up:
+
+* an owner turn is either cited by an item or given a closed reason in the ledger —
+  but WHAT the reason means is not checked, so a wrong reason still hides the turn;
+* an `evidence` item whose cited range contains a URL must retain a reference — a
+  source cited without a link is not covered, and the reference is checked only for
+  resolving to a real range, never for being the RIGHT reference;
+* every item is visible to the coverage instrument, or explicitly declared unlensed;
+* an OWNER_DECISION carries a typed basis, and `owner-authored` must quote an owner
+  turn whose words are not an earlier assistant turn relayed back;
+* `standing` gives negative knowledge a home — but it is OPTIONAL. A rejected
+  position recorded with no standing still reads as live, and nothing here stops it.
+
+Semantic coverage is established the only way it can be: by independent review
+against blind findings produced without seeing the compile, recorded in
+`compile-audit.md`. Note what that file is and is not — `validate_audit` checks that
+it is well-formed and carries no open material finding; it cannot tell a blind review
+from a rubber stamp. `RND_COMPILE_AUDITED=YES` is a claim about form. A compile
+reporting `RND_COMPILE_VALID=YES` with no real review behind it has not been shown to
+understand anything — which is precisely how r38 came to be published.
+
+**RND_COMPILE emits version 2.** Run `init --semantic`, which stamps
+`rnd_ir_version: 2` and binds every obligation below. Without the flag a compile is
+stamped version 1 and validated by the v4.0 rules ONLY — the semantic layer binds
+nothing it is not asked to bind, so a compile that omits the flag is not a compile
+that passed these rules, it is one that never faced them. Version 1 remains supported
+so published compiles stay reproducible under exactly the contract they were
+published against; it is not the version to write new work in.
+
+**v4.1 — semantic coverage (`rnd_ir_version: 2`).** v4.0 validates STRUCTURE and
+PROVENANCE INTEGRITY; it cannot ask whether a compile UNDERSTOOD its corpus. An
+external SOURCE→IR falsification of `improvements-r38` measured the gap: `validate`
+reported 0 FAIL / 0 WARN over a compile carrying 619 MATERIAL semantic omissions, and
+the six items thirty-one audit rounds were fought to ADD could be deleted again with
+the contract still green. v4.1 adds obligations, removes nothing, widens no closed
+vocabulary and weakens no guard — so a compile that passes v4.1 also passes v4.0, and
+nothing here can be bought by relaxing the contract — a statement about the RULES,
+not about semantics. The rules are VERSIONED:
+a published `rnd_ir_version: 1` compile is validated by exactly the rules it was
+published against and stays byte-reproducible.
+
+*Owner authority gets a second, orthogonal axis.* `authority_class` says WHOSE
+authority; `owner_authority_basis` says HOW it was acquired — `owner-authored`,
+`owner-directive`, `owner-adoption-of-assistant-text`, `owner-attestation`,
+`owner-answered-rq`, `contested`. It is REQUIRED on every OWNER_DECISION
+(`RND_OWNER_BASIS_MISSING`), closed (`RND_OWNER_BASIS_INVALID`) and refused anywhere
+else (`RND_OWNER_BASIS_MISPLACED`). `owner-authored` is the one basis a machine can
+falsify and so it must earn its keep: the quote must sit inside an owner TURN of the
+cited ranges (`RND_OWNER_AUTHORED_UNSUPPORTED`, `RND_OWNER_AUTHORED_UNQUOTED`) and
+must not also appear verbatim in an ASSISTANT turn of a bound source
+(`RND_OWNER_AUTHORED_IS_RELAYED`) — an owner-labelled message that relays assistant
+text is adoption, not authorship. CLAIM ABOUT OWNER ≠ OWNER CLAIM; OWNER-LABELLED
+MESSAGE ≠ OWNER-AUTHORED CONTENT.
+
+*Every owner turn is accounted for.* Byte volume must not decide what survives, and
+an importance score would only be Goodharted, so the obligation attaches to a
+distinction that can be counted without ranking anything: the owner's own turns. Each
+one is either cited by an item's provenance or listed in `owner_turn_ledger` with a
+closed reason — `pasted-machine-output`, `interface-submission`,
+`acknowledgement-only`, `question-only`, `duplicate-restatement`,
+`no-material-content` (`RND_OWNER_TURN_UNACCOUNTED`, `RND_OWNER_LEDGER_MISSING`,
+`RND_OWNER_LEDGER_REASON_INVALID`). "Unimportant" is not a reason a corpus may give
+for dropping the owner's voice.
+
+*Negative knowledge has a home.* `standing` — `PROPOSAL`, `REJECTED`, `DEFERRED`,
+`SUPERSEDED`, `HISTORICAL`, `CURRENT_CANDIDATE` — is EPISTEMIC state in the corpus,
+never work state: it orders nothing and mints no kind (`RND_STANDING_INVALID`), and
+`SUPERSEDED` requires something that actually supersedes it
+(`RND_STANDING_UNSUPPORTED`). This is how a later Recompile stops rediscovering a
+killed idea as a live requirement.
+
+*A range is not a final state.* `progression` records, per bound source, how far the
+compile read before fixing semantic state; anything short of the whole conversation
+fails (`RND_PROGRESSION_INCOMPLETE`, `RND_PROGRESSION_MISSING`). EXACT SOURCE RANGE ≠
+FINAL SEMANTIC STATE — the correction five messages later is in the same conversation.
+
+*A conclusion may not outlive its evidence.* An `evidence` item whose cited range
+rests on an external reference retains it in `evidence_refs`
+(`RND_EVIDENCE_DISCARDED`, `RND_EVIDENCE_REF_INVALID`), so the conclusion stays
+falsifiable and re-researchable.
+
+*The instrument reports its own blindness.* `unlensed` is mandatory — an empty list
+is a valid answer, an absent field is a question never asked
+(`RND_UNLENSED_DECLARATION_MISSING`) — and every item sits in a lens basis or is
+declared unlensed (`RND_ITEM_UNLENSED_UNDECLARED`). Known lenses are retrieval
+scaffolding; they never define what the world is allowed to contain.
+
+*Cross-source meaning is derived and bound.* `cross_source` may carry meaning that
+emerges BETWEEN conversations, citing at least two bound sources
+(`RND_CROSS_SOURCE_SINGLE_SOURCE`, `RND_CROSS_SOURCE_UNBOUND`) and never acquiring
+owner authority (`RND_CROSS_SOURCE_AUTHORITY`) — a synthesis was authored by no one,
+least of all the owner.
+
 **Negative space is first-class.** Every compile answers a baseline coverage lens of
 twelve rows — truth/trust, professional excellence, organization, executive
 function, continuity/operate-forever, identity/data/economics, learning/evolution,
@@ -1367,7 +1474,7 @@ unremediated material finding keeps `RND_COMPILE_AUDITED=NO`.
 
 **The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
 
-    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D]
+    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D] [--semantic]
                      validate [--compile C]      # falsify one compile, or all
                      coverage --compile C        # lens table + standing laws
                      render --compile C [--write]  # deterministic RND-COVERAGE.md

@@ -36,7 +36,7 @@ it was compiled from — that deletability is checked, not assumed.
 
 ```json
 {
-  "rnd_ir_version": 1,
+  "rnd_ir_version": 2,
   "compile_id": "improvements-r29",
   "title": "Improvements — R&D compile",
   "created": "2026-09-01",
@@ -62,6 +62,9 @@ it was compiled from — that deletability is checked, not assumed.
       "scope": "intake / plan lifecycle",
       "provenance": [{"source_id": "CONV-003", "revision": 1, "messages": "12-15"}],
       "authority_class": "owner",
+      "owner_authority_basis": "owner-authored",
+      "quote": "Godkända planer skrivs aldrig om i tysthet.",
+      "standing": "CURRENT_CANDIDATE",
       "relations": [{"rel": "refines", "target": "RND-004"}],
       "uncertainty": "none — verbatim owner statement",
       "tags": ["operating-law"]
@@ -76,6 +79,9 @@ it was compiled from — that deletability is checked, not assumed.
       "relations": [{"rel": "contradicts", "target": "RND-017"}],
       "uncertainty": "high — argued once, never tested",
       "tags": ["candidate-primitive"],
+      "standing": "PROPOSAL",
+      "evidence_refs": [{"name": "the per-repo ledger design it argues against",
+                         "source_id": "CONV-011", "messages": "40"}],
       "activation_condition": "if repo count exceeds ~10 and cross-repo lessons repeat"
     }
   ],
@@ -83,9 +89,33 @@ it was compiled from — that deletability is checked, not assumed.
     {"lens": "truth-trust", "state": "WELL_EXPLORED",
      "basis": ["RND-001", "RND-004"], "note": "…"},
     {"lens": "identity-data-economics", "state": "UNKNOWN", "basis": [], "note": ""}
+  ],
+
+  "owner_turn_ledger": [
+    {"source_id": "CONV-003", "messages": "7", "reason": "acknowledgement-only"}
+  ],
+  "progression": [
+    {"source_id": "CONV-003", "examined_through": 61}
+  ],
+  "unlensed": [
+    {"distinction": "what the twelve lenses do not ask about this corpus",
+     "items": ["RND-002"]}
+  ],
+  "cross_source": [
+    {"id": "XS-001", "claim": "meaning that exists only BETWEEN conversations",
+     "authority_class": "derived",
+     "provenance": [{"source_id": "CONV-003", "revision": 1, "messages": "12"},
+                    {"source_id": "CONV-011", "revision": 1, "messages": "40"}],
+     "resolved": "UNRESOLVED — the corpus does not settle it"}
   ]
 }
 ```
+
+Version 2 is what `init --semantic` stamps and what RND_COMPILE writes. The four
+blocks after `coverage` are obligations, not decoration: an empty `unlensed` or
+`cross_source` is a valid ANSWER, an absent one is a question never asked. And note
+what green over this shape does and does not mean — see the semantic-coverage limits
+in SKILL.md; a contract checks structure and provenance, never understanding.
 
 ## The core ontology — seven kinds, closed on purpose
 

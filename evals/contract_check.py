@@ -721,6 +721,17 @@ CHECKS = [
     ("SKILL.md", "RD11 compiled memory never outranks fresh repo reality", [
         "**Current reality is pointed at, never cached as truth.**",
         "RND_REALITY_POINTER_UNDATED",
+        # v4.1 — the semantic-coverage obligations are stated where the contract is
+        "rnd_ir_version: 2", "owner_authority_basis", "RND_OWNER_BASIS_MISSING",
+        "RND_OWNER_AUTHORED_IS_RELAYED", "owner_turn_ledger",
+        # "standing" alone occurred 23 times elsewhere in SKILL.md, so it asserted
+        # nothing; the phrase that actually names the field's job is distinctive.
+        "RND_OWNER_TURN_UNACCOUNTED",
+        "*Negative knowledge has a home.* `standing`",
+        "RND_STANDING_UNSUPPORTED",
+        "progression", "RND_PROGRESSION_INCOMPLETE", "evidence_refs",
+        "RND_EVIDENCE_DISCARDED", "unlensed", "RND_ITEM_UNLENSED_UNDECLARED",
+        "cross_source", "RND_CROSS_SOURCE_AUTHORITY",
         "REALITY_POINTERS_REQUIRE_FRESH_READ=YES",
         "CURRENT VERIFIED REPO REALITY  >  COMPILED R&D MEMORY"]),
     ("SKILL.md", "RD12 historic status:idea is never reinterpreted as backlog", [
