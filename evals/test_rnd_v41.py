@@ -52,7 +52,7 @@ from test_rnd_v4 import (  # noqa: E402
     mk_corpus, run, write_json, RESULTS, _whole_file_sha,
 )
 
-MIN_CHECKS = 75
+MIN_CHECKS = 78
 
 
 # --------------------------------------------------------------- fixtures --
@@ -608,8 +608,6 @@ def scenario_k_cheap_compliance_is_refused(tmp):
     check("K an unanchored evidence_ref is refused",
           bool(re.search(r"FAIL\s+\[bare-ref\]\s+RND_EVIDENCE_REF_INVALID[^\n]*"
                          r"carries no source_id/messages", out)), out)
-    check("K an evidence_ref absent from the range it cites is refused",
-          expect_code(out, "RND_EVIDENCE_REF_INVALID", "absent-ref"), out)
     check("K omitting cross_source does not discharge the question",
           expect_code(out, "RND_CROSS_SOURCE_INVALID", "no-xs"), out)
     check("K a cross-source entry with no message range is refused",
@@ -758,11 +756,22 @@ def scenario_m_round_two(tmp):
         "evidence_refs", [{"name": "x y", "source_id": "CONV-001",
                            "messages": "1"}])])
     # everything declared invisible is not a report of blindness
-    v2_ir(corpus, "unlensed-absorbs", mutate=lambda ir: [
-        _ledger3(ir),
-        [row.__setitem__("basis", []) for row in ir["coverage"]],
-        ir.__setitem__("unlensed", [{"distinction": "everything",
-                                     "items": [i["id"] for i in ir["items"]]}])])
+    def _absorb(ir):
+        _ledger3(ir)
+        base = copy.deepcopy(ir["items"][1])
+        for k in range(20, 26):                      # over the 10-item floor
+            extra = copy.deepcopy(base)
+            extra["id"] = "RND-%03d" % k
+            extra["claim"] = "Filler distinction %d." % k
+            extra.pop("standing", None)
+            ir["items"].append(extra)
+        for row in ir["coverage"]:
+            row["basis"] = []
+            row["state"] = "UNKNOWN"
+            row["note"] = ""
+        ir["unlensed"] = [{"distinction": "everything",
+                           "items": [i["id"] for i in ir["items"]]}]
+    v2_ir(corpus, "unlensed-absorbs", mutate=_absorb)
     # two items superseding each other say nothing is live
     v2_ir(corpus, "supersede-cycle", mutate=lambda ir: [
         _ledger3(ir),
@@ -776,13 +785,24 @@ def scenario_m_round_two(tmp):
     v2_ir(corpus, "dup-progression", mutate=lambda ir: [
         _ledger3(ir),
         ir["progression"].append({"source_id": "CONV-001",
-                                  "examined_through": 5})])
+                                  "examined_through": 5})])   # identical, not a clash
     # a turn with real prose is not "no-material-content"
-    v2_ir(corpus, "reason-contradicted", mutate=lambda ir: ir.__setitem__(
+    # the long owner turn, honestly labelled: 300+ characters carrying no material
+    # distinction is exactly what `no-material-content` is for
+    v2_ir(corpus, "honest-ledger", mutate=lambda ir: ir.__setitem__(
         "owner_turn_ledger", [{"source_id": "CONV-002", "messages": "1",
                                "reason": "duplicate-restatement"},
                               {"source_id": "CONV-002", "messages": "3",
                                "reason": "no-material-content"}]))
+    # a real project name, verbatim in the cited range, too short to tokenise
+    v2_ir(corpus, "short-ref-name", mutate=lambda ir: [
+        _ledger3(ir),
+        ir["items"][0].__setitem__(
+            "evidence_refs", [{"name": "Ägarplanet",
+                               "source_id": "CONV-001", "messages": "1"}])])
+    # 16 characters, the most decision-like sentence in its turn
+    v2_ir(corpus, "short-owner-quote", mutate=lambda ir: [
+        _ledger3(ir), owner_quote(ir, "RND-001", "Det är beslutat.")])
 
 
     # ONLY the word floor: 40 characters, two words
@@ -831,8 +851,6 @@ def scenario_m_round_two(tmp):
     v2_ir(corpus, "echo-bypass", mutate=_echo_bypass)
 
     rc, out = run(corpus, "validate")
-    check("M excluding most of the source set is reported",
-          expect_code(out, "RND_SOURCE_SET_MOSTLY_EXCLUDED", "mostly-excluded"), out)
     check("M every owner basis must show the owner's words",
           expect_code(out, "RND_OWNER_BASIS_UNQUOTED", "directive-unquoted"), out)
     check("M a two-word owner-authored quote is refused",
@@ -841,21 +859,35 @@ def scenario_m_round_two(tmp):
           expect_code(out, "RND_EVIDENCE_REF_INVALID", "url-as-name"), out)
     # pinned to its own message: the weak-match rule also fires on this input, so
     # asserting the code alone cannot tell the two branches apart
-    check("M an evidence_ref with no checkable token is refused",
-          bool(re.search(r"FAIL\s+\[tokenless-ref\]\s+RND_EVIDENCE_REF_INVALID"
-                         r"[^\n]*too generic to check or to chase", out)), out)
     check("M declaring the whole compile unlensed is refused",
           expect_code(out, "RND_UNLENSED_INVALID", "unlensed-absorbs"), out)
     check("M a supersession CYCLE is as vacuous as superseding yourself",
           expect_code(out, "RND_STANDING_UNSUPPORTED", "supersede-cycle"), out)
-    check("M duplicate progression rows are refused",
-          expect_code(out, "RND_PROGRESSION_INVALID", "dup-progression"), out)
-    check("M 'no-material-content' over real prose is refused",
-          expect_code(out, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
-                      "reason-contradicted"), out)
     check("M a version-1 compile is told the semantic rules did not apply",
           bool(re.search(r"WARN\s+\[v1-here\]\s+RND_COMPILE_NOT_SEMANTIC",
                          out)), out)
+    # --- false-positive regressions -------------------------------------------
+    # Three rules were REMOVED in round three because an independent review showed
+    # they fired on honest work: an evidence_ref token-match test that rejected
+    # `Gauntlet` and `Ägarplanet`, ledger reason content checks that refused a
+    # truthful `no-material-content`, and a 24-character owner-quote floor that
+    # refused "Det är beslutat.". These assert they stay gone.
+    check("M a short verbatim reference name is accepted",
+          not expect_code(out, "RND_EVIDENCE_REF_INVALID", "short-ref-name"), out)
+    check("M a truthful no-material-content ledger entry is accepted",
+          not expect_code(out, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
+                          "honest-ledger")
+          and not expect_code(out, "RND_OWNER_TURN_UNACCOUNTED", "honest-ledger"),
+          out)
+    check("M a short genuine owner sentence is accepted as owner-authored",
+          not expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "short-owner-quote"),
+          out)
+    check("M identical repeated progression rows are accepted",
+          not expect_code(out, "RND_PROGRESSION_INVALID", "dup-progression"), out)
+    check("M a two-source project with one uncaptured source still passes",
+          not expect_code(out, "RND_SOURCE_SET_MOSTLY_EXCLUDED",
+                          "mostly-excluded"), out)
+
     check("M the CHARACTER floor bites on its own",
           expect_code(out, "RND_OWNER_AUTHORED_UNQUOTED", "char-floor-only"), out)
     check("M the WORD floor bites on its own, not only the character floor",
@@ -866,6 +898,77 @@ def scenario_m_round_two(tmp):
           bool(re.search(r"WARN\s+\[echo-bypass\]\s+"
                          r"RND_OWNER_AUTHORED_ECHOED_ELSEWHERE", out)), out)
     check("M control still clean in the same run", control_clean(out), out)
+
+
+
+
+def scenario_n_ledger_is_a_ratio_not_a_word(tmp):
+    """N: explaining away almost every owner turn is not compiling.
+
+    Content checks on ledger REASONS were tried and removed: they refused a truthful
+    `no-material-content` on a 267-character turn while leaving `question-only` and
+    `duplicate-restatement` unchecked, so relabelling one word took a semantically
+    empty corpus from 257 findings to zero. What replaces them is a ratio, which no
+    choice of word can move: a compile may explain why PARTICULAR owner turns are
+    uncited; a compile that explains away essentially all of them has not read the
+    corpus.
+
+    Calibration on the real thing: the published r38 ledgers 19% of its 581 owner
+    turns, the remediated candidate 18%; the empty compiles ledger 98%+.
+    """
+    corpus = mk_corpus(tmp)
+    src = corpus / "_projects" / "demo" / "sources" / "CONV-002" / "conversation.md"
+    body = src.read_text(encoding="utf-8").rstrip()
+    for n in range(3, 25):                       # 22 more owner turns
+        body += ("\n\n---\n\n## Meddelande %d — Johnny (användare)\n\n"
+                 "Kort kommentar nummer %d.\n" % (n, n))
+    src.write_text(body, encoding="utf-8")
+    mpath = corpus / "_projects" / "demo" / "project-manifest.json"
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    for entry in manifest["sources"]:
+        if entry["source_id"] == "CONV-002":
+            rev = entry["revisions"][0]
+            rev["sha256"] = _whole_file_sha(body)
+            rev["message_count"] = body.count("## Meddelande ")
+    write_json(mpath, manifest)
+
+    def _base(ir):
+        ir["progression"] = [{"source_id": "CONV-001", "examined_through": 5},
+                             {"source_id": "CONV-002", "examined_through": 24}]
+
+    # honest: the new turns are ledgered, but the corpus's owner turns are mostly
+    # still CITED by items
+    def _honest(ir):
+        _base(ir)
+        ir["owner_turn_ledger"] = [
+            {"source_id": "CONV-002", "messages": "1",
+             "reason": "duplicate-restatement"}] + [
+            {"source_id": "CONV-002", "messages": str(n),
+             "reason": "acknowledgement-only"} for n in range(3, 15)]
+    v2_ir(corpus, "ledger-honest", mutate=_honest)
+
+    # empty: every owner turn in the corpus explained away
+    def _sweep(ir):
+        _base(ir)
+        ir["owner_turn_ledger"] = [
+            {"source_id": "CONV-001", "messages": str(n),
+             "reason": "question-only"} for n in (1, 3, 5)] + [
+            {"source_id": "CONV-002", "messages": str(n),
+             "reason": "question-only"} for n in [1] + list(range(3, 25))]
+    v2_ir(corpus, "ledger-sweep", mutate=_sweep)
+
+    rc, out = run(corpus, "validate")
+    check("N ledgering essentially every owner turn is refused",
+          expect_code(out, "RND_OWNER_TURNS_MOSTLY_LEDGERED", "ledger-sweep"), out)
+    # the sweep uses `question-only` throughout — a reason with no content check —
+    # so this verdict cannot be moved by choosing a different word
+    check("N the verdict does not depend on which reason word was chosen",
+          not expect_code(out, "RND_OWNER_LEDGER_REASON_INVALID", "ledger-sweep")
+          and expect_code(out, "RND_OWNER_TURNS_MOSTLY_LEDGERED", "ledger-sweep"),
+          out)
+    check("N a compile that ledgers some turns and cites the rest is accepted",
+          not expect_code(out, "RND_OWNER_TURNS_MOSTLY_LEDGERED", "ledger-honest"),
+          out)
 
 
 def main():
@@ -885,6 +988,7 @@ def main():
         scenario_k_cheap_compliance_is_refused,
         scenario_l_ordering_and_fail_closed,
         scenario_m_round_two,
+        scenario_n_ledger_is_a_ratio_not_a_word,
     ]
     for scenario in scenarios:
         tmp = tempfile.mkdtemp(prefix="intake-rnd41-")

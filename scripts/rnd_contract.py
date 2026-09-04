@@ -50,7 +50,9 @@ IR_VERSION = 1
 # against (the r38 witness stays green and reproducible), and `rnd_ir_version: 2`
 # carries every v4.0 rule PLUS the obligations below. Nothing is removed, no closed
 # vocabulary is widened, no guard is weakened — so a compile that passes v4.1 also
-# passes v4.0, and a semantic PASS can never be bought by relaxing the contract.
+# passes v4.0, so nothing here can be bought by relaxing the contract. That is a
+# statement about the RULES, not about semantics: see the limits in SKILL.md —
+# no static rule over an IR can establish that a compile understood its corpus.
 #
 # These exist because an external SOURCE->IR falsification (improvements r38) showed
 # the v4.0 contract green (0 FAIL, 0 WARN) over a compile with 619 MATERIAL semantic
@@ -355,9 +357,16 @@ _SEPARATOR_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})\Z")
 # v4.1: a bare, conservative signal that a cited range rests on something EXTERNAL.
 # Deliberately narrow — a link is unambiguous evidence, where a capitalised word is not.
 # A one-character "quote" satisfied `qn in joined` against any owner turn containing
-# that character. Authorship needs enough words to identify something; 24 normalised
-# characters is roughly a short sentence and is the floor, not a target.
-OWNER_QUOTE_MIN_CHARS = 24
+# that character, so there is a floor. It is 16, not 24: at 24 this rule refused
+# "Det ar beslutat." — the most decision-like sentence in its turn — and the verdict
+# turned on whether a full stop was included. 16 is what the RQ-backed owner path has
+# required since v4.0, and "symmetric with the RQ path" is only true at the same
+# number.
+#
+# The floor stops accidents, not fabrication: at any length natural prose has enough
+# words, and a mid-sentence run still passes. Whether a quote SUPPORTS its claim is
+# not checkable here, and is not claimed to be.
+OWNER_QUOTE_MIN_CHARS = 16
 # symmetric with the RQ-backed owner path, which has required three words since v4.0;
 # a character floor alone let a 26-character run of mid-sentence prose stand in for
 # the owner's decision.
@@ -1125,31 +1134,22 @@ def validate_compile(corpus, compile_id):
                             "so a reader who cannot reach it still knows what the "
                             "conclusion rested on" % iid))
                         continue
-                    toks = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9._/-]{4,}", rname))
-                    if not toks:
-                        # `if toks and ...` meant a name with no >=5-char token was
-                        # never checked at all — `{"name": "x"}` with two extra fields
-                        # was exactly the bypass this rule was written to close.
-                        findings.append(Finding(
-                            cid, "RND_EVIDENCE_REF_INVALID",
-                            "%s: evidence_ref %r is too generic to check or to chase"
-                            % (iid, rname[:60])))
-                        continue
-                    hits = {t for t in toks if t.lower() in hay}
-                    longest = max((len(t) for t in hits), default=0)
-                    if not (len(hits) >= 2 or longest >= 10):
-                        # One short common word matching somewhere in a long range is
-                        # not identification: measured against a whole source, a
-                        # fabricated name hits on words like "Protocol" or "Agents".
-                        # Two hits, or one distinctive one. This does NOT separate
-                        # every fabrication from every real reference — a fake built
-                        # from words genuinely in the range is indistinguishable by
-                        # matching, and that limit is stated in SKILL.md.
-                        findings.append(Finding(
-                            cid, "RND_EVIDENCE_REF_INVALID",
-                            "%s: evidence_ref %r is not identifiable in %s msg %s — "
-                            "one short word in common is not a reference"
-                            % (iid, rname[:60], rsid, rmsg)))
+                    # A token-match test was tried here and REMOVED. It rejected
+                    # `Gauntlet`, `Recompile`, `Claude Code` and `Ägarplanet` when
+                    # each was verbatim in the cited range: the tokeniser is ASCII
+                    # and >=5 chars, so `Code` is invisible and `Ägarplanet` becomes
+                    # `garplanet`. In a Swedish corpus the verdict depended on where
+                    # the accent fell. The measurement that cleared it ("0 of 452
+                    # refs") was null — the shortest name in that set is 48
+                    # characters, so the failing class was never sampled.
+                    #
+                    # It also could not tell a real reference from a fabricated one:
+                    # a name built from words genuinely in the range passes, and a
+                    # sha256 scraped out of the range passes. It rejected honest work
+                    # and admitted dishonest work, which is the worst trade a guard
+                    # can make. What stays is what is decidable: the ref resolves to
+                    # a real range in a bound source, and is not merely the range's
+                    # own link pasted back.
 
         if str(item.get("activation_condition", "")).strip():
             activation_count += 1
@@ -1313,7 +1313,11 @@ def validate_compile(corpus, compile_id):
             # inside an owner TURN, not merely inside an owner-cited RANGE. An owner
             # turn that pastes an agent report is owner-labelled, not owner-authored,
             # and this is what separates them.
-            if semantic and basis and basis != "contested" and \
+            # `owner-answered-rq`'s words live in the review queue and are validated
+            # there; `owner-attestation` may be a checkbox with no words at all.
+            # `contested` is the honest "the source does not settle it".
+            if semantic and basis not in ("", None, "contested", "owner-attestation",
+                                          "owner-answered-rq") and \
                     not str(item_quote).strip():
                 # `owner-directive` had NO quote test at all, which is why a
                 # mechanical upgrade could stamp it on every OWNER_DECISION in a
@@ -1482,6 +1486,8 @@ def validate_compile(corpus, compile_id):
     # satisfied by copying raw: every one is a DISTINCTION the compile must account
     # for, not a volume it must reproduce.
     if semantic:
+        _own_total = 0
+        _own_ledgered = 0
         # (B) standing: SUPERSEDED is a relation, not an adjective. An item may not
         # simply declare itself replaced — something must replace it, or a later
         # Recompile cannot tell what is live.
@@ -1596,40 +1602,22 @@ def validate_compile(corpus, compile_id):
                         "uncited; it is not a blanket over the transcript"
                         % (lsid, e.get("messages"), len(notowner), notowner[0])))
                     continue
-                # A reason was checked against the VOCABULARY and never against the
-                # TURN, so `no-material-content` applied to all 581 owner turns of
-                # the corpus discharged the entire owner-voice obligation. These are
-                # the reasons that are cheaply falsifiable; the rest stay unchecked
-                # and are named as such in SKILL.md.
-                try:
-                    ltexts = lb.message_texts()
-                except Exception:
-                    ltexts = {}
+                # Content checks on ledger reasons were tried here and REMOVED.
+                # `no-material-content` was refused above 200 characters — which
+                # FAILED a genuine 267-character owner turn that carried no material
+                # distinction, while leaving `question-only` and
+                # `duplicate-restatement` unchecked at 232 and 573 characters. The
+                # rule punished the honest label and taught the compiler to write a
+                # dishonest one; relabelling a blanket `no-material-content` sweep as
+                # `question-only` took a corpus from 257 findings to zero. A guard
+                # that is one word deep and fires on truthful work is worse than no
+                # guard: it costs honesty and buys nothing.
+                #
+                # What a reason means is not mechanically decidable. It is decidable
+                # by review, which is where it now lives — see the semantic-coverage
+                # limits in SKILL.md.
                 for n in span:
-                    body = _norm(ltexts.get(n, ""))
-                    if reason == "no-material-content" and len(body) >= 200:
-                        findings.append(Finding(
-                            cid, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
-                            "%s msg %d: %d characters of owner prose is not "
-                            "'no-material-content' — read the turn and say what it "
-                            "actually is" % (lsid, n, len(body))))
-                        break
-                    if reason == "acknowledgement-only" and len(body) >= 400:
-                        findings.append(Finding(
-                            cid, "RND_OWNER_LEDGER_REASON_CONTRADICTED",
-                            "%s msg %d: %d characters is not an acknowledgement"
-                            % (lsid, n, len(body))))
-                        break
-                    # `question-only` is deliberately NOT content-checked. A literal
-                    # "?" test fired on 17 genuine questions in this corpus, because
-                    # the owner writes Swedish that drops the mark ("är det nåt mer vi
-                    # behöver brainstorma innan vi kör igång med detta"). Punctuation
-                    # is a property of a register; length is not. Checking the
-                    # checkable and saying so beats a guard that fails on how someone
-                    # writes.
-                else:
-                    for n in span:
-                        declared.setdefault(lsid, set()).add(n)
+                    declared.setdefault(lsid, set()).add(n)
             for sid, b in sorted(sources.items()):
                 if b.excluded or not b.path.exists():
                     continue
@@ -1646,6 +1634,8 @@ def validate_compile(corpus, compile_id):
                         "absent" % sid))
                     continue
                 owner_turns = {n for n, r in b.roles().items() if r == ROLE_OWNER}
+                _own_total += len(owner_turns)
+                _own_ledgered += len(owner_turns & declared.get(sid, set()))
                 unaccounted = sorted(owner_turns
                                      - cited_owner_msgs.get(sid, set())
                                      - declared.get(sid, set()))
@@ -1668,7 +1658,11 @@ def validate_compile(corpus, compile_id):
         # gap recorded rather than hidden — but it is not a way to shrink the corpus.
         _bound = [b for b in sources.values()]
         _excl = [sid for sid, b in sources.items() if b.excluded]
-        if _bound and len(_bound) >= 2 and len(_excl) * 2 >= len(_bound):
+        # `init` itself writes "no captured revision" exclusions, so a 2-source
+        # project with one uncaptured source hard-FAILED on the tool's own happy
+        # path. Excluding most of a LARGE set is still worth saying; it is a WARN,
+        # because exclusion is a recorded gap, not a contract breach.
+        if _bound and len(_bound) >= 6 and len(_excl) * 2 >= len(_bound):
             findings.append(Finding(
                 cid, "RND_SOURCE_SET_MOSTLY_EXCLUDED",
                 "%d of %d bound sources are excluded — every version-2 obligation "
@@ -1712,8 +1706,13 @@ def validate_compile(corpus, compile_id):
         # every item into a single `unlensed` bucket, which had no vacuity rule at
         # all. The threshold is now 4 (below that a compile is too small to say
         # anything either way) and the test is "almost everything", not "everything".
-        if len(by_id) >= 4:
-            _cut = max(len(by_id) - 1, int(len(by_id) * 0.9))
+        # Two bounds, both needed. max(n-1, 0.9n) was neither: it is n-1 for every
+        # n >= 10, so it fired at 75% on a 4-item compile and only at 99.8% on a
+        # 489-item one — harsh where "all but one" is normal, inert where a lens
+        # really does swallow the corpus. Below ten items "almost every item" is not
+        # evidence of anything, so the rule does not apply at all.
+        if len(by_id) >= 10:
+            _cut = max(1, int(len(by_id) * 0.9))
             for row in coverage:
                 if not isinstance(row, dict):
                     continue
@@ -1763,7 +1762,7 @@ def validate_compile(corpus, compile_id):
                 if not isinstance(e, dict):
                     continue
                 psid = str(e.get("source_id", "")).strip()
-                if psid in prog_map:
+                if psid in prog_map and prog_map[psid] != e.get("examined_through"):
                     # last-wins let an IR assert both 999999 and the true count
                     findings.append(Finding(
                         cid, "RND_PROGRESSION_INVALID",
@@ -1795,6 +1794,22 @@ def validate_compile(corpus, compile_id):
                         "%s: examined_through=%d but the source has %d messages — a "
                         "compile cannot have read past the end of its own transcript"
                         % (sid, seen_through, total)))
+
+        # Content checks on ledger REASONS were tried and removed (see above).
+        # What survives is the one thing about the ledger that is robust: a
+        # ratio, not a word. A compile may explain why particular owner turns
+        # are uncited; a compile that explains away ESSENTIALLY ALL of them has
+        # not read the corpus, whichever reason it chose. Measured: the
+        # published r38 ledgers 19% of its 581 owner turns and the remediated
+        # candidate 18%, while the semantically empty compiles an adversarial
+        # review built ledger 98%+.
+        if _own_total >= 20 and _own_ledgered * 10 >= _own_total * 9:
+            findings.append(Finding(
+                cid, "RND_OWNER_TURNS_MOSTLY_LEDGERED",
+                "%d of %d owner turns are accounted for by the ledger rather than "
+                "by any item — a compile that explains away almost every turn the "
+                "owner took has not compiled the corpus, whatever reasons it gave"
+                % (_own_ledgered, _own_total)))
 
         # (E) evidence behind a surviving conclusion. Narrow on purpose: only an
         # `evidence` item whose cited range demonstrably rests on an external link.
@@ -2397,6 +2412,18 @@ def cmd_status(args):
               "PARTIAL = uncommitted fresh run)" % summary.get("git_witness", "?"))
     print("RND_COMPILE_VALID=%s" % ("YES" if not fails(vfind) else "NO"))
     print("RND_COMPILE_AUDITED=%s" % ("YES" if meta.get("audited") else "NO"))
+    # The one-screen surface a human reads must not imply more than VALID means.
+    # `RND_COMPILE_NOT_SEMANTIC` was a WARN inside `validate` and invisible here,
+    # which defeated its own rationale.
+    _sem = int(ir.get("rnd_ir_version") or IR_VERSION) >= IR_VERSION_SEMANTIC \
+        if str(ir.get("rnd_ir_version", "")).strip().isdigit() else False
+    print("RND_SEMANTIC_RULES_APPLIED=%s%s"
+          % ("YES" if _sem else "NO",
+             "" if _sem else "  (version-1 compile: the semantic-coverage "
+                             "obligations did not apply to it)"))
+    print("RND_SEMANTIC_COVERAGE=NOT_ESTABLISHED_BY_THIS_TOOL (a contract checks "
+          "structure and provenance; coverage is shown by independent review "
+          "against blind findings, recorded in %s)" % AUDIT_NAME)
     for standing in STANDING_LINES:
         print(standing)
     return 1 if fails(vfind + af) else 0

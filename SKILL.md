@@ -1325,15 +1325,27 @@ externally at 619 material semantic omissions — into a green version-2 compile
 mechanical script that added no understanding at all.
 
 So: **green here means structurally sound and provenance-bound, not semantically
-covered.** The obligations raise the floor and make specific losses impossible to
-hide — an owner turn cannot vanish unaccounted, a rejection cannot masquerade as a
-live requirement, a conclusion cannot outlive the reference it rests on, an item
-cannot hide from the coverage instrument. That is worth having and it is not the same
-claim. Semantic coverage is established the only way it can be: by independent review
-against blind findings that were produced without seeing the compile, recorded in
-`compile-audit.md` with its method, its counts and its limits. A compile that reports
-`RND_COMPILE_VALID=YES` and cites no such review has not been shown to understand
-anything.
+covered.** The obligations raise the floor. Stated exactly, because a guard described
+more broadly than it works is the same failure one level up:
+
+* an owner turn is either cited by an item or given a closed reason in the ledger —
+  but WHAT the reason means is not checked, so a wrong reason still hides the turn;
+* an `evidence` item whose cited range contains a URL must retain a reference — a
+  source cited without a link is not covered, and the reference is checked only for
+  resolving to a real range, never for being the RIGHT reference;
+* every item is visible to the coverage instrument, or explicitly declared unlensed;
+* an OWNER_DECISION carries a typed basis, and `owner-authored` must quote an owner
+  turn whose words are not an earlier assistant turn relayed back;
+* `standing` gives negative knowledge a home — but it is OPTIONAL. A rejected
+  position recorded with no standing still reads as live, and nothing here stops it.
+
+Semantic coverage is established the only way it can be: by independent review
+against blind findings produced without seeing the compile, recorded in
+`compile-audit.md`. Note what that file is and is not — `validate_audit` checks that
+it is well-formed and carries no open material finding; it cannot tell a blind review
+from a rubber stamp. `RND_COMPILE_AUDITED=YES` is a claim about form. A compile
+reporting `RND_COMPILE_VALID=YES` with no real review behind it has not been shown to
+understand anything — which is precisely how r38 came to be published.
 
 **RND_COMPILE emits version 2.** Run `init --semantic`, which stamps
 `rnd_ir_version: 2` and binds every obligation below. Without the flag a compile is
@@ -1350,7 +1362,8 @@ reported 0 FAIL / 0 WARN over a compile carrying 619 MATERIAL semantic omissions
 the six items thirty-one audit rounds were fought to ADD could be deleted again with
 the contract still green. v4.1 adds obligations, removes nothing, widens no closed
 vocabulary and weakens no guard — so a compile that passes v4.1 also passes v4.0, and
-a semantic PASS can never be bought by relaxing the contract. The rules are VERSIONED:
+nothing here can be bought by relaxing the contract — a statement about the RULES,
+not about semantics. The rules are VERSIONED:
 a published `rnd_ir_version: 1` compile is validated by exactly the rules it was
 published against and stays byte-reproducible.
 
