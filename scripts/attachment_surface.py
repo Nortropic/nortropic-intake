@@ -42,8 +42,8 @@ import re
 
 from intake_common import (
     ATTACHMENT_CAPTURE_STATES, ATTACHMENT_MATERIALITY, RECONCILIATION_STATES,
-    Finding, attachment_bytes_available, full_source_capture, sha256_file,
-    transcript_source_region,
+    RECONCILIATION_UNRECONCILED, Finding, attachment_bytes_available,
+    full_source_capture, sha256_file, transcript_source_region,
 )
 
 ATTACHMENT_MANIFEST_VERSION = 1
@@ -164,6 +164,150 @@ def observed_lower_bound(signals):
         floor = 1
     named = len(signals.get("named_upload_identities") or ())
     return max(floor, named)
+
+
+
+
+# ------------------------------------------------- owner acknowledgement --
+
+# THE ONE THING AN OWNER MAY DO WITH A HISTORICAL EVIDENCE GAP, AND THE MANY
+# THINGS THEY MAY NOT.
+#
+# A corpus can be internally healthy while accurately declaring that its source
+# evidence is incomplete. Those are different properties, and collapsing them
+# forces a false choice: either edit the frozen witness until the checks pass, or
+# carry a permanent red that stops meaning anything. Both destroy the record.
+#
+# So an owner may ACKNOWLEDGE that a contradiction is real and that the missing
+# history is not coming back. That is a statement about the corpus's honesty, not
+# about the source. What it may never do is manufacture the evidence:
+#
+#   MAY:      say "this gap is known, examined, and permanent"
+#   MAY NOT:  say what the true count was
+#   MAY NOT:  move the reconciliation to AGREE
+#   MAY NOT:  move FULL_SOURCE_CAPTURE off NO
+#   MAY NOT:  silence the unavailable-material findings
+#
+# Every one of those is refused mechanically below rather than left to discipline,
+# because an acknowledgement mechanism that CAN be widened into a resolution
+# mechanism eventually is.
+ACK_STATE = "KNOWN_UNRESOLVED"
+
+# Fields that would turn an acknowledgement into an assertion about the missing
+# history. Presence of any of them is a refusal, not a warning.
+_ACK_OVERREACH_FIELDS = (
+    "resolved", "reconciled", "resolved_count", "actual_count", "true_count",
+    "corrected_count", "attachment_count", "full_source_capture",
+    "capture_complete", "gap_closed",
+)
+
+
+def owner_acknowledgement(data):
+    return (data or {}).get("owner_acknowledgement") or None
+
+
+def validate_acknowledgement(data, slug, source_id, revision, observed_state,
+                             rq_answered=None):
+    """Structural findings over one owner acknowledgement of an unresolved gap.
+
+    `observed_state` is what the evidence says WITHOUT the acknowledgement, so the
+    acknowledgement can never be the thing that creates its own justification.
+    `rq_answered` maps RQ id -> bool (owner has answered it); None means the caller
+    could not read the queue, which is itself refused rather than assumed benign.
+    """
+    findings = []
+
+    def fail(code, detail):
+        findings.append(Finding(slug, code, detail))
+
+    ack = owner_acknowledgement(data)
+    if ack is None:
+        return findings
+    if not isinstance(ack, dict):
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_INVALID",
+             "%s r%s: owner_acknowledgement is not an object" % (source_id, revision))
+        return findings
+
+    state = str(ack.get("state", "")).strip().upper()
+    if state != ACK_STATE:
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES",
+             "%s r%s: owner_acknowledgement state=%r. The only state an owner may "
+             "record over a historical evidence gap is %s. Acknowledging that a gap "
+             "is permanent is a statement about the corpus; declaring it resolved "
+             "would be a statement about evidence nobody has."
+             % (source_id, revision, ack.get("state"), ACK_STATE))
+
+    # An acknowledgement is only meaningful over a contradiction that actually
+    # exists. Acknowledging a surface that reconciles is how the mechanism would
+    # get quietly repurposed into a blanket exemption.
+    if observed_state not in RECONCILIATION_UNRECONCILED:
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_UNWARRANTED",
+             "%s r%s: the evidence reconciles to %s, so there is no unresolved "
+             "contradiction to acknowledge. An acknowledgement over a healthy "
+             "surface is an exemption wearing an owner's name."
+             % (source_id, revision, observed_state))
+
+    for field in _ACK_OVERREACH_FIELDS:
+        if field in ack:
+            fail("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES",
+                 "%s r%s: owner_acknowledgement carries %r. An acknowledgement "
+                 "records that a gap is KNOWN and PERMANENT; it may not assert what "
+                 "the missing evidence contained, how much of it there was, or that "
+                 "capture is complete." % (source_id, revision, field))
+
+    rq = str(ack.get("rq", "")).strip()
+    if not re.match(r"^RQ-\d{3,}$", rq):
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND",
+             "%s r%s: owner_acknowledgement names rq=%r. An acknowledgement must "
+             "point at the review-queue entry where the owner actually answered, so "
+             "the decision is auditable rather than asserted."
+             % (source_id, revision, ack.get("rq")))
+    elif rq_answered is None:
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND",
+             "%s r%s: %s is claimed as owner-answered but the review queue could not "
+             "be read to confirm it" % (source_id, revision, rq))
+    elif not rq_answered.get(rq):
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_UNBOUND",
+             "%s r%s: %s is not answered by the owner in the review queue. The "
+             "acknowledgement is the RECORD of an owner decision, never the decision "
+             "itself." % (source_id, revision, rq))
+
+    if not str(ack.get("acknowledges", "")).strip():
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_INVALID",
+             "%s r%s: owner_acknowledgement must say WHAT is acknowledged, in words "
+             "a later reader can check against the evidence" % (source_id, revision))
+    if ack.get("evidence_gap_remains") is not True:
+        fail("ATTACHMENT_ACKNOWLEDGEMENT_OVERREACHES",
+             "%s r%s: owner_acknowledgement must state evidence_gap_remains=true. "
+             "An acknowledgement that does not say the gap remains is a closure "
+             "notice." % (source_id, revision))
+    return findings
+
+
+
+
+
+def apply_acknowledgement(evidence_state, ack):
+    """The ONLY transition an owner acknowledgement may cause.
+
+    Deliberately a separate function taking the EVIDENCE verdict as input, so the
+    unacknowledged answer is always computable and always recorded next to the
+    acknowledged one. A reader can therefore see both what the sources say and what
+    the owner accepted about them, and no future refactor can make the
+    acknowledgement the thing that produces its own justification.
+
+        DISAGREE  ->  KNOWN_UNRESOLVED     (the whole permitted range)
+        anything else  ->  unchanged
+
+    There is no path to AGREE. There is no path from UNKNOWN, because an owner
+    cannot acknowledge a contradiction that has not been established.
+    """
+    if not ack:
+        return evidence_state
+    if str((ack or {}).get("state", "")).strip().upper() != ACK_STATE:
+        return evidence_state
+    return ACK_STATE if evidence_state == "DISAGREE" else evidence_state
+
 
 
 def _covered(identity, declared_identities):
