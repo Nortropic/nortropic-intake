@@ -713,8 +713,9 @@ _RND_PATH_RE = re.compile(r"(?:^|/)%s(?:/|$)" % re.escape(RND_DIRNAME))
 
 
 def _manifest_witness(manifest):
-    """{source_id: {path, sha256, message_count}} from the LATEST revision of each
-    manifest source — the authoritative, swept record a compile's sources must match.
+    """{source_id: {revision number: {path, sha256, message_count}, "latest": N}}
+    over EVERY revision of each manifest source — the authoritative, swept record a
+    compile's sources must match.
 
     The anchor is the manifest's `sha256` (the WHOLE captured file), which every real
     manifest revision carries and the sweep computed at capture. An independent review
@@ -722,6 +723,13 @@ def _manifest_witness(manifest):
     not write, and comparing incompatible hash types — so the sha dimension silently
     never fired. `sha256_file(bound path)` is compared to THIS value, which binds the
     bound bytes to the sweep's own record rather than to the IR's self-report.
+
+    v4.4.1 (B3, RQ-041): v4.4 kept only the LATEST revision here, so a compile bound
+    to CONV-006 r2 was witnessed against r3's path and count the moment r3 was
+    captured — 415 false FAILs across three correct historical compiles, and a corpus
+    that could not grow. A compile is witnessed against the revision it DECLARES
+    (`_witness_for`); a declared revision the manifest never recorded is not witnessed
+    at all, which is the same refusal as before, now aimed at the right target.
     """
     out = {}
     for s in (manifest.get("sources") or []):
@@ -731,12 +739,65 @@ def _manifest_witness(manifest):
         revs = [r for r in (s.get("revisions") or []) if isinstance(r, dict)]
         if not sid or not revs:
             continue
-        last = revs[-1]
-        out[sid] = {
-            "path": str(last.get("path", "")).strip(),
-            "sha256": str(last.get("sha256", "")).strip().lower(),
-            "message_count": last.get("message_count"),
-        }
+        by_rev = {}
+        for r in revs:
+            try:
+                n = int(r.get("revision"))
+            except (TypeError, ValueError):
+                continue
+            by_rev[n] = {
+                "path": str(r.get("path", "")).strip(),
+                "sha256": str(r.get("sha256", "")).strip().lower(),
+                "message_count": r.get("message_count"),
+            }
+        if not by_rev:
+            continue
+        by_rev["latest"] = max(n for n in by_rev if isinstance(n, int))
+        out[sid] = by_rev
+    return out
+
+
+def _witness_for(witness, bound):
+    """(record, declared_revision) for one bound source: the manifest revision the
+    IR declares, or the latest when the IR predates revision binding (v4.0 IRs carry
+    no `revision`). A declared revision the manifest does not record yields None."""
+    w = witness.get(bound.source_id)
+    if w is None:
+        return None, None
+    declared = bound.rec.get("revision")
+    if declared is None or declared == "":
+        return w[w["latest"]], w["latest"]
+    try:
+        declared = int(declared)
+    except (TypeError, ValueError):
+        return None, declared
+    return w.get(declared), declared
+
+
+_FIRST_CAPTURE_RE = re.compile(r"^(?:capture (CONV-\d+) r1|register-document (DOC-\d+) \()")
+
+
+def _first_capture_revisions(manifest):
+    """{source_id: inventory revision at which the source was FIRST captured},
+    read from the manifest's own inventory_history — the tool writes
+    `capture <sid> r1` / `register-document <sid> (...)` there at every bump. A
+    source with no such entry is absent from the map, and the caller treats
+    absence as "captured before anything we can date" (fail-closed: it must be
+    bound)."""
+    out = {}
+    for e in (manifest.get("inventory_history") or []):
+        if not isinstance(e, dict):
+            continue
+        m = _FIRST_CAPTURE_RE.match(str(e.get("note", "")).strip())
+        if not m:
+            continue
+        sid = m.group(1) or m.group(2)
+        try:
+            rev = int(e.get("revision"))
+        except (TypeError, ValueError):
+            continue
+        if sid not in out:
+            out[sid] = rev
     return out
 
 
@@ -1145,8 +1206,24 @@ def validate_compile(corpus, compile_id):
                     revs = [r for r in (ms.get("revisions") or []) if isinstance(r, dict)]
                     if msid and revs:
                         captured_in_manifest[msid] = revs[-1]
+                # v4.4.1 (B3, RQ-041): completeness is measured against the set that
+                # EXISTED at the compile's own inventory revision. A source the
+                # manifest first captured at a LATER inventory revision is growth the
+                # compile could not have bound; it makes the compile STALE (already
+                # reported above), never incomplete. A source whose first capture the
+                # history cannot date is treated as pre-existing — it must be bound.
+                bound_inv = src.get("inventory_revision")
+                try:
+                    bound_inv = int(bound_inv)
+                except (TypeError, ValueError):
+                    bound_inv = None
+                first_seen = _first_capture_revisions(manifest) if bound_inv is not None \
+                    else {}
                 for msid, last in sorted(captured_in_manifest.items()):
                     b = sources.get(msid)
+                    if b is None and bound_inv is not None \
+                            and first_seen.get(msid, 0) > bound_inv:
+                        continue          # captured after this compile was measured
                     if b is None:
                         findings.append(Finding(
                             cid, "RND_SOURCE_SET_INCOMPLETE",
@@ -1187,12 +1264,20 @@ def validate_compile(corpus, compile_id):
                 for sid, b in sources.items():
                     if b.excluded:
                         continue
-                    w = witness.get(sid)
-                    if w is None:
+                    if sid not in witness:
                         findings.append(Finding(
                             cid, "RND_SOURCE_NOT_WITNESSED",
                             "%s is not a source the project manifest witnesses — a "
                             "compile reads only swept, captured conversations" % sid))
+                        continue
+                    w, declared_rev = _witness_for(witness, b)
+                    if w is None:
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_NOT_WITNESSED",
+                            "%s: the IR binds revision %r, which the project manifest "
+                            "never recorded — a compile is witnessed against the "
+                            "revision it declares, and this one does not exist"
+                            % (sid, declared_rev)))
                         continue
                     if b.rel != w["path"]:
                         findings.append(Finding(

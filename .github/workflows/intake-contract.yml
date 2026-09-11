@@ -69,6 +69,21 @@ jobs:
       - name: v4.3 intake hardening suite (the six distinctions r38 paid for)
         run: python3 evals/test_intake_v43.py
 
+      # The three v4.4 suites shipped in PR #13 without being listed here — noted in
+      # that PR as a follow-up. v4.4.1 lists them, and its own suite, so "verified by
+      # the ordinary route" means these actually ran on the remote.
+      - name: v4.4 IR version 4 suite (atomicity, all-role ledger, contradictions, lineage)
+        run: python3 evals/test_rnd_v44.py
+
+      - name: v4.4 project suite (cut, attachment bytes, documents, the whole chain)
+        run: python3 evals/test_project_v44.py
+
+      - name: v4.4 projection suite (deterministic vault, annotation survival)
+        run: python3 evals/test_projection_v44.py
+
+      - name: v4.4.1 suite (the three R39 blockers, reproduced and guarded)
+        run: python3 evals/test_v441.py
+
       - name: Capture-signature goldens (structurally unavailable here — stated, not faked)
         run: |
           set -e

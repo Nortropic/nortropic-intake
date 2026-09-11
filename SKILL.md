@@ -1277,7 +1277,8 @@ validating under the rules they were published against.
 
 **P2.7 — Bytes of an attachment (v4.4).** `register-attachment --project P --source
 CONV-NNN --file F [--original-filename N] [--declared-kind K] [--materiality M]
-[--message-binding "owner msg 12"] [--recovered --recovery-provenance …]` records a
+[--message-binding "owner msg 12"] [--platform-file-id ID] [--recovered
+--recovery-provenance …]` records a
 local file as THE bytes of one attachment of the BOUND revision: copied under
 `sources/CONV-NNN/attachments/<ATT-id>-<sha12><ext>`, hashed, named in
 `attachments-rN.json` as `CAPTURED_CONTENT` (or `RECOVERED_EXACT`, which then
@@ -1887,6 +1888,58 @@ revision) set equals the cut's lines (`RND_BOUND_TO_CUT`), `RND_SCOPE=FULL`, eve
 turn accounted for, and a verified projection in a vault OUTSIDE the corpus. `--require-skill-frozen` adds
 `SKILL_DRIFT=NONE`. No line can be typed to YES, and pulling any link flips the
 conjunction — proved link by link in `evals/test_project_v44.py`.
+
+## v4.4.1 — the three R39 blockers (correction only, no new capability)
+
+The first real full sweep (R39, 2026-09-11) ran the frozen v4.4 to the end of its
+capture layer — 55 conversations, 111 byte-verified attachments and project files —
+and then could not cut, because three v4.4 rules refused correct evidence. Each was
+recorded in the corpus's review queue with its evidence before anything was changed
+(RQ-037, RQ-038, RQ-041), and each correction ships with a positive check and mutants
+that prove the fail-closed direction survived (`evals/test_v441.py`, 45 checks; the
+same suite scores 17/45 against the v4.4 scripts — the reproduction).
+
+**B1 — a quoted header is content, not a boundary (RQ-037).** `verify_transcript_format`
+counted every `## Meddelande N` line, so a conversation that QUOTES another transcript
+(CONV-054 msg 131 quotes CONV-001's R38 prompt) read as "not contiguous" and became a
+hard gap. It now reads only BLOCK-OPENING headers over the source region — the first
+header, and every header that follows a separator line — which is the reading
+`rnd_contract.genuine_message_roles` has applied since v4.1
+(`intake_common.block_opening_headers`, `parse_transcript_roles(block_opening=True)`).
+Kept: a block-opening header out of sequence, an empty body, an unbalanced fence and a
+quoted header that follows a separator (an injected boundary looks exactly like that)
+are all still refused.
+
+**B2 — bytes corroborate a declaration where prose cannot (RQ-038).** A source
+declaring N attachments whose body carries no citation marker or upload phrase (eight
+silent images) reconciled `UNKNOWN`, and once its manifest existed that was a FAIL with
+no way out — the owner acknowledgement exists only for `DISAGREE`. `reconcile` now
+answers `AGREE` when the manifest holds exactly N rows and EVERY row is bytes-in-hand
+(`CAPTURED_CONTENT` / `RECOVERED_*`) with a `content_sha256` AND a `platform_file_id`
+(`attachment_surface.bytes_corroborate_declaration`); `register-attachment
+--platform-file-id` records that identity as the platform sent it. Nothing is
+upgraded: a row without bytes, a `DUPLICATE`, a hash without identity, more or fewer
+rows than declared, a silent header (`declared=None`) and a body naming uploads the
+declaration omits all answer as before, and `validate_manifest` still re-hashes every
+artifact (`ATTACHMENT_ARTIFACT_MUTATED`).
+
+**B3 — a historical compile is witnessed against the revision it declares (RQ-041).**
+`rnd validate` witnessed every bound source against the manifest's LATEST revision, so
+the first new capture of any source turned three correct r38 compiles into 415 FAILs
+and the corpus's pre-commit gate refused every growing commit. The witness now keeps
+every manifest revision and resolves each bound source by the revision its IR declares
+(`_manifest_witness`, `_witness_for`); a declared revision the manifest never recorded
+is `RND_SOURCE_NOT_WITNESSED`. Completeness (`RND_SOURCE_SET_INCOMPLETE`) is measured
+against the sources that existed at the compile's own `inventory_revision`, dated from
+the manifest's `inventory_history` (`capture <sid> r1` / `register-document <sid>`):
+a source first captured later is growth the compile could not bind — `STALE` (WARN),
+never incomplete. A source the history cannot date is treated as pre-existing and must
+be bound; a compile that declares no inventory revision keeps the strict reading;
+altered bound bytes still fail. IRs written by `init` are unchanged.
+
+Out of this correction on purpose: the adapter's double listing of images (RQ-036),
+extraction semantics, projection, Recompile. `SINGLE` semantics untouched; the v4.4
+suites run unchanged.
 
 ## The skill answers for its own version (v4.4, owner decision D1)
 

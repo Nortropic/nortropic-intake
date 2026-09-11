@@ -39,6 +39,13 @@ Sedan v4.0 har skillen **tre uttryckliga lägen** — aldrig gissade, alltid beg
   driftvakt som gör att installerad skill och registrerad kontraktsversion inte kan
   glida isär tyst (`skill_version.py`). Byggt och kvalificerat 2026-09-11 mot en
   korpuskopia; ingen canonical korpus rördes.
+- **v4.4.1 — R39-blockerarna** (korrigering, ingen ny förmåga): blocköppnande
+  meddelandegränser i `verify_transcript_format` (en citerad rubrikrad är innehåll),
+  bytes med plattformsidentitet korroborerar en bilagedeklaration som kroppen inte
+  nämner (`register-attachment --platform-file-id`), och en historisk kompilering
+  vittnas mot den revision/inventory-revision den själv deklarerar så att korpusen kan
+  växa utan att falska FAIL uppstår. Var och en reproducerad, rättad och mutanttestad
+  (`evals/test_v441.py`).
 - **RND_COMPILE** ("kör rnd compile", "kompilera R&D-korpusen"): redan infångat och
   verifierat material — ett svept projektkorpus eller en uttrycklig källmängd — →
   en **typad, härledd, återuppbyggbar** förståelse av vad materialet faktiskt

@@ -26,6 +26,7 @@ python3 evals/test_intake_v43.py                      # 16 — v4.3: epistemic s
 python3 evals/test_rnd_v44.py                         # 17 — v4.4: IR version 4
 python3 evals/test_project_v44.py                     # 18 — v4.4: cut, bytes, documents, chain
 python3 evals/test_projection_v44.py                  # 19 — v4.4: Obsidian projection
+python3 evals/test_v441.py                            # 20 — v4.4.1: the three R39 blockers
 python3 scripts/skill_version.py check                # the installed skill vs its freeze
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
@@ -385,3 +386,17 @@ roles, and drives the WHOLE chain end to end on a synthetic project — then pul
 link and proves `CHAIN_COMPLETE` flips to NO. `test_projection_v44.py` renders a vault,
 proves byte-identical re-render, note and manual-canvas survival, and plants every
 PROJECTION_* defect. Floors: 70 / 50 / 24 checks.
+
+## 20. v4.4.1 suite (`test_v441.py`)
+
+The three blockers the first real full sweep (R39) hit in the frozen v4.4, each
+reproduced and each guarded: B1 block-opening message boundaries (a quoted header is
+content; an out-of-sequence boundary, an empty body, an unbalanced fence and a header
+after a separator are still refused), B2 bytes-with-platform-identity corroborating a
+silent declaration (a missing row, missing bytes, missing identity, a count mismatch,
+a bytes-absent DUPLICATE and a tampered artifact all still refuse), B3 revision-aware
+witnessing of historical compiles (growth after the compile is STALE, never
+incomplete; a wrong or nonexistent declared revision, an omitted pre-existing source,
+an undatable source, a compile with no inventory revision and altered bytes all still
+fail). 45 checks, floor 30. Run against the v4.4 scripts the same file scores 17/45 —
+that is the reproduction, kept runnable rather than described.

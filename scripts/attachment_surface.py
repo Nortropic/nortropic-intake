@@ -393,14 +393,36 @@ def reconcile(declared, signals, declared_identities=()):
         return "AGREE", floor
     if declared > 0 and floor == 0:
         # Declared attachments leaving no trace in the body at all. Not provably
-        # wrong - a silent image needs no citation - but not corroborated either.
+        # wrong - a silent image needs no citation - but not corroborated by PROSE.
+        # v4.4.1 (B2, RQ-038): bytes corroborate where prose cannot. When the manifest
+        # describes exactly the declared number of attachments and EVERY one of them
+        # holds verified bytes under the platform's own identity for that item, the
+        # declaration is checked against something stronger than a citation marker -
+        # the bytes themselves. Anything less (a row without bytes, a row whose bytes
+        # carry no platform identity, more or fewer rows than declared) stays UNKNOWN:
+        # this branch upgrades nothing, it only recognises evidence that is already
+        # verified elsewhere (validate_manifest re-hashes every artifact).
+        if bytes_corroborate_declaration(declared, declared_identities):
+            return "AGREE", floor
         return "UNKNOWN", floor
     return "AGREE", floor
-    if declared > 0 and floor == 0:
-        # Declared attachments that leave no trace in the body at all. Not provably
-        # wrong - a silent image needs no citation - but not corroborated either.
-        return "UNKNOWN", floor
-    return "AGREE", floor
+
+
+def bytes_corroborate_declaration(declared, rows):
+    """True only when rows == declared and every row is bytes-in-hand under a
+    platform identity. A DUPLICATE without bytes, an UNAVAILABLE row, a hash without
+    a platform_file_id, or a count mismatch all answer False."""
+    rows = [r for r in (rows or ()) if isinstance(r, dict)]
+    if declared is None or int(declared) <= 0 or len(rows) != int(declared):
+        return False
+    for r in rows:
+        if not attachment_bytes_available(str(r.get("capture_status", "")).strip()):
+            return False
+        if not str(r.get("content_sha256", "")).strip():
+            return False
+        if not str(r.get("platform_file_id", "")).strip():
+            return False
+    return True
 
 
 # ---------------------------------------------------------------- manifest --

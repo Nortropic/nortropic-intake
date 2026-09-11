@@ -344,8 +344,36 @@ ROLE_ASSISTANT = "assistant"
 ROLE_UNKNOWN = "unknown"
 
 
-def parse_transcript_roles(text):
+# v4.4.1 (B1, RQ-037) — a header line is a MESSAGE BOUNDARY only when it opens a
+# block: it is the first header of the text, or the last non-blank line before it is
+# a separator (`---`). A header-shaped line INSIDE a message body — a conversation
+# quoting another transcript, as CONV-054 msg 131 quotes CONV-001's R38 prompt — is
+# text, not a boundary. This is the same reading `rnd_contract.genuine_message_roles`
+# has applied since v4.1; v4.4's `verify_transcript_format` counted every line and
+# refused a correctly captured source as "not contiguous". The fail-closed direction
+# is unchanged: a block-opening header out of sequence still refuses.
+_BLOCK_SEPARATOR_RE = re.compile(r"(?:-{3,}|\*{3,}|_{3,})\Z")
+
+
+def header_opens_block(text, start):
+    before = text[:start].rstrip()
+    if not before:
+        return True                       # the text's first header
+    last_line = before.rsplit("\n", 1)[-1].strip()
+    return bool(_BLOCK_SEPARATOR_RE.fullmatch(last_line))
+
+
+def block_opening_headers(text):
+    """The header matches that actually open a message block, in order."""
+    return [m for m in TRANSCRIPT_HEADER_RE.finditer(text)
+            if header_opens_block(text, m.start())]
+
+
+def parse_transcript_roles(text, block_opening=False):
     """{message number: 'owner'|'assistant'|'unknown'} from a transcript's headers.
+
+    `block_opening=True` reads only the headers that open a block (v4.4.1); the
+    default keeps the v3 reading every existing caller was measured against.
 
     Fail-closed vocabulary: a header label that names neither the user nor the
     assistant is 'unknown' — never guessed toward owner. A label that somehow names
@@ -355,7 +383,13 @@ def parse_transcript_roles(text):
     report honestly rather than treating as owner-backed.
     """
     roles = {}
-    for m in TRANSCRIPT_HEADER_RE.finditer(text):
+    if block_opening:
+        # the source region starts at the first header, which therefore always
+        # opens a block — the same frame rnd's genuine_message_roles reads
+        text, _found = transcript_source_region(text)
+    headers = block_opening_headers(text) if block_opening \
+        else TRANSCRIPT_HEADER_RE.finditer(text)
+    for m in headers:
         n = int(m.group(1))
         label = m.group(2)
         is_owner = bool(_OWNER_ROLE_RE.search(label))
