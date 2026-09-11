@@ -1879,7 +1879,7 @@ prints the conjunction:
     RND_COMPILE=K  RND_COMPILE_VALID  RND_COMPILE_AUDITED  RND_SEMANTIC_RULES_APPLIED
     RND_IR_VERSION=4  TURNS_ACCOUNTED=100%  RND_BOUND_TO_CUT=YES|NO
     PROJECTION_VAULT=V  PROJECTION_VERIFIED=YES|NO  PROJECTION_CARDS=n
-    INTAKE_SKILL_VERSION=v4.4  SKILL_DRIFT=NONE|UNCOMMITTED|AHEAD|BEHIND_ORIGIN|UNKNOWN
+    INTAKE_SKILL_VERSION=v4.4.1  SKILL_DRIFT=NONE|UNCOMMITTED|AHEAD|BEHIND_ORIGIN|UNKNOWN
     CHAIN_COMPLETE=YES|NO
 
 `CHAIN_COMPLETE=YES` (exit 0) requires: enumeration verified, no hard gap, a CURRENT
@@ -1967,7 +1967,7 @@ Out of this correction on purpose: the adapter's double listing of images (RQ-03
 extraction semantics, projection, Recompile. `SINGLE` semantics untouched; the v4.4
 suites run unchanged.
 
-## The skill answers for its own version (v4.4, owner decision D1)
+## The skill answers for its own version (v4.4.1, owner decision D1)
 
 The 2026-09-11 gap analysis found the installed skill three versions behind the
 published one, refusing the published corpus, with SKILL.md still reading `v4.0
@@ -2275,27 +2275,33 @@ visible negative space, owner-vs-assistant provenance held, rebuildable derived 
 zero corpus mutations). The reopen was authority, not drift.
 
 ```
-NORTROPIC_INTAKE_VERSION=v4.4
+NORTROPIC_INTAKE_VERSION=v4.4.1
 ARCHITECTURE_STATE=FROZEN
 FREEZE_DATE=2026-09-11
-REOPENED_FROM=v4.0 (frozen 2026-09-01; reopened 2026-09-11 by OWNER ARCHITECTURE
-              CHANGE + MATERIAL NEW CAPABILITY — the owner approved the gap analysis
-              for a full, verifiable Improvements Project Sweep and ordered Project/
-              Corpus Intake as an EXTENSION: byte-verified cut, attachment bytes,
-              document sources, IR version 4, Obsidian projection, chain, drift guard;
-              SINGLE and PROJECT_SWEEP semantics unchanged, no v4.x property weakened.
-              v4.1–v4.3 shipped on main between the two freezes without a
-              registration — the drift this freeze's SKILL_SCRIPTS_TREE now closes.)
+REOPENED_FROM=v4.4 (frozen 2026-09-11; reopened the same day under OBSERVED FAILURE —
+              the first real full sweep (R39) hit three v4.4 rules that refused correct
+              evidence: RQ-037 quoted headers counted as boundaries, RQ-038 a silent body
+              with every declared item's bytes in hand stuck at UNKNOWN, RQ-041 historical
+              compiles witnessed against the latest revision. A correction only: no new
+              capability, SINGLE / PROJECT_SWEEP / RND_COMPILE semantics unchanged, no
+              fail-closed or provenance property weakened — each fix carries positive and
+              mutant checks; three rounds of independent adversarial review, two with
+              findings, all closed — REVIEW-v441-B1-B3.md in the build worktree.)
 
-SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8
-SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc
-SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f
+SKILL_MAIN=f015d2269a64d794615851cb89514363cd9853ee
+SKILL_TREE=d78c81097eeb16ed8ac0822cb5adca55a427b786
+SKILL_SCRIPTS_TREE=14b0acf6524e1972b128ff3fe32c7c7f5ec1c133
 
 CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33
-CORPUS_TREE=NOT_MOVED (v4.4 mutated no corpus content — the proving run wrote only
-            to a corpus COPY; the canonical corpus stayed at a1680869, clean)
+CORPUS_TREE=NOT_MOVED (v4.4.1 mutated no corpus content — measured against the r38
+            proving copy and the uncommitted-to-origin R39 working branch; the
+            canonical corpus stayed at a1680869)
 
 LINEAGE:
+  v4.4  SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8
+        SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc
+        SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f  (frozen 2026-09-11)
+        CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33
   v4.3  SKILL_MAIN=1ab153a8989e5413ec448bb72a0620fc9545ea72  (origin/main 2026-09-04,
         never registered as a freeze — installed as the v4.4 baseline 2026-09-11)
   v4.0  SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c
@@ -2321,8 +2327,8 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v4.4 implementation head on `main` (the fast-forward of
-branch `intake-v44-project-corpus`), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
+commit: `SKILL_MAIN` is the v4.4.1 implementation head (branch `v441-r39-blockers`,
+merged to `main` by PR), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
 tree of `scripts/` — the runtime surface `skill_version.py check` compares against —
 and recording the freeze necessarily moves `main` past them by one documentation-only
 commit — this one — that changes no runtime behaviour (so `scripts/` is byte-identical
