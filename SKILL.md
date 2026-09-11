@@ -1287,7 +1287,14 @@ signals, reconciliation, `FULL_SOURCE_CAPTURE` — is measured from the transcri
 bytes exactly as `attachments` measures them, so registering bytes never talks the
 surface into AGREE by itself. Refused: replacing bytes under an id (a different file
 is a different attachment), a second copy of registered bytes (declare it
-`DUPLICATE` against the first), a revision the project does not stand on. The bytes
+`DUPLICATE` against the first), a revision the project does not stand on, and —
+the rule an independent review had to insist on — bytes for an attachment ALREADY
+recorded as `UNAVAILABLE`/`UNKNOWN`/`CAPTURED_REFERENCE_ONLY`/`DUPLICATE` without
+`--recovered --recovery-provenance`: a recorded bytes-absent state is a historical
+fact about the capture, and bytes that arrive later are a RECOVERY that must prove
+they are the attachment bound to that revision, never a plausible file that fits the
+name. A `conversation_attachment` document must BE the registered attachment's bytes
+(equal `content_sha256`). The bytes
 themselves come from a Chrome session (the platform's file endpoint, time-boxed) or
 from the owner's own tool; the capture adapter records the platform's file ids and
 names alongside the transcript so the next session can fetch by identity rather than
@@ -1311,7 +1318,11 @@ derivative with its own hash, line count and producing tool, for a binary), and 
 that actually used it (`used_in`), or it is refused — a link somebody mentioned is
 out of scope by default (`SOURCE_USE_UNEVIDENCED`, `SOURCE_USE_UNRESOLVED`);
 `conversation_attachment` must be an attachment a bound revision's manifest records
-(`DOCUMENT_ATTACHMENT_UNBOUND`). Documents are NOT treated as conversations: no
+WITH bytes equal to the document's (`DOCUMENT_ATTACHMENT_UNBOUND`). And "used" is
+anchored on the cited turns' own words: the document's `use_anchor` (the phrase the
+turn uses for it — `--use-anchor masterplanen`), else its title, else its filename
+stem, must occur in the cited messages (`SOURCE_USE_UNANCHORED`) — a range that merely
+exists is not a use. Documents are NOT treated as conversations: no
 turns, no roles, no owner voice, no extraction/routing lifecycle — DISCOVERED until
 the bytes are in, then CAPTURED, and a compile cites them by LINE
 (`{"source_id": "DOC-001", "revision": 1, "lines": "12-14"}`), never by message. A
@@ -1325,14 +1336,21 @@ statement: the inventory said which sources existed and the revision hashes said
 their bytes were, but nothing said every source had been re-read against the
 platform on or after D — RQ-029 records 19 of 30 sources "unchanged" on the
 platform's `update_time`, not on bytes. Two changes close that. A byte-identical
-re-`capture` now WRITES its measurement: `verified_unchanged_at` (and the verified
-`source_sha256`) on the latest revision, no inventory revision minted because no
-bytes moved. And `cut --project P --at D` freezes a digest over everything a compile
-may consume — every source's latest revision (whole-file and body identity, hashed
-from disk), every attachment manifest and artifact, every document and text
-derivative, the inventory identity — REFUSING unless every source has a capture or a
-byte-verification on/after D (`SOURCE_CUT_UNVERIFIED`) and the project has no hard
-gap. It also runs the branch probe (shared verbatim message prefixes between
+re-`capture` now WRITES its measurement: `verified_unchanged_at` (with the verified
+`source_sha256`, the adapter and the input file name) on the latest revision, no
+inventory revision minted because no bytes moved. A capture's input comes from the
+platform or the owner — a file that already lives inside the corpus is refused as
+input, so a self-read can never stamp a verification. Every `--at` is a real
+YYYY-MM-DD date (`SOURCE_DATE_INVALID` for a stored one that is not). And `cut
+--project P --at D` freezes a digest over everything a compile may consume — every
+source's latest revision (whole-file and body identity, hashed from disk), every
+attachment manifest and artifact, every document and text derivative, the review
+queue (owner answers a compile cites) and the sweep audit, the inventory identity —
+REFUSING unless every source has a capture or a byte-verification on/after D
+(`SOURCE_CUT_UNVERIFIED`) and the project has no hard gap. What the cut proves is
+stated exactly: that a capture command ran with byte-identical PLATFORM input on/after
+D for every source. That the input truly came from the platform is the mission's
+obligation (a Chrome session), recorded on the event, not something a digest can see. It also runs the branch probe (shared verbatim message prefixes between
 conversations, the trace a branched chat leaves in captured bytes — RND-223) and
 reports the count; lineage design waits for an observed branch, and the cut is where
 the observation happens. Afterwards `validate` re-hashes every bound file:
@@ -1716,11 +1734,26 @@ sha256 and line extent (text derivative first); provenance uses `lines`, resolve
 against the bytes (`RND_PROVENANCE_OUT_OF_RANGE`), grants no role, and a document can
 never back an owner decision.
 
-*A scoped compile is a declared scope, never a smaller corpus.* `init --only
-CONV-004,CONV-009` binds the named sources and records every other source as
-EXCLUDED with the reason, visible in the IR (and, above the threshold, warned as
-`RND_SOURCE_SET_MOSTLY_EXCLUDED`). The v4.4 proving run used exactly this on a
-corpus copy.
+*A project compile is COMPLETE against the manifest, or it declares its scope.* An
+independent review showed a compile could simply omit a captured source — or exclude
+it with the tool's own "no captured revision" text — and still report every turn
+accounted for. So `validate` reads the manifest: every source with a captured
+revision is bound at its latest revision, or excluded ONLY through the scope list
+`init --only` writes into `source_set.scope` (a version-4 field; refused on 1–3).
+Anything else is `RND_SOURCE_SET_INCOMPLETE`. A scoped compile is reported
+`RND_SOURCE_SET_SCOPED` (WARN) and summarised `scope=PARTIAL`; the chain refuses to
+call it the project's compile. The v4.4 proving run used exactly this on a corpus
+copy, and the chain said so.
+
+*The audit answers the validator's questions by id.* A version-4 audit round names
+every record the validator flags as a compound suspect under
+`compound_suspects_reviewed` and every owner turn ledgered `no-material-content` under
+`owner_ledger_reviewed` (`source:msg`), or the compile is not audited
+(`RND_AUDIT_ATOMICITY_UNREVIEWED`, `RND_AUDIT_LEDGER_UNREVIEWED`). "yes" alone is a
+phrase; an id is an answer. A contradiction is RESOLVED only by a live THIRD record
+(not a side of the pair, not UNKNOWN, not itself superseded); SPLIT_FROM requires the
+part's provenance to lie within the whole's, MERGED_FROM names at least two baseline
+records, and neither may have a fingerprint equal to a baseline record (that is SAME).
 
 **The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
 
@@ -1837,8 +1870,9 @@ prints the conjunction:
     CHAIN_COMPLETE=YES|NO
 
 `CHAIN_COMPLETE=YES` (exit 0) requires: enumeration verified, no hard gap, a CURRENT
-cut, corpus integrity, a valid AND audited version-4 compile bound to that cut with
-every turn accounted for, and a verified projection. `--require-skill-frozen` adds
+cut, corpus integrity, a valid AND audited version-4 compile whose bound (source,
+revision) set equals the cut's lines (`RND_BOUND_TO_CUT`), `RND_SCOPE=FULL`, every
+turn accounted for, and a verified projection in a vault OUTSIDE the corpus. `--require-skill-frozen` adds
 `SKILL_DRIFT=NONE`. No line can be typed to YES, and pulling any link flips the
 conjunction — proved link by link in `evals/test_project_v44.py`.
 
