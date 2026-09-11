@@ -403,5 +403,5 @@ fail). The independent review's three probes are mutants too: an unanchored
 manifest row under a second attachment id — and, from the second round, the same copy
 under a renamed platform id, a fenced `---` posing as a separator and a missing
 separator that would absorb a real turn. 70 checks, floor 30. Run against the v4.4
-scripts the same file scores 25/64 — that is the reproduction, kept runnable rather
+scripts the same file scores 23/59 — that is the reproduction, kept runnable rather
 than described.

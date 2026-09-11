@@ -1897,7 +1897,7 @@ and then could not cut, because three v4.4 rules refused correct evidence. Each 
 recorded in the corpus's review queue with its evidence before anything was changed
 (RQ-037, RQ-038, RQ-041), and each correction ships with a positive check and mutants
 that prove the fail-closed direction survived (`evals/test_v441.py`, 70 checks; the
-same file run against the v4.4 scripts scores 25/64 — the reproduction, kept
+same file run against the v4.4 scripts scores 23/59 — the reproduction, kept
 runnable). Two rounds of independent adversarial review found four bypasses in the
 drafts; each is closed below and has its own mutant.
 
