@@ -420,19 +420,23 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
-        "NORTROPIC_INTAKE_VERSION=v4.0",
+        "NORTROPIC_INTAKE_VERSION=v4.4",
         "ARCHITECTURE_STATE=FROZEN",
-        "FREEZE_DATE=2026-09-01",
-        "SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c",
+        "FREEZE_DATE=2026-09-11",
+        "SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8",
+        "SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc",
+        "SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f",
+        "CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33",
+        "v4.4 mutated no corpus content",
+        "REOPENED_FROM=v4.0 (frozen 2026-09-01; reopened 2026-09-11 by OWNER ARCHITECTURE\n"
+        "              CHANGE + MATERIAL NEW CAPABILITY",
+        "SINGLE and PROJECT_SWEEP semantics unchanged, no v4.x property weakened",
+        # every earlier frozen identity stays recorded as lineage — history is never dropped
+        "v4.3  SKILL_MAIN=1ab153a8989e5413ec448bb72a0620fc9545ea72",
+        "v4.0  SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c",
         "SKILL_TREE=15161f4765beb3eb0e78f1be84773fc5dcb01178",
         "CORPUS_MAIN=6c82d333ad036cbd4f934ff44723cf6318442003",
         "CORPUS_TREE=9dd72fbf188bc20d3ccb2d1c9682f95b566551b9",
-        "REOPENED_FROM=v3.1.1 (frozen 2026-09-01; reopened same day by OWNER "
-        "ARCHITECTURE\n              CHANGE",
-        "not an observed defect, and no v3/v3.1/v3.1.1 property weakened)",
-        "**v4.0 adds a\nthird explicit mode, RND_COMPILE**",
-        # v3.1.1, v3.1, v3.0 and v2.1 frozen identities stay recorded as lineage —
-        # history is never dropped.
         "v3.1.1 SKILL_MAIN=0daa3d6c08a540826d84985b1afd7763af906c6f",
         "SKILL_TREE=0de265da75af074bb0da07575eeb89dc274dafca  (frozen 2026-09-01)",
         "v3.1  SKILL_MAIN=93e07e730ad7b4c73745e0f292bf74145d202cab",
@@ -477,7 +481,8 @@ CHECKS = [
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "The current SKILL identities are the **frozen architecture**, not this "
         "file's current\ncommit",
-        "`SKILL_MAIN` is the v4.0 implementation merge on `main` (PR #7)",
+        "`SKILL_MAIN` is the v4.4 implementation head on `main`",
+        "`SKILL_SCRIPTS_TREE` the\ntree of `scripts/`",
         "Recording\ninvented SHAs would have been a forged freeze",
         "v4 mutated no corpus content",
         "read the tree, not the branch head",
