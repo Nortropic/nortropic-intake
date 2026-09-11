@@ -117,6 +117,89 @@ blocks after `coverage` are obligations, not decoration: an empty `unlensed` or
 what green over this shape does and does not mean — see the semantic-coverage limits
 in SKILL.md; a contract checks structure and provenance, never understanding.
 
+## Version 4 — the fields `init --atomic` adds (v4.4)
+
+```json
+{
+  "rnd_ir_version": 4,
+  "source_set": {
+    "kind": "project", "project": "improvements",
+    "inventory_revision": 39, "inventory_sha256": "…",
+    "cut_sha256": "<the project's source cut, when one exists>", "cut_at": "2026-09-12",
+    "scope": ["CONV-004", "CONV-009"],
+    "sources": [
+      {"source_id": "CONV-004", "revision": 1, "path": "…", "source_sha256": "…",
+       "message_count": 4},
+      {"source_id": "DOC-001", "kind": "document", "revision": 1,
+       "path": "_projects/improvements/sources/DOC-001/document.pdf", "sha256": "…",
+       "line_count": null, "evidence_role": "project_file",
+       "text_path": "_projects/improvements/sources/DOC-001/text.txt",
+       "text_sha256": "…", "text_line_count": 2421},
+      {"source_id": "CONV-001", "excluded": "outside the compile's declared scope (--only) — not compiled, not absorbed"}
+    ]
+  },
+  "lineage_baseline": {"compile": "improvements-r38-c4-epistemic", "ir_sha256": "…"},
+  "items": [
+    {
+      "id": "RND-001", "kind": "OWNER_DECISION",
+      "atomicity": "ATOMIC",
+      "fingerprint": "<sha256(kind | normalised claim | sorted provenance)>",
+      "standing": "CURRENT_CANDIDATE",
+      "lineage": [{"id": "RND-088", "relation": "SAME"}],
+      "claim": "…", "scope": "…",
+      "provenance": [{"source_id": "CONV-004", "revision": 1, "messages": "3"},
+                     {"source_id": "DOC-001", "revision": 1, "lines": "285-325"}],
+      "authority_class": "owner", "owner_authority_basis": "owner-authored",
+      "quote": "…", "uncertainty": "…", "tags": [], "relations": []
+    },
+    {
+      "id": "RND-002", "kind": "OBSERVATION", "atomicity": "COMPOSITE",
+      "fingerprint": "…", "claim": "the two parts read together", "scope": "…",
+      "provenance": [{"source_id": "CONV-004", "revision": 1, "messages": "1-4"}],
+      "authority_class": "evidence", "uncertainty": "…", "tags": [],
+      "relations": [{"rel": "composed_of", "target": "RND-003"},
+                    {"rel": "composed_of", "target": "RND-004"}]
+    }
+  ],
+  "turn_ledger": [
+    {"source_id": "CONV-004", "messages": "2", "reason": "elaboration-no-new-claim"},
+    {"source_id": "CONV-004", "messages": "4", "reason": "acknowledgement-only"}
+  ],
+  "contradiction_register": [
+    {"pair": ["RND-010", "RND-011"], "state": "RESOLVED", "resolved_by": "RND-012"},
+    {"pair": ["RND-020", "RND-021"], "state": "UNRESOLVED", "unknown": "RND-022"}
+  ],
+  "retired": [
+    {"id": "RND-077", "reason": "folded into RND-003 and RND-004 on re-reading (SPLIT)"}
+  ]
+}
+```
+
+Rules, stated once (the validator's codes are in SKILL.md, version 4 section):
+
+* **Atomicity is semantic.** One record = one independent claim with its own
+  provenance, epistemic status, standing, relations, reconciliation and
+  supersession. Parts that can change, be contradicted or be superseded
+  independently are separate records. A scoped `supersedes`/`contradicts` proves the
+  target compound (split it); a COMPOSITE is a container of ≥ 2 ATOMIC parts and
+  carries no state of its own; ATOMIC/COMPOSITE is declared on every record; a
+  compound-looking claim is flagged for the reader, and the audit round says
+  `atomicity_reviewed: yes`.
+* **Every turn, every role.** `turn_ledger` covers what no record cites: owner
+  reasons (v4.1) and assistant reasons `covered-by-cited-range`, `restates-owner`,
+  `elaboration-no-new-claim`, `tool-or-machine-output`, `no-material-content`. A
+  reason for the wrong role accounts for nothing.
+* **Standing** on every OWNER_DECISION, REQUIREMENT and OPTION.
+* **Every `contradicts` pair is in the register** — RESOLVED by a superseding record
+  (the superseded side standing SUPERSEDED/REJECTED/HISTORICAL) or UNRESOLVED with an
+  UNKNOWN record relating to both sides. Both sides survive.
+* **Fingerprint** on every record; **lineage** against `lineage_baseline` — SAME
+  (equal fingerprints), REVISED, SPLIT_FROM, MERGED_FROM; an identical record
+  presented as new is refused; baseline records that vanish are listed in `retired`
+  with a reason.
+* **Documents** bind by whole-file sha256 (and a text derivative for binaries), are
+  cited by `lines`, grant no role and can never back an owner decision.
+
 ## The core ontology — seven kinds, closed on purpose
 
     OBSERVATION        something the material states or shows (authority_class: evidence)

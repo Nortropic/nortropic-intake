@@ -58,6 +58,7 @@ so "Claude thinks it read everything" is never the evidence. It writes files und
 """
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import sys
@@ -68,7 +69,7 @@ from intake_common import (  # noqa: E402
     Finding, corpus_root, fails, fm_str, git_head_blob, git_immutability,
     parse_transcript_roles, read_frontmatter, read_json, report, sha256_file,
     sha256_text, source_surface_identity, transcript_source_sha256, write_json,
-    full_source_capture, ROLE_UNKNOWN,
+    full_source_capture, transcript_source_region, ROLE_UNKNOWN,
 )
 import context_contract as ctx  # noqa: E402
 import attachment_surface as att  # noqa: E402
@@ -85,7 +86,20 @@ TERMINAL_SIGNALS = ("cursor-absent", "cursor-absent-empty-page")
 PROJECT_END_STATES = ("COMPLETE", "COMPLETE_WITH_OPEN_REVIEW", "INCOMPLETE_HARD_GAPS")
 
 CONV_ID_RE = re.compile(r"^CONV-\d{3,}$")
+DOC_ID_RE = re.compile(r"^DOC-\d{3,}$")
 RQ_ID_RE = re.compile(r"^RQ-\d{3,}$")
+
+# v4.4 — source KINDS. A conversation is the sweep's primary evidence; a document is
+# project evidence that is NOT a conversation and is never treated as one: it has
+# no turns, no roles, no owner voice, and it can never back an OWNER_DECISION. Its
+# provenance is by LINE, resolved against sha256-bound bytes. The evidence ROLE says
+# why the document is in the corpus at all — and an `external_reference` must show
+# where a conversation actually USED it, or it is a link someone mentioned, which is
+# out of scope by default.
+SOURCE_KINDS = ("conversation", "document")
+DOCUMENT_ROLES = ("project_file", "conversation_attachment", "external_reference")
+DOCUMENT_STATES = ("DISCOVERED", "CAPTURED", "FAILED")
+MSG_RANGE_RE = re.compile(r"^(\d+)(?:\s*[-–]\s*(\d+))?$")
 # A conversation is identified by host + platform conversation id — never by title.
 KEY_RE = re.compile(r"^[a-z0-9.-]+/[A-Za-z0-9_-]{8,}$")
 FAIL_STAGES = ("discover", "capture", "verify", "extract", "route")
@@ -201,6 +215,17 @@ def latest_revision(source):
     return revisions[-1] if revisions else None
 
 
+def source_kind(source):
+    """`conversation` unless the record says `document` — an absent kind is the
+    pre-v4.4 record, and every pre-v4.4 record is a conversation."""
+    kind = str((source or {}).get("kind", "")).strip().lower()
+    return kind if kind in SOURCE_KINDS else "conversation"
+
+
+def is_document(source):
+    return source_kind(source) == "document"
+
+
 def effective_state(source):
     """The state the RECORD supports — recomputed, never trusted from the label.
 
@@ -208,12 +233,19 @@ def effective_state(source):
     (ROUTED at the latest revision + the project-level audit condition), so ROUTED
     here is compatible with a stored COMPLETE; anything else contradicting the
     stored label is the false-completeness the validator exists to catch.
+
+    A DOCUMENT has no extraction or routing lifecycle: it is DISCOVERED until its
+    bytes are in the corpus, then CAPTURED, and that is its terminal state — a
+    document is evidence a compile cites by line, never a conversation that
+    produces idea packages.
     """
     if source.get("state") == "FAILED":
         return "FAILED"
     revisions = source.get("revisions") or []
     if not revisions:
         return "DISCOVERED"
+    if is_document(source):
+        return "CAPTURED"
     latest = revisions[-1]
     if latest.get("verified") is not True:
         return "CAPTURED"
@@ -237,9 +269,15 @@ def inventory_identity(data):
     for s in data.get("sources") or []:
         if not isinstance(s, dict):
             continue
-        key = str(s.get("conversation_key", "")).strip() or "-"
         hashes = ",".join(str(r.get("sha256", "")).strip()
                           for r in (s.get("revisions") or []) if isinstance(r, dict))
+        if is_document(s):
+            # a document is inventory too — but on its own line kind, so the
+            # identity of a pre-v4.4 manifest (no documents) is byte-unchanged
+            lines.append("DOC %s %s" % (str(s.get("source_id", "")).strip() or "-",
+                                        hashes or "-"))
+            continue
+        key = str(s.get("conversation_key", "")).strip() or "-"
         lines.append("SRC %s %s" % (key, hashes or "-"))
     enum = data.get("enumeration") or {}
     lines.append("ENUM %s %s %s"
@@ -699,6 +737,27 @@ def _validate_sources(proj, data, findings):
                                     "%s is not an object" % where))
             continue
         sid = str(s.get("source_id", "")).strip()
+        kind_raw = str(s.get("kind", "")).strip().lower()
+        if kind_raw and kind_raw not in SOURCE_KINDS:
+            # an unknown kind falls CLOSED: it is neither a conversation nor a
+            # document, so nothing below can vouch for it
+            findings.append(Finding(proj.name, "SOURCE_KIND_INVALID",
+                                    "%s kind=%r must be one of %s"
+                                    % (where, kind_raw, list(SOURCE_KINDS))))
+            continue
+        if is_document(s):
+            if not DOC_ID_RE.match(sid):
+                findings.append(Finding(proj.name, "SOURCE_ID_INVALID",
+                                        "%s document source_id=%r must look like "
+                                        "DOC-001" % (where, sid)))
+                continue
+            if sid in seen_ids:
+                findings.append(Finding(proj.name, "SOURCE_ID_DUPLICATE",
+                                        "%s reuses %s" % (where, sid)))
+                continue
+            seen_ids.add(sid)
+            _validate_document(proj, data, s, sid, findings, recorded_paths)
+            continue
         if not CONV_ID_RE.match(sid):
             findings.append(Finding(proj.name, "SOURCE_ID_INVALID",
                                     "%s source_id=%r must look like CONV-001"
@@ -857,6 +916,222 @@ def _validate_sources(proj, data, findings):
 
 
 
+def line_count_of(data_bytes):
+    """Lines in a text file, the way a line-cited provenance counts them: a
+    trailing newline ends the last line rather than starting an empty one."""
+    if not data_bytes:
+        return 0
+    n = data_bytes.count(b"\n")
+    return n if data_bytes.endswith(b"\n") else n + 1
+
+
+def _looks_text(data_bytes):
+    sample = data_bytes[:4096]
+    if b"\x00" in sample:
+        return False
+    try:
+        sample.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def _validate_document(proj, data, s, sid, findings, recorded_paths):
+    """A document is project evidence, never a conversation.
+
+    What is checked: the bytes are here and hash to the record; the record is
+    immutable under git; a line-addressable form exists so a compile can cite it by
+    line; and the document's REASON for being in the corpus is evidenced — an
+    `external_reference` must point at the conversation turns that actually used
+    it, and a `conversation_attachment` must name the attachment it is. A document
+    that is merely mentioned is out of scope by default, and this is where that
+    default becomes a check.
+    """
+    role = str(s.get("evidence_role", "")).strip()
+    if role not in DOCUMENT_ROLES:
+        findings.append(Finding(
+            proj.name, "DOCUMENT_ROLE_INVALID",
+            "%s evidence_role=%r must be one of %s — a document says WHY it is "
+            "project evidence, or it is a file that happened to be nearby"
+            % (sid, role, list(DOCUMENT_ROLES))))
+    state = str(s.get("state", "")).strip()
+    derived = effective_state(s)
+    if state not in DOCUMENT_STATES:
+        findings.append(Finding(proj.name, "SOURCE_STATE_INVALID",
+                                "%s state=%r must be one of %s (document)"
+                                % (sid, state, list(DOCUMENT_STATES))))
+    elif state != derived:
+        findings.append(Finding(
+            proj.name, "SOURCE_STATE_INCONSISTENT",
+            "%s is labelled %s but its record supports %s" % (sid, state, derived)))
+
+    revisions = s.get("revisions") or []
+    numbers = []
+    for j, r in enumerate(revisions):
+        if not isinstance(r, dict):
+            findings.append(Finding(proj.name, "SOURCE_REVISION_INVALID",
+                                    "%s revisions[%d] is not an object" % (sid, j)))
+            continue
+        numbers.append(r.get("revision"))
+        rel = str(r.get("path", "")).strip()
+        if not rel:
+            findings.append(Finding(proj.name, "SOURCE_REVISION_INVALID",
+                                    "%s revisions[%d] records no path" % (sid, j)))
+            continue
+        recorded_paths.add(rel)
+        target = proj.corpus / rel
+        if not target.exists():
+            findings.append(Finding(
+                proj.name, "SOURCE_FILE_MISSING",
+                "%s revision %s: %s does not exist — document evidence must "
+                "survive; a registered document is never deleted"
+                % (sid, r.get("revision"), rel)))
+            continue
+        raw = target.read_bytes()
+        declared = str(r.get("sha256", "")).strip().lower()
+        actual = sha256_file(target)
+        if not declared:
+            findings.append(Finding(proj.name, "SOURCE_REVISION_INVALID",
+                                    "%s revision %s records no sha256 (actual %s)"
+                                    % (sid, r.get("revision"), actual)))
+        elif declared != actual:
+            findings.append(Finding(
+                proj.name, "PROJECT_SOURCE_HASH_MISMATCH",
+                "%s revision %s records %s… but %s hashes to %s… — the bytes "
+                "changed after registration, or the manifest is stale"
+                % (sid, r.get("revision"), declared[:16], rel, actual[:16])))
+        state_git, _ = git_immutability(proj.corpus, rel, target)
+        if state_git == "MUTATED":
+            findings.append(Finding(
+                proj.name, "PROJECT_SOURCE_MUTATED",
+                "%s revision %s (%s) no longer matches its committed bytes — a "
+                "registered document is immutable; a changed document is a NEW "
+                "revision" % (sid, r.get("revision"), rel)))
+        # line-addressability: the record's line_count is recomputed from the bytes
+        lc = r.get("line_count")
+        if lc is not None:
+            if not _looks_text(raw):
+                findings.append(Finding(
+                    proj.name, "DOCUMENT_LINE_COUNT_MISMATCH",
+                    "%s revision %s claims line_count=%r over bytes that are not "
+                    "text — a binary document is cited through its text derivative"
+                    % (sid, r.get("revision"), lc)))
+            elif lc != line_count_of(raw):
+                findings.append(Finding(
+                    proj.name, "DOCUMENT_LINE_COUNT_MISMATCH",
+                    "%s revision %s records line_count=%r but the bytes hold %d "
+                    "lines — a line citation must resolve against what is on disk"
+                    % (sid, r.get("revision"), lc, line_count_of(raw))))
+        td = r.get("text_derivative")
+        if td is not None:
+            if not isinstance(td, dict):
+                findings.append(Finding(proj.name, "DOCUMENT_TEXT_DERIVATIVE_MISMATCH",
+                                        "%s: text_derivative is not an object" % sid))
+            else:
+                trel = str(td.get("path", "")).strip()
+                tpath = proj.corpus / trel if trel else None
+                if not trel or tpath is None or not tpath.is_file():
+                    findings.append(Finding(
+                        proj.name, "DOCUMENT_TEXT_DERIVATIVE_MISMATCH",
+                        "%s: text_derivative path %r does not exist" % (sid, trel)))
+                else:
+                    recorded_paths.add(trel)
+                    traw = tpath.read_bytes()
+                    if str(td.get("sha256", "")).strip().lower() != sha256_file(tpath):
+                        findings.append(Finding(
+                            proj.name, "DOCUMENT_TEXT_DERIVATIVE_MISMATCH",
+                            "%s: text_derivative %s does not hash to its record"
+                            % (sid, trel)))
+                    if td.get("line_count") != line_count_of(traw):
+                        findings.append(Finding(
+                            proj.name, "DOCUMENT_TEXT_DERIVATIVE_MISMATCH",
+                            "%s: text_derivative records line_count=%r but %s holds "
+                            "%d lines" % (sid, td.get("line_count"), trel,
+                                          line_count_of(traw))))
+                    if not str(td.get("tool", "")).strip():
+                        findings.append(Finding(
+                            proj.name, "DOCUMENT_TEXT_DERIVATIVE_MISMATCH",
+                            "%s: text_derivative names no tool — a derivative "
+                            "without its producer cannot be reproduced" % sid))
+        if lc is None and td is None:
+            findings.append(Finding(
+                proj.name, "DOCUMENT_UNADDRESSABLE",
+                "%s revision %s has neither line_count nor a text_derivative — a "
+                "compile cannot cite it by line, so it is evidence nobody can point "
+                "into" % (sid, r.get("revision")), level="WARN"))
+    if numbers != list(range(1, len(numbers) + 1)):
+        findings.append(Finding(
+            proj.name, "SOURCE_REVISION_INVALID",
+            "%s revisions run %s — they must run 1..N" % (sid, numbers)))
+
+    # --- why is this document in the corpus? --------------------------------
+    convs = {str(c.get("source_id", "")).strip(): c for c in conversation_sources(data)}
+    used = s.get("used_in")
+    used = used if isinstance(used, list) else []
+    resolved_uses = 0
+    for u in used:
+        if not isinstance(u, dict):
+            findings.append(Finding(proj.name, "SOURCE_USE_UNRESOLVED",
+                                    "%s: used_in entry is not an object" % sid))
+            continue
+        csid = str(u.get("source_id", "")).strip()
+        conv = convs.get(csid)
+        rev = bound_revision(conv) if conv else None
+        if conv is None or rev is None:
+            findings.append(Finding(
+                proj.name, "SOURCE_USE_UNRESOLVED",
+                "%s: used_in names %r, which is not a captured conversation of this "
+                "project" % (sid, csid or "?")))
+            continue
+        m = MSG_RANGE_RE.match(str(u.get("messages", "")).strip())
+        count = rev.get("message_count")
+        if not m:
+            findings.append(Finding(
+                proj.name, "SOURCE_USE_UNRESOLVED",
+                "%s: used_in %s names no message range — 'used' means used in "
+                "specific turns" % (sid, csid)))
+            continue
+        lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+        if lo < 1 or hi < lo or (isinstance(count, int) and hi > count):
+            findings.append(Finding(
+                proj.name, "SOURCE_USE_UNRESOLVED",
+                "%s: used_in %s msg %s does not resolve inside a %s-message capture"
+                % (sid, csid, u.get("messages"), count)))
+            continue
+        resolved_uses += 1
+    if role == "external_reference" and resolved_uses == 0:
+        findings.append(Finding(
+            proj.name, "SOURCE_USE_UNEVIDENCED",
+            "%s is an external_reference with no resolvable used_in — a reference "
+            "that no conversation demonstrably used is out of scope by default; "
+            "record the turns that used it, or do not register it" % sid))
+    if role == "conversation_attachment":
+        ref = s.get("attachment_ref")
+        ok = False
+        if isinstance(ref, dict):
+            csid = str(ref.get("source_id", "")).strip()
+            aid = str(ref.get("attachment_id", "")).strip()
+            conv = convs.get(csid)
+            if conv is not None:
+                try:
+                    number = int(ref.get("revision") or 0)
+                except (TypeError, ValueError):
+                    number = 0
+                mpath = att.manifest_path(proj.source_dir(csid), number) \
+                    if number else None
+                if mpath is not None and mpath.is_file():
+                    mdata, _ = att.load_manifest(mpath)
+                    ok = any(isinstance(a, dict)
+                             and str(a.get("attachment_id", "")).strip() == aid
+                             for a in ((mdata or {}).get("attachments") or []))
+        if not ok:
+            findings.append(Finding(
+                proj.name, "DOCUMENT_ATTACHMENT_UNBOUND",
+                "%s is a conversation_attachment but attachment_ref does not name an "
+                "attachment recorded in a bound revision's attachment manifest — the "
+                "document must be THE attachment the conversation carried" % sid))
+
+
 def bound_revision(source):
     """The revision the project actually stands on — extracted, else the latest.
 
@@ -902,7 +1177,7 @@ def attachment_records(proj, data):
     """
     records = []
     for s in data.get("sources") or []:
-        if not isinstance(s, dict):
+        if not isinstance(s, dict) or is_document(s):
             continue
         sid = str(s.get("source_id", "")).strip()
         rev = bound_revision(s)
@@ -1187,6 +1462,7 @@ def validate_project(proj):
     _validate_sources(proj, data, findings)
     _validate_attachments(proj, data, findings)
     _validate_inventory_history(proj, data, findings)
+    _validate_cut(proj, data, findings)
     validate_review_queue(proj, data, findings)
     validate_sweep_audit(proj, data, findings, require=False)
     _validate_index(proj, data, findings)
@@ -1208,10 +1484,27 @@ def validate_project(proj):
 def hard_gap_sources(data):
     out = []
     for s in data.get("sources") or []:
-        if isinstance(s, dict) and effective_state(s) in ("DISCOVERED", "CAPTURED",
-                                                          "FAILED"):
+        if not isinstance(s, dict):
+            continue
+        state = effective_state(s)
+        if is_document(s):
+            # a registered document whose bytes never arrived is a hard gap; a
+            # CAPTURED document is complete — there is nothing further to do to it
+            if state in ("DISCOVERED", "FAILED"):
+                out.append(s)
+        elif state in ("DISCOVERED", "CAPTURED", "FAILED"):
             out.append(s)
     return out
+
+
+def conversation_sources(data):
+    return [s for s in (data.get("sources") or [])
+            if isinstance(s, dict) and not is_document(s)]
+
+
+def document_sources(data):
+    return [s for s in (data.get("sources") or [])
+            if isinstance(s, dict) and is_document(s)]
 
 
 def unfinished_sources(data):
@@ -1256,15 +1549,32 @@ def cmd_coverage(proj, args):
     audit_current = audited == revision and revision > 0 and not any(
         f.code == "SWEEP_AUDIT_UNREMEDIATED" for f in findings)
 
-    by_state = {}
-    for s in sources:
-        by_state[effective_state(s)] = by_state.get(effective_state(s), 0) + 1
-
     print("PROJECT_COVERAGE — %s" % proj.name)
     print("INVENTORY_REVISION=%s" % revision)
-    print("SOURCES=%d  %s" % (len(sources), "  ".join(
+    convs = [s for s in sources if not is_document(s)]
+    docs = [s for s in sources if is_document(s)]
+    by_state = {}
+    for s in convs:
+        by_state[effective_state(s)] = by_state.get(effective_state(s), 0) + 1
+    print("SOURCES=%d  %s" % (len(convs), "  ".join(
         "%s:%d" % (state, by_state[state]) for state in SOURCE_STATES
         if state in by_state) or "(none)"))
+    if docs:
+        roles = {}
+        for d in docs:
+            r = str(d.get("evidence_role", "?")).strip()
+            roles[r] = roles.get(r, 0) + 1
+        doc_gaps = [d for d in docs if effective_state(d) != "CAPTURED"]
+        print("DOCUMENT_SOURCES=%d  (%s)" % (len(docs), "  ".join(
+            "%s:%d" % (k, roles[k]) for k in sorted(roles))))
+        print("DOCUMENT_COVERAGE_COMPLETE=%s%s"
+              % ("YES" if not doc_gaps else "NO",
+                 "" if not doc_gaps else "  (%s)" % ", ".join(
+                     str(d.get("source_id")) for d in doc_gaps)))
+    cstate = cut_state(proj, data, findings)
+    print("SOURCE_CUT=%s" % (str((data.get("source_cut") or {}).get("cut_sha256", ""))
+                             if cstate != "NONE" else "NONE"))
+    print("SOURCE_CUT_STATE=%s" % cstate)
     print("SOURCE_COVERAGE_COMPLETE=%s" % ("YES" if sources and not hard else "NO"))
     for s in hard:
         latest = latest_revision(s)
@@ -1863,6 +2173,25 @@ def cmd_capture(proj, args):
                       "is not a source change and never mints a revision"
                       % (r.get("revision"), args.source))
             print("SOURCE_SHA256=%s" % source_digest)
+            # v4.4 — a no-op is a MEASUREMENT, and it used to leave no trace: the
+            # r38 incremental sweep re-captured 11 sources, three came back
+            # byte-identical, and nothing in the manifest could later say "this
+            # source was byte-verified on that date". The `update_time` oracle
+            # (RQ-029) stood in for evidence because evidence was never written.
+            # Recording the verification date on the revision it confirmed is what
+            # lets `cut` require byte-verification instead of a platform's word.
+            # The inventory identity does not move (no bytes changed), so no
+            # inventory revision is minted.
+            if r is source.get("revisions", [])[-1]:
+                r["verified_unchanged_at"] = at
+                r["verified_unchanged_source_sha256"] = source_digest
+                save(proj, data)
+                print("VERIFIED_UNCHANGED_AT=%s (recorded on revision %s; the "
+                      "inventory identity is unchanged)" % (at, r.get("revision")))
+            else:
+                print("VERIFIED_UNCHANGED_AT=not recorded — the match is an OLDER "
+                      "revision than the latest; the latest revision is what a cut "
+                      "verifies")
             return 0
 
     n = len(source.get("revisions") or []) + 1
@@ -2282,6 +2611,727 @@ def cmd_finalize(proj, args):
     return 0 if status == "COMPLETE" else 1
 
 
+# ---------------------------------------------------------------- source cut --
+#
+# v4.4 — A CUT is the frozen, byte-verified source set a compile is derived from.
+# It exists because "the corpus as of date D" was never a provable statement: the
+# inventory revision says which sources exist, the revision hashes say what their
+# bytes are, but nothing said that every source was actually re-read against the
+# platform on or after D. RQ-029 records the gap exactly: 19 of 30 sources were
+# "unchanged" on the platform's update_time word, not on bytes. A cut refuses that.
+#
+#   SOURCE_CUT_UNVERIFIED  a source has neither a capture nor a byte-verification
+#                          on/after the cut date — the cut is not made
+#   SOURCE_CUT_BROKEN      a file the cut bound has different bytes now, or the
+#                          stored cut digest does not recompute — the cut is void
+#   SOURCE_CUT_STALE       the inventory moved past the cut (a new source or a new
+#                          revision arrived) — the cut is honest about the set
+#                          that existed when it was measured; recut to include more
+
+def _cut_lines(proj, data):
+    """Canonical lines over everything a compile may consume, hashed FROM DISK: every
+    source's latest revision (whole-file and body identity), every attachment
+    manifest, every attachment artifact, every document and text derivative, and
+    the inventory identity. Each line names the path it hashed, so a later validate
+    can tell a file that MOVED (broken) from a set that GREW (stale). Sorted, so churn
+    elsewhere cannot move the digest."""
+    lines = []
+
+    def file_line(tag, rel):
+        p = proj.corpus / rel
+        return "%s %s %s" % (tag, rel, sha256_file(p) if p.is_file() else "MISSING")
+
+    for s in data.get("sources") or []:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("source_id", "")).strip()
+        rev = latest_revision(s)
+        if not rev:
+            continue
+        rel = str(rev.get("path", "")).strip()
+        if is_document(s):
+            lines.append("DOC %s r%s %s" % (sid, rev.get("revision"),
+                                            file_line("", rel).strip()))
+            td = rev.get("text_derivative")
+            if isinstance(td, dict) and str(td.get("path", "")).strip():
+                lines.append(file_line("TXT", str(td.get("path", "")).strip()))
+            continue
+        p = proj.corpus / rel
+        body = transcript_source_sha256(p.read_text(encoding="utf-8")) \
+            if p.is_file() else "MISSING"
+        lines.append("SRC %s r%s %s %s" % (sid, rev.get("revision"),
+                                           file_line("", rel).strip(), body))
+        sdir = proj.source_dir(sid)
+        for mp in sorted(sdir.glob("attachments-r*.json")):
+            lines.append(file_line("ATT", proj.rel(mp)))
+        adir = sdir / "attachments"
+        if adir.is_dir():
+            for ap in sorted(adir.rglob("*")):
+                if ap.is_file():
+                    lines.append(file_line("ART", proj.rel(ap)))
+    lines.append("INV %s %s" % (data.get("inventory_revision"),
+                                str(data.get("inventory_sha256", "")).strip()))
+    lines.sort()
+    return lines
+
+
+_CUT_LINE_RE = re.compile(r"^(SRC|DOC) (\S+) r(\S+) (\S+) ([0-9a-f]{64}|MISSING)"
+                          r"|^(ATT|ART|TXT) (\S+) ([0-9a-f]{64}|MISSING)$")
+
+
+def _cut_bound_files(lines):
+    """[(path, sha256)] the cut froze — everything except the INV line."""
+    out = []
+    for ln in lines:
+        m = _CUT_LINE_RE.match(str(ln))
+        if not m:
+            continue
+        if m.group(1):
+            out.append((m.group(4), m.group(5)))
+        else:
+            out.append((m.group(7), m.group(8)))
+    return out
+
+
+def _cut_digest(lines):
+    return sha256_text("\n".join(lines) + "\n")
+
+
+def _branch_probe(proj, data):
+    """Shared verbatim message prefixes between conversations — the signal a
+    branched chat leaves in captured bytes (RND-223). Measured at every cut so the
+    question 'does this project contain branches?' is answered from evidence rather
+    than deferred forever. A pair with a shared prefix is REPORTED, never modelled:
+    lineage design waits for an observed branch, and this is the observation."""
+    heads = {}
+    for s in conversation_sources(data):
+        rev = latest_revision(s)
+        if not rev:
+            continue
+        p = proj.corpus / str(rev.get("path", "")).strip()
+        if not p.is_file():
+            continue
+        region, _ = transcript_source_region(p.read_text(encoding="utf-8"))
+        parts = re.split(r"^## Meddelande \d+ — [^\n]+$", region, flags=re.M)[1:]
+        heads[str(s.get("source_id", "")).strip()] = [
+            re.sub(r"\s+", " ", x).strip().lower() for x in parts]
+    pairs = []
+    ids = sorted(heads)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            k = 0
+            ma, mb = heads[a], heads[b]
+            while k < len(ma) and k < len(mb) and ma[k] and ma[k] == mb[k]:
+                k += 1
+            if k:
+                pairs.append({"a": a, "b": b, "shared_prefix_messages": k})
+    return {"sources_probed": len(ids), "shared_prefix_pairs": pairs}
+
+
+def _validate_cut(proj, data, findings):
+    cut = data.get("source_cut")
+    if cut is None:
+        return
+    if not isinstance(cut, dict):
+        findings.append(Finding(proj.name, "SOURCE_CUT_BROKEN",
+                                "source_cut is not an object"))
+        return
+    stored = str(cut.get("cut_sha256", "")).strip().lower()
+    lines = cut.get("lines")
+    if not isinstance(lines, list) or not stored:
+        findings.append(Finding(proj.name, "SOURCE_CUT_BROKEN",
+                                "source_cut carries no lines/cut_sha256 — a cut is a "
+                                "digest over named bytes, not a date"))
+        return
+    if _cut_digest([str(x) for x in lines]) != stored:
+        findings.append(Finding(
+            proj.name, "SOURCE_CUT_BROKEN",
+            "source_cut.cut_sha256 does not recompute from its own lines — the "
+            "record was edited after the cut"))
+        return
+    bound = [str(x) for x in lines]
+    # every FILE the cut bound must still hold the bytes it bound — that is what
+    # BROKEN means; a set that grew (new revision, new source, inventory moved) with
+    # every bound file intact is STALE
+    moved = []
+    for rel, digest in _cut_bound_files(bound):
+        p = proj.corpus / rel
+        actual = sha256_file(p) if p.is_file() else "MISSING"
+        if actual != digest:
+            moved.append((rel, digest, actual))
+    if moved:
+        rel, digest, actual = moved[0]
+        findings.append(Finding(
+            proj.name, "SOURCE_CUT_BROKEN",
+            "%d bound file(s) no longer hold the bytes the cut froze (first: %s, "
+            "bound %s…, now %s…) — a cut is void the moment its bytes move, and is "
+            "never repaired in place" % (len(moved), rel, digest[:12], actual[:12])))
+        return
+    now = _cut_lines(proj, data)
+    if set(now) != set(bound):
+        findings.append(Finding(
+            proj.name, "SOURCE_CUT_STALE",
+            "the corpus moved past cut %s… (inventory revision %s → %s; %d line(s) "
+            "now vs %d bound) — the cut is true of the set that existed when it was "
+            "measured; recut to bind what arrived since"
+            % (stored[:12], cut.get("inventory_revision"),
+               data.get("inventory_revision"), len(now), len(bound)),
+            level="WARN"))
+
+
+def cut_state(proj, data, findings=None):
+    """CURRENT | STALE | BROKEN | NONE, from the findings validate produced."""
+    if not isinstance(data.get("source_cut"), dict):
+        return "NONE"
+    codes = {f.code for f in (findings or [])}
+    if "SOURCE_CUT_BROKEN" in codes:
+        return "BROKEN"
+    if "SOURCE_CUT_STALE" in codes:
+        return "STALE"
+    return "CURRENT"
+
+
+def cmd_cut(proj, args):
+    findings, data = validate_project(proj)
+    if data is None:
+        for f in findings:
+            print(f)
+        return 1
+    at = args.at or today()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", at):
+        print("CUT_REFUSED — --at must be YYYY-MM-DD")
+        return 2
+    hard = fails(findings)
+    if hard:
+        print("CUT_REFUSED — the project record does not validate:")
+        for f in hard:
+            print(f)
+        return 1
+    sources = [s for s in data.get("sources") or [] if isinstance(s, dict)]
+    if not sources:
+        print("CUT_REFUSED — nothing to cut")
+        return 1
+    gaps = hard_gap_sources(data)
+    if gaps:
+        print("CUT_REFUSED — %d hard gap(s); a cut binds captured evidence only:"
+              % len(gaps))
+        for s in gaps:
+            print("  %s state=%s" % (s.get("source_id"), effective_state(s)))
+        return 1
+    unverified = []
+    for s in sources:
+        rev = latest_revision(s) or {}
+        cap = str(rev.get("captured_at", "")).strip()
+        ver = str(rev.get("verified_unchanged_at", "")).strip()
+        if not ((cap and cap >= at) or (ver and ver >= at)):
+            unverified.append((str(s.get("source_id")), cap or "-", ver or "-"))
+    if unverified:
+        print("SOURCE_CUT_UNVERIFIED — %d source(s) have no capture and no "
+              "byte-verification on or after %s:" % (len(unverified), at))
+        for sid, cap, ver in unverified:
+            print("  %s captured_at=%s verified_unchanged_at=%s" % (sid, cap, ver))
+        print("A platform's update_time is not evidence (RQ-029). Re-run `capture` "
+              "for each — a byte-identical rerun records verified_unchanged_at "
+              "without minting a revision — then cut again.")
+        return 1
+    lines = _cut_lines(proj, data)
+    digest = _cut_digest(lines)
+    probe = _branch_probe(proj, data)
+    record = {
+        "at": at,
+        "cut_sha256": digest,
+        "inventory_revision": data.get("inventory_revision"),
+        "inventory_sha256": data.get("inventory_sha256"),
+        "sources": len(conversation_sources(data)),
+        "documents": len(document_sources(data)),
+        "lines": lines,
+        "branch_probe": probe,
+        "note": args.note or "",
+    }
+    history = data.get("source_cut_history") or []
+    prior = data.get("source_cut")
+    if isinstance(prior, dict) and prior.get("cut_sha256") == digest:
+        print("CUT_UNCHANGED — the current cut already binds exactly these bytes")
+        print("SOURCE_CUT=%s" % digest)
+        return 0
+    if isinstance(prior, dict):
+        history.append(prior)
+    data["source_cut"] = record
+    data["source_cut_history"] = history
+    save(proj, data)
+    print("CUT %s at %s" % (proj.name, at))
+    print("SOURCE_CUT=%s" % digest)
+    print("INVENTORY_REVISION=%s  SOURCES=%d  DOCUMENTS=%d  LINES=%d"
+          % (record["inventory_revision"], record["sources"], record["documents"],
+             len(lines)))
+    print("BRANCH_PROBE sources=%d shared_prefix_pairs=%d%s"
+          % (probe["sources_probed"], len(probe["shared_prefix_pairs"]),
+             "" if not probe["shared_prefix_pairs"] else " — REPORTED, not modelled: "
+             + ", ".join("%s~%s(%d)" % (p["a"], p["b"], p["shared_prefix_messages"])
+                         for p in probe["shared_prefix_pairs"][:6])))
+    print("The cut is a statement about these bytes on this date. It goes STALE when "
+          "the inventory grows and BROKEN if any bound byte moves.")
+    return 0
+
+
+# ------------------------------------------------- attachment registration --
+#
+# v4.4 — Before this command an attachment manifest was hand-written, and the only
+# way bytes entered the corpus was by hand too. `register-attachment` takes a local
+# file — downloaded from the platform in a Chrome session, or supplied by the owner
+# from the tool that produced it — and records it as THE bytes of one attachment of
+# one bound revision: copied under sources/<CONV>/attachments/, hashed, named in
+# attachments-rN.json with capture_status CAPTURED_CONTENT (or RECOVERED_EXACT with
+# --recovered, which then requires --recovery-provenance). Every other field of the
+# manifest is computed from the transcript bytes exactly as `attachments` measures
+# them, so registering bytes can never talk the surface into AGREE by itself.
+#
+# What it refuses: replacing bytes already registered under an id (a different file
+# is a different attachment), a revision that is not the bound one, and a file whose
+# bytes are already registered under another id (a duplicate is declared, not
+# silently doubled).
+
+_ATT_EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+
+
+def _new_attachment_manifest(proj, source, rev):
+    target = proj.corpus / str(rev.get("path", "")).strip()
+    raw = target.read_text(encoding="utf-8")
+    declared, phrase = att.declared_attachments(raw)
+    signals = att.observed_signals(raw)
+    return {
+        "attachment_manifest_version": att.ATTACHMENT_MANIFEST_VERSION,
+        "source_id": str(source.get("source_id", "")).strip(),
+        "revision": rev.get("revision"),
+        "source_path": proj.rel(target),
+        "source_sha256": transcript_source_sha256(raw),
+        "declared_count": declared,
+        "declared_phrase": phrase,
+        "observed_lower_bound": att.observed_lower_bound(signals),
+        "observed_signals": signals,
+        "reconciliation": "UNKNOWN",
+        "full_source_capture": "UNKNOWN",
+        "provenance_note": "written by project_contract.py register-attachment; "
+                           "declared/observed are measured from the transcript bytes",
+        "attachments": [],
+    }
+
+
+def _refresh_attachment_manifest(proj, source, rev, data_m):
+    """Recompute every derived field from the bytes; keep rows and acknowledgement."""
+    target = proj.corpus / str(rev.get("path", "")).strip()
+    raw = target.read_text(encoding="utf-8")
+    declared, phrase = att.declared_attachments(raw)
+    signals = att.observed_signals(raw)
+    rows = [a for a in (data_m.get("attachments") or []) if isinstance(a, dict)]
+    evidence_recon, floor = att.reconcile(declared, signals, rows)
+    ack = att.owner_acknowledgement(data_m)
+    recon = att.apply_acknowledgement(evidence_recon, ack)
+    data_m["declared_count"] = declared
+    data_m["declared_phrase"] = phrase
+    data_m["observed_lower_bound"] = floor
+    data_m["observed_signals"] = signals
+    data_m["source_sha256"] = transcript_source_sha256(raw)
+    data_m["reconciliation"] = recon
+    data_m["full_source_capture"] = full_source_capture(rows, recon, declared)
+    return data_m
+
+
+def cmd_register_attachment(proj, args):
+    findings = []
+    data = load_manifest(proj, findings)
+    if data is None or fails(findings):
+        for f in findings:
+            print(f)
+        return 1
+    source = source_by_id(data, args.source)
+    if source is None or is_document(source):
+        print("REGISTER_REFUSED — %s is not a conversation source in this project"
+              % args.source)
+        return 2
+    rev = bound_revision(source)
+    if rev is None:
+        print("REGISTER_REFUSED — %s has no captured revision to bind an attachment "
+              "to" % args.source)
+        return 2
+    if args.revision is not None and int(args.revision) != int(rev.get("revision")):
+        print("REGISTER_REFUSED — attachments bind to the BOUND revision (r%s), not "
+              "r%s; a revision the project does not stand on carries no surface"
+              % (rev.get("revision"), args.revision))
+        return 2
+    src = Path(args.file)
+    if not src.is_file():
+        print("REGISTER_REFUSED — %s is not a readable file" % src)
+        return 2
+    payload = src.read_bytes()
+    if not payload:
+        print("REGISTER_REFUSED — %s is empty; zero bytes are not an attachment" % src)
+        return 2
+    digest = hashlib.sha256(payload).hexdigest()
+    number = int(rev.get("revision"))
+    mpath = att.manifest_path(proj.source_dir(args.source), number)
+    if mpath.is_file():
+        data_m, err = att.load_manifest(mpath)
+        if err or not isinstance(data_m, dict):
+            print("REGISTER_REFUSED — %s is unreadable: %s" % (proj.rel(mpath), err))
+            return 1
+    else:
+        data_m = _new_attachment_manifest(proj, source, rev)
+    rows = [a for a in (data_m.get("attachments") or []) if isinstance(a, dict)]
+    numeric = re.sub(r"\D", "", args.source) or "000"
+    aid = (args.attachment_id or "").strip()
+    if not aid:
+        used = {int(str(a.get("attachment_id", "")).rsplit("-", 1)[-1] or 0)
+                for a in rows if att.ATT_ID_RE.match(str(a.get("attachment_id", "")))}
+        aid = "ATT-%s-%03d" % (numeric, (max(used) + 1) if used else 1)
+    if not att.ATT_ID_RE.match(aid):
+        print("REGISTER_REFUSED — attachment id %r must match ATT-<source>-NNN" % aid)
+        return 2
+    for a in rows:
+        if str(a.get("content_sha256", "")).strip().lower() == digest \
+                and str(a.get("attachment_id", "")).strip() != aid:
+            print("REGISTER_REFUSED — these exact bytes are already registered as %s; "
+                  "a second copy is declared DUPLICATE against it, never registered "
+                  "twice" % a.get("attachment_id"))
+            return 2
+    existing = next((a for a in rows
+                     if str(a.get("attachment_id", "")).strip() == aid), None)
+    if existing is not None and att.attachment_bytes_available(
+            str(existing.get("capture_status", "")).strip().upper()):
+        if str(existing.get("content_sha256", "")).strip().lower() == digest:
+            print("REGISTER_UNCHANGED — %s already holds these bytes" % aid)
+            return 0
+        print("REGISTER_REFUSED — %s already holds different bytes; registered bytes "
+              "are never replaced. A different file is a different attachment" % aid)
+        return 2
+    if args.recovered and not (args.recovery_provenance or "").strip():
+        print("REGISTER_REFUSED — --recovered requires --recovery-provenance: a "
+              "recovered attachment must prove it is THE attachment bound to this "
+              "frozen revision, never a plausible file")
+        return 2
+    ext = ""
+    m = _ATT_EXT_RE.search(args.original_filename or src.name)
+    if m:
+        ext = m.group(0).lower()
+    adir = proj.source_dir(args.source) / "attachments"
+    adir.mkdir(parents=True, exist_ok=True)
+    dest = adir / ("%s-%s%s" % (aid, digest[:12], ext))
+    if dest.exists() and dest.read_bytes() != payload:
+        print("REGISTER_REFUSED — %s exists with different bytes" % proj.rel(dest))
+        return 2
+    if not dest.exists():
+        dest.write_bytes(payload)
+    at = args.at or today()
+    row = existing if existing is not None else {"attachment_id": aid,
+                                                 "ordinal": len(rows) + 1}
+    row.update({
+        "capture_status": "RECOVERED_EXACT" if args.recovered else "CAPTURED_CONTENT",
+        "materiality": (args.materiality or row.get("materiality") or "UNKNOWN").upper(),
+        "content_sha256": digest,
+        "artifact_path": proj.rel(dest),
+        "byte_length": len(payload),
+        "registered_at": at,
+    })
+    if args.original_filename:
+        row["original_filename"] = args.original_filename
+    if args.declared_kind:
+        row["declared_kind"] = args.declared_kind
+    if args.media_type:
+        row["media_type"] = args.media_type
+    if args.message_binding:
+        row["message_binding"] = args.message_binding
+    if args.recovered:
+        row["recovery_provenance"] = args.recovery_provenance.strip()
+        row["byte_identity"] = "ESTABLISHED"
+    # a bytes-in-hand row must not carry a semantic-access state that claims the
+    # opposite; drop the readable-external label the row may have carried while
+    # its bytes were absent
+    if str(row.get("semantic_accessibility", "")).strip().upper() == \
+            "SOURCE_BOUND_READABLE_EXTERNAL":
+        row.pop("semantic_accessibility", None)
+    if existing is None:
+        rows.append(row)
+    data_m["attachments"] = rows
+    _refresh_attachment_manifest(proj, source, rev, data_m)
+    # prove the manifest we are about to write holds the contract
+    pre = att.validate_manifest(data_m, args.source, number, proj.name, proj.corpus)
+    if fails(pre):
+        print("REGISTER_REFUSED — the resulting manifest would not validate:")
+        for f in pre:
+            print(f)
+        try:
+            if existing is None and dest.exists():
+                dest.unlink()
+        except OSError:
+            pass
+        return 1
+    write_json(mpath, data_m)
+    print("REGISTERED %s r%d %s → %s" % (args.source, number, aid, proj.rel(dest)))
+    print("CONTENT_SHA256=%s  BYTES=%d  STATUS=%s"
+          % (digest, len(payload), row["capture_status"]))
+    print("RECONCILIATION=%s  FULL_SOURCE_CAPTURE=%s  (derived from the bytes, "
+          "never asserted)" % (data_m["reconciliation"], data_m["full_source_capture"]))
+    return 0
+
+
+# --------------------------------------------------- document registration --
+
+_DOC_EXT_MEDIA = {".md": "text/markdown", ".txt": "text/plain", ".json": "application/json",
+                  ".csv": "text/csv", ".pdf": "application/pdf", ".html": "text/html"}
+
+
+def _parse_used_in(specs):
+    out = []
+    for spec in specs or []:
+        m = re.match(r"^(CONV-\d{3,}):(\d+(?:-\d+)?)$", str(spec).strip())
+        if not m:
+            return None, spec
+        out.append({"source_id": m.group(1), "messages": m.group(2)})
+    return out, None
+
+
+def cmd_register_document(proj, args):
+    findings = []
+    data = load_manifest(proj, findings)
+    if data is None or fails(findings):
+        for f in findings:
+            print(f)
+        return 1
+    if args.role not in DOCUMENT_ROLES:
+        print("REGISTER_REFUSED — --role must be one of %s" % list(DOCUMENT_ROLES))
+        return 2
+    src = Path(args.file)
+    if not src.is_file():
+        print("REGISTER_REFUSED — %s is not a readable file" % src)
+        return 2
+    payload = src.read_bytes()
+    if not payload:
+        print("REGISTER_REFUSED — %s is empty" % src)
+        return 2
+    digest = hashlib.sha256(payload).hexdigest()
+    for d in document_sources(data):
+        for r in d.get("revisions") or []:
+            if str(r.get("sha256", "")).strip().lower() == digest:
+                print("REGISTER_UNCHANGED — these bytes are already %s r%s"
+                      % (d.get("source_id"), r.get("revision")))
+                return 0
+    used, bad = _parse_used_in(args.used_in)
+    if bad is not None:
+        print("REGISTER_REFUSED — --used-in %r must look like CONV-013:141-152" % bad)
+        return 2
+    if args.role == "external_reference" and not used:
+        print("REGISTER_REFUSED — an external_reference must name where a conversation "
+              "USED it (--used-in CONV-NNN:a-b); a reference merely mentioned is out "
+              "of scope by default")
+        return 2
+    attachment_ref = None
+    if args.role == "conversation_attachment":
+        m = re.match(r"^(CONV-\d{3,}):r(\d+):(ATT-[A-Za-z0-9]+-\d{3,})$",
+                     (args.attachment or "").strip())
+        if not m:
+            print("REGISTER_REFUSED — a conversation_attachment names its attachment "
+                  "as --attachment CONV-NNN:rN:ATT-NNN-NNN")
+            return 2
+        attachment_ref = {"source_id": m.group(1), "revision": int(m.group(2)),
+                          "attachment_id": m.group(3)}
+    existing_ids = [int(str(d.get("source_id", "")).rsplit("-", 1)[-1] or 0)
+                    for d in document_sources(data)
+                    if DOC_ID_RE.match(str(d.get("source_id", "")))]
+    sid = args.doc_id or ("DOC-%03d" % ((max(existing_ids) + 1) if existing_ids else 1))
+    if not DOC_ID_RE.match(sid) or source_by_id(data, sid) is not None:
+        print("REGISTER_REFUSED — document id %r is invalid or taken" % sid)
+        return 2
+    ext = (_ATT_EXT_RE.search(src.name) or [None])[0] if _ATT_EXT_RE.search(src.name) else ""
+    ext = (ext or "").lower()
+    ddir = proj.source_dir(sid)
+    ddir.mkdir(parents=True, exist_ok=True)
+    dest = ddir / ("document%s" % ext)
+    if dest.exists():
+        print("REGISTER_REFUSED — %s exists; a registered document is never "
+              "overwritten" % proj.rel(dest))
+        return 2
+    dest.write_bytes(payload)
+    at = args.at or today()
+    is_text = _looks_text(payload)
+    rev = {
+        "revision": 1, "path": proj.rel(dest), "sha256": digest,
+        "byte_length": len(payload),
+        "line_count": line_count_of(payload) if is_text else None,
+        "media_type": args.media_type or _DOC_EXT_MEDIA.get(ext, "application/octet-stream"),
+        "captured_at": at, "adapter": "file", "verified": True,
+    }
+    if args.text_derivative:
+        tsrc = Path(args.text_derivative)
+        if not tsrc.is_file():
+            print("REGISTER_REFUSED — text derivative %s is not a file" % tsrc)
+            dest.unlink()
+            return 2
+        if not (args.text_tool or "").strip():
+            print("REGISTER_REFUSED — --text-derivative requires --text-tool (the "
+                  "producer, e.g. 'pdftotext -layout (poppler 26.08)')")
+            dest.unlink()
+            return 2
+        tbytes = tsrc.read_bytes()
+        tdest = ddir / "text.txt"
+        tdest.write_bytes(tbytes)
+        rev["text_derivative"] = {"path": proj.rel(tdest),
+                                  "sha256": hashlib.sha256(tbytes).hexdigest(),
+                                  "line_count": line_count_of(tbytes),
+                                  "tool": args.text_tool.strip()}
+    record = {
+        "source_id": sid, "kind": "document", "title": args.title or src.name,
+        "evidence_role": args.role, "origin": args.origin or "",
+        "discovered_at": at, "state": "CAPTURED",
+        "revisions": [rev], "used_in": used or [], "errors": [],
+    }
+    if attachment_ref:
+        record["attachment_ref"] = attachment_ref
+    data.setdefault("sources", []).append(record)
+    # prove before writing: the record must validate as a document
+    pre = []
+    recorded = set()
+    _validate_document(proj, data, record, sid, pre, recorded)
+    if fails(pre):
+        print("REGISTER_REFUSED — the document record would not validate:")
+        for f in pre:
+            print(f)
+        data["sources"].remove(record)
+        for p in (dest, ddir / "text.txt"):
+            if p.exists():
+                p.unlink()
+        return 1
+    bump_inventory(proj, data, at, "register-document %s (%s)" % (sid, args.role))
+    save(proj, data)
+    print("REGISTERED %s (%s) → %s" % (sid, args.role, proj.rel(dest)))
+    print("SHA256=%s  BYTES=%d  LINES=%s  TEXT_DERIVATIVE=%s"
+          % (digest, len(payload), rev["line_count"],
+             "yes" if rev.get("text_derivative") else "no"))
+    print("USED_IN=%s" % (", ".join("%s:%s" % (u["source_id"], u["messages"])
+                                    for u in (used or [])) or "—"))
+    print("INVENTORY_REVISION=%s" % data["inventory_revision"])
+    for f in pre:
+        print(f)
+    return 0
+
+
+# ---------------------------------------------------------------- chain --
+#
+# v4.4 — ONE generated status vector over the whole chain. R38's closeout vector was
+# written by hand, which is the one thing a completeness vector must never be: a
+# hand can type YES. Every line here is read from an instrument that already exists
+# (enumeration, cut, attachment surface, the RND contract, the projection contract)
+# and the exit code is the conjunction. A missing link is CHAIN_COMPLETE=NO.
+
+def cmd_chain(proj, args):
+    findings, data = validate_project(proj)
+    if data is None:
+        for f in findings:
+            print(f)
+        return 1
+    ok = True
+    lines = []
+    enum = data.get("enumeration") or {}
+    verified = enum.get("verified") is True
+    lines.append("ENUMERATION_VERIFIED=%s" % ("YES" if verified else "NO"))
+    ok &= verified
+    hard = hard_gap_sources(data)
+    complete = bool(data.get("sources")) and not hard and not fails(findings)
+    lines.append("SOURCE_COVERAGE_COMPLETE=%s" % ("YES" if complete else "NO"))
+    ok &= complete
+    cstate = cut_state(proj, data, findings)
+    cut = data.get("source_cut") if isinstance(data.get("source_cut"), dict) else {}
+    lines.append("SOURCE_CUT=%s" % (cut.get("cut_sha256") if cstate != "NONE" else "NONE"))
+    lines.append("SOURCE_CUT_STATE=%s" % cstate)
+    ok &= cstate == "CURRENT"
+    records = attachment_records(proj, data)
+    per = []
+    for r in records:
+        per.append("%s:%s" % (r["source_id"],
+                              full_source_capture(r["attachments"], r["reconciliation"],
+                                                  r["declared_count"])))
+    lines.append("FULL_SOURCE_CAPTURE=%s" % (",".join(per) or "-"))
+    unreconciled = sum(1 for r in records if r["evidence_reconciliation"] == "DISAGREE"
+                       and r["owner_acknowledgement"] is None)
+    lines.append("CORPUS_INTEGRITY=%s" % ("PASS" if unreconciled == 0 else "FAIL"))
+    ok &= unreconciled == 0
+    docs = document_sources(data)
+    lines.append("DOCUMENT_SOURCES=%d" % len(docs))
+
+    # --- compile link ----------------------------------------------------
+    rnd_ok = False
+    turns = "-"
+    sem = "NO"
+    if args.compile:
+        try:
+            import rnd_contract as rc
+            rf, summary = rc.validate_compile(proj.corpus, args.compile)
+            ir, _ = rc.load_ir(proj.corpus, args.compile)
+            af, meta = (rc.validate_audit(proj.corpus, args.compile, ir)
+                        if ir is not None else ([], {"audited": False}))
+            rnd_ok = ir is not None and not fails(rf) and not fails(af)
+            try:
+                ver = int((ir or {}).get("rnd_ir_version") or 1)
+            except (TypeError, ValueError):
+                ver = 1
+            sem = "YES" if ver >= rc.IR_VERSION_SEMANTIC else "NO"
+            if summary and isinstance(summary, dict):
+                turns = summary.get("turns_accounted", "-")
+            src = (ir or {}).get("source_set") or {}
+            bound_cut = str(src.get("cut_sha256", "")).strip()
+            lines.append("RND_COMPILE=%s" % args.compile)
+            lines.append("RND_COMPILE_VALID=%s" % ("YES" if rnd_ok else "NO"))
+            lines.append("RND_COMPILE_AUDITED=%s" % ("YES" if meta.get("audited") else "NO"))
+            lines.append("RND_SEMANTIC_RULES_APPLIED=%s" % sem)
+            lines.append("RND_IR_VERSION=%s" % ver)
+            lines.append("TURNS_ACCOUNTED=%s" % turns)
+            cut_bound = bool(bound_cut) and bound_cut == cut.get("cut_sha256")
+            lines.append("RND_BOUND_TO_CUT=%s" % ("YES" if cut_bound else "NO"))
+            ok &= rnd_ok and bool(meta.get("audited")) and ver >= rc.IR_VERSION_ATOMIC \
+                and cut_bound and turns == "100%"
+        except Exception as exc:                                 # noqa: BLE001
+            lines.append("RND_COMPILE_VALID=NO (%s)" % exc)
+            ok = False
+    else:
+        lines.append("RND_COMPILE=NONE")
+        ok = False
+
+    # --- projection link -------------------------------------------------
+    if args.vault:
+        try:
+            import obsidian_projection as op
+            pf, pmeta = op.verify_vault(proj.corpus, args.compile, Path(args.vault))
+            pv = not fails(pf)
+            lines.append("PROJECTION_VAULT=%s" % args.vault)
+            lines.append("PROJECTION_VERIFIED=%s" % ("YES" if pv else "NO"))
+            lines.append("PROJECTION_CARDS=%s" % pmeta.get("cards", "-"))
+            ok &= pv
+        except Exception as exc:                                 # noqa: BLE001
+            lines.append("PROJECTION_VERIFIED=NO (%s)" % exc)
+            ok = False
+    else:
+        lines.append("PROJECTION_VAULT=NONE")
+        ok = False
+    # --- the skill itself: version and drift (D1) --------------------------
+    try:
+        import skill_version
+        vlines, state, _ = skill_version.report()
+        lines.append([ln for ln in vlines if ln.startswith("INTAKE_SKILL_VERSION=")][0])
+        lines.append("SKILL_DRIFT=%s" % state)
+        if getattr(args, "require_skill_frozen", False):
+            ok &= state == "NONE"
+    except Exception as exc:                                     # noqa: BLE001
+        lines.append("SKILL_DRIFT=UNKNOWN (%s)" % exc)
+        if getattr(args, "require_skill_frozen", False):
+            ok = False
+    lines.append("CHAIN_COMPLETE=%s" % ("YES" if ok else "NO"))
+    print("INTAKE_CHAIN — %s" % proj.name)
+    for ln in lines:
+        print("  " + ln)
+    print("Every line above is read from an instrument; none can be typed to YES. "
+          "CHAIN_COMPLETE is the conjunction and the exit code.")
+    return 0 if ok else 1
+
+
 def cmd_validate_all(args):
     corpus = corpus_root(args.corpus)
     root = Path(corpus) / PROJECTS_DIR
@@ -2410,6 +3460,52 @@ def main(argv=None):
     p.add_argument("--lines", action="store_true",
                    help="print the canonical source-surface identity lines")
 
+    p = add("cut", "freeze a byte-verified source cut for a compile to bind to")
+    p.add_argument("--at", help="YYYY-MM-DD — every source must be captured or "
+                                "byte-verified on/after this date")
+    p.add_argument("--note")
+
+    p = add("register-attachment", "record the bytes of one attachment of the bound "
+                                   "revision (v4.4)")
+    p.add_argument("--source", required=True)
+    p.add_argument("--file", required=True)
+    p.add_argument("--revision", type=int)
+    p.add_argument("--attachment-id")
+    p.add_argument("--original-filename")
+    p.add_argument("--declared-kind")
+    p.add_argument("--media-type")
+    p.add_argument("--materiality", choices=["MATERIAL", "NON_MATERIAL", "UNKNOWN"])
+    p.add_argument("--message-binding", help="e.g. 'owner msg 12'")
+    p.add_argument("--recovered", action="store_true",
+                   help="historical bytes recovered later — requires "
+                        "--recovery-provenance")
+    p.add_argument("--recovery-provenance")
+    p.add_argument("--at")
+
+    p = add("register-document", "register a project document as a DOC-NNN source "
+                                 "(v4.4) — evidence, never a conversation")
+    p.add_argument("--file", required=True)
+    p.add_argument("--role", required=True, choices=list(DOCUMENT_ROLES))
+    p.add_argument("--title")
+    p.add_argument("--origin", help="platform file id, URL, or where the bytes came from")
+    p.add_argument("--used-in", action="append",
+                   help="CONV-NNN:a-b — the turns that used it (repeatable)")
+    p.add_argument("--attachment", help="CONV-NNN:rN:ATT-NNN-NNN for a "
+                                        "conversation_attachment")
+    p.add_argument("--doc-id")
+    p.add_argument("--media-type")
+    p.add_argument("--text-derivative", help="line-addressable text form of a binary")
+    p.add_argument("--text-tool", help="the producer of the text derivative")
+    p.add_argument("--at")
+
+    p = add("chain", "one generated status vector over enumeration → cut → "
+                     "attachments → compile → projection (v4.4)")
+    p.add_argument("--compile")
+    p.add_argument("--vault")
+    p.add_argument("--require-skill-frozen", action="store_true",
+                   help="the chain is complete only when the installed skill is "
+                        "byte-identical to its registered freeze (SKILL_DRIFT=NONE)")
+
     p = sub.add_parser("validate", parents=[common], help="structural corpus sweep")
     p.add_argument("--project", action="append")
 
@@ -2452,6 +3548,14 @@ def main(argv=None):
         return cmd_attachments(proj, args)
     if args.cmd == "finalize":
         return cmd_finalize(proj, args)
+    if args.cmd == "cut":
+        return cmd_cut(proj, args)
+    if args.cmd == "register-attachment":
+        return cmd_register_attachment(proj, args)
+    if args.cmd == "register-document":
+        return cmd_register_document(proj, args)
+    if args.cmd == "chain":
+        return cmd_chain(proj, args)
     return 2
 
 

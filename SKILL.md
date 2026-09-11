@@ -1275,6 +1275,72 @@ validator has to be able to tell *source claims X* from *X independently verifie
 *the claim survives but its carrier cannot now be checked*. Versions 1 and 2 keep
 validating under the rules they were published against.
 
+**P2.7 — Bytes of an attachment (v4.4).** `register-attachment --project P --source
+CONV-NNN --file F [--original-filename N] [--declared-kind K] [--materiality M]
+[--message-binding "owner msg 12"] [--recovered --recovery-provenance …]` records a
+local file as THE bytes of one attachment of the BOUND revision: copied under
+`sources/CONV-NNN/attachments/<ATT-id>-<sha12><ext>`, hashed, named in
+`attachments-rN.json` as `CAPTURED_CONTENT` (or `RECOVERED_EXACT`, which then
+requires a recovery provenance strong enough to prove it is the attachment bound to
+that frozen revision). Everything else in the manifest — declared count, observed
+signals, reconciliation, `FULL_SOURCE_CAPTURE` — is measured from the transcript
+bytes exactly as `attachments` measures them, so registering bytes never talks the
+surface into AGREE by itself. Refused: replacing bytes under an id (a different file
+is a different attachment), a second copy of registered bytes (declare it
+`DUPLICATE` against the first), a revision the project does not stand on. The bytes
+themselves come from a Chrome session (the platform's file endpoint, time-boxed) or
+from the owner's own tool; the capture adapter records the platform's file ids and
+names alongside the transcript so the next session can fetch by identity rather than
+by guess. **The frozen r38 states are not reopened by this:** `R38_RECOVERY =
+TERMINAL_UNLESS_NEW_PRIMARY_EVIDENCE` stands, and `UNAVAILABLE` is never reclassified
+by a command.
+
+**P2.8 — Documents are project evidence, never conversations (v4.4).** A ChatGPT
+project carries files as well as chats — uploaded specs, pasted plans, an archive the
+owner reviewed — and the owner decided (D2, 2026-09-11) that the ones that affected
+analysis, decisions, design or implementation are IN "the whole project". They are
+registered as a second source KIND:
+
+    register-document --project P --file F --role project_file|conversation_attachment|external_reference
+                      [--title T] [--origin O] [--used-in CONV-NNN:a-b …]
+                      [--attachment CONV-NNN:rN:ATT-NNN-NNN] [--text-derivative T --text-tool "…"]
+
+A document gets a stable `DOC-NNN` id, whole-file `sha256`, `line_count` (or a text
+derivative with its own hash, line count and producing tool, for a binary), and an
+`evidence_role` that says WHY it is here. `external_reference` must name the turns
+that actually used it (`used_in`), or it is refused — a link somebody mentioned is
+out of scope by default (`SOURCE_USE_UNEVIDENCED`, `SOURCE_USE_UNRESOLVED`);
+`conversation_attachment` must be an attachment a bound revision's manifest records
+(`DOCUMENT_ATTACHMENT_UNBOUND`). Documents are NOT treated as conversations: no
+turns, no roles, no owner voice, no extraction/routing lifecycle — DISCOVERED until
+the bytes are in, then CAPTURED, and a compile cites them by LINE
+(`{"source_id": "DOC-001", "revision": 1, "lines": "12-14"}`), never by message. A
+document can never back an OWNER_DECISION. `coverage` reports them on their own lines
+(`DOCUMENT_SOURCES`, `DOCUMENT_COVERAGE_COMPLETE`) and they never inflate
+`SOURCE_COVERAGE_COMPLETE`. FILE-002 (the non-byte-identical masterplan recovery)
+stays outside by the owner's RQ-032: a recovery that is not the bytes is not a source.
+
+**P2.9 — The source cut (v4.4).** "The corpus as of date D" was never a provable
+statement: the inventory said which sources existed and the revision hashes said what
+their bytes were, but nothing said every source had been re-read against the
+platform on or after D — RQ-029 records 19 of 30 sources "unchanged" on the
+platform's `update_time`, not on bytes. Two changes close that. A byte-identical
+re-`capture` now WRITES its measurement: `verified_unchanged_at` (and the verified
+`source_sha256`) on the latest revision, no inventory revision minted because no
+bytes moved. And `cut --project P --at D` freezes a digest over everything a compile
+may consume — every source's latest revision (whole-file and body identity, hashed
+from disk), every attachment manifest and artifact, every document and text
+derivative, the inventory identity — REFUSING unless every source has a capture or a
+byte-verification on/after D (`SOURCE_CUT_UNVERIFIED`) and the project has no hard
+gap. It also runs the branch probe (shared verbatim message prefixes between
+conversations, the trace a branched chat leaves in captured bytes — RND-223) and
+reports the count; lineage design waits for an observed branch, and the cut is where
+the observation happens. Afterwards `validate` re-hashes every bound file:
+`SOURCE_CUT_BROKEN` (a bound byte moved — the cut is void, never repaired),
+`SOURCE_CUT_STALE` (the set grew — honest, a WARN, recut to bind what arrived), and
+`coverage` prints `SOURCE_CUT=<sha>` and `SOURCE_CUT_STATE`. A compile `init`-ed
+afterwards binds `cut_sha256`, and the chain reports `RND_BOUND_TO_CUT`.
+
 **P3 — Extract.** Distill each verified conversation with the normal Phase 2
 templates — zero, one or several ideas per conversation. Deliver each conversation
 into each extracted idea package as an episode transcript (byte-identical copy), then
@@ -1577,9 +1643,89 @@ never edited, each bound to the `ir_sha256` it audited; no round closes its own
 finding; only an owner-answered review-queue entry naming a finding dismisses it; an
 unremediated material finding keeps `RND_COMPILE_AUDITED=NO`.
 
+**v4.4 — version 4: atomic records, every turn, every contradiction, every record's
+lineage (`rnd_ir_version: 4`, `init --atomic`).** A superset of 3 (which is a superset
+of 2): everything above still binds. Four obligations the owner named as core
+requirements on 2026-09-11, each measured against the published c4 compile before
+it was written — 489 records with no atomicity, median claim 667 chars and 80 %
+multi-sentence; 201 of 1139 assistant turns cited by nothing and ledgered nowhere;
+65 of 86 owner decisions without a standing and 7 of 14 contradiction pairs with no
+standing on either side; record ids that were consistent across r38 → c1 → c4 (0
+moved, 0 changed under a kept id) without any rule saying they had to be.
+
+*Atomicity is SEMANTIC, and stated so it can be validated and mutant-tested.* A
+record represents ONE independent claim that carries its own provenance, epistemic
+status, standing, relations, reconciliation and supersession; if parts of a claim can
+change, be contradicted or be superseded independently, they are separate records.
+The IR shows that, so the validator can check it: (ATOM-1) a `supersedes` or
+`contradicts` relation with a `scope` qualifier reaches only PART of its target,
+which proves the target is compound — `RND_CLAIM_PARTIALLY_SUPERSEDED`, split it (c4
+carried exactly one: RND-358 → RND-136); (ATOM-2) a `COMPOSITE` record is a container
+naming ≥ 2 `ATOMIC` parts via `composed_of` and carries no standing, activation
+condition, contradicts or supersedes of its own (`RND_COMPOSITE_PARTS_MISSING`,
+`RND_COMPOSITE_CARRIES_STATE`, `RND_COMPOSITE_NESTED`); (ATOM-3) every record declares
+`atomicity` (`RND_ATOMICITY_MISSING`, `RND_ATOMICITY_INVALID`); (ATOM-4) a record that
+LOOKS compound — enumerated sub-claims, many clauses, ≥ 400 chars — is a WARN
+(`RND_CLAIM_COMPOUND_SUSPECT`) that points; the reader decides, and the audit
+vocabulary carries `RND_COMPOUND_CLAIM` for that verdict. A version-4 audit round says
+it looked (`- atomicity_reviewed: yes`) or it is not an audit
+(`RND_AUDIT_ATOMICITY_UNREVIEWED`).
+
+*Every turn of every role is accounted for.* `turn_ledger` replaces the owner-only
+ledger: each message of every bound conversation is cited by a record's provenance
+or listed with a closed reason — owner reasons as in v4.1, assistant reasons
+`covered-by-cited-range`, `restates-owner`, `elaboration-no-new-claim`,
+`tool-or-machine-output`, `no-material-content` — and a reason that does not fit the
+turn's role accounts for nothing (`RND_TURN_LEDGER_ROLE_MISMATCH`). `RND_TURN_UNACCOUNTED`
+names the source, the count by role and the numbers. The v4.1 owner obligations are
+checked over the same ledger, so nothing is weaker than before. What a reason MEANS is
+still review's question (`RND_TURN_MISACCOUNTED` in the audit vocabulary); the ratio
+is code's: ledgering ≥ 90 % of ≥ 20 assistant turns is not compiling
+(`RND_ASSISTANT_TURNS_MOSTLY_LEDGERED`). `validate` summarises `TURNS_ACCOUNTED`, and
+the chain requires 100 %.
+
+*Standing is required where it matters.* OWNER_DECISION, REQUIREMENT and OPTION
+records carry a `standing` (`RND_STANDING_MISSING`) — without one a rejected position
+reads as live.
+
+*Every contradiction is reconciled, and silence is written down as UNKNOWN.*
+`contradiction_register` names every `contradicts` pair: `RESOLVED` by a record that
+`supersedes` one side (owner authority still required where an owner decision is
+superseded) with the superseded side standing SUPERSEDED/REJECTED/HISTORICAL
+(`RND_CONTRADICTION_RESOLUTION_UNBACKED` otherwise), or `UNRESOLVED` with an UNKNOWN
+record relating to both sides. A pair not in the register, or an UNRESOLVED pair
+without its UNKNOWN record, is `RND_CONTRADICTION_UNRECONCILED`; the field itself is
+mandatory (`RND_CONTRADICTION_REGISTER_MISSING`) — an empty list is a valid answer.
+Both sides of every contradiction survive as records either way.
+
+*Identity is proved, not assumed (D6).* Every record carries a `fingerprint` =
+sha256(kind | normalised claim | sorted provenance), recomputed on every validate
+(`RND_FINGERPRINT_MISSING`, `RND_FINGERPRINT_MISMATCH`); the probe over r38/c1/c4 found
+0 collisions across 489 records. With `lineage_baseline: {compile, ir_sha256}` (set by
+`init --baseline C`), a record may declare `lineage: [{id, relation}]` — `SAME`
+(fingerprints equal), `REVISED` (they differ), `SPLIT_FROM`, `MERGED_FROM` — and the
+validator checks the relation against the fingerprints (`RND_LINEAGE_RELATION_FALSE`),
+the baseline identity (`RND_LINEAGE_BASELINE_MISMATCH`), the target's existence
+(`RND_LINEAGE_DANGLING`), an identical record presented as new
+(`RND_LINEAGE_UNDECLARED`), and baseline records that vanished with no `retired`
+reason (`RND_LINEAGE_RETIRED_UNDECLARED`, a WARN). Ids stay the compiler's; the
+fingerprint is what a later compile relates to.
+
+*Documents cite by line.* A `kind: document` source in the set binds by whole-file
+sha256 and line extent (text derivative first); provenance uses `lines`, resolves
+against the bytes (`RND_PROVENANCE_OUT_OF_RANGE`), grants no role, and a document can
+never back an owner decision.
+
+*A scoped compile is a declared scope, never a smaller corpus.* `init --only
+CONV-004,CONV-009` binds the named sources and records every other source as
+EXCLUDED with the reason, visible in the IR (and, above the threshold, warned as
+`RND_SOURCE_SET_MOSTLY_EXCLUDED`). The v4.4 proving run used exactly this on a
+corpus copy.
+
 **The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
 
-    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D] [--semantic]
+    rnd_contract.py  init --compile C (--project P | --source PATH …) [--title T] [--at D]
+                          [--semantic | --atomic] [--baseline C0] [--only CONV-NNN,…]
                      validate [--compile C]      # falsify one compile, or all
                      coverage --compile C        # lens table + standing laws
                      render --compile C [--write]  # deterministic RND-COVERAGE.md
@@ -1603,10 +1749,17 @@ runs inside a compile):
          revision + per-source revision identities, or explicit digests);
          excluded/uncaptured sources visible in the IR, never absorbed
 [ ] RC2. Items derived into rnd-ir.json: seven kinds only; every item has claim,
-         scope, explicit uncertainty, exact provenance (source + message range);
-         OWNER_DECISION only where an owner voice or owner-answered RQ backs it;
-         contradictions recorded as relations, both sides preserved; activation
-         conditions recorded as information where the source motivates them
+         scope, explicit uncertainty, exact provenance (source + message range, or
+         lines for a document); OWNER_DECISION only where an owner voice or
+         owner-answered RQ backs it; contradictions recorded as relations, both
+         sides preserved; activation conditions recorded as information where the
+         source motivates them
+[ ] RC2b (version 4) every record ATOMIC or a COMPOSITE of atomic parts, with its
+         fingerprint; standing on every OWNER_DECISION/REQUIREMENT/OPTION;
+         turn_ledger accounts for EVERY turn of every role not cited by a record;
+         contradiction_register names every contradicts pair RESOLVED or
+         UNRESOLVED-with-UNKNOWN; lineage declared against the baseline compile
+         where one exists, retirements with reasons
 [ ] RC3. Coverage lens complete: all twelve baseline rows, UNKNOWN where evidence
          is absent, owner-backed states carry OWNER_DECISION basis; extra lenses
          welcome, omissions impossible
@@ -1621,6 +1774,87 @@ runs inside a compile):
          push. No idea package, plan, status or INDEX row was touched — state it.
          Recompile, prioritization and activation are explicitly NOT started here.
 ```
+
+## Obsidian projection (v4.4) — a derivative that can never become the truth
+
+The mapping pilot (2026-09-09) showed what a reader wants: one card per record with
+its claim, quote, provenance rows back into the corpus, relations and lineage; lens
+views as canvases; a place for the reader's own notes and arrows that survives every
+re-render. The pilot also showed what a projection must never be allowed to become:
+a second, competing source of truth — cards edited by hand, positions read as
+meaning, a note that says `priority: high`. `scripts/obsidian_projection.py` lifts the
+pilot's principles into a contract and adds the refusals:
+
+    obsidian_projection.py render --corpus C --compile K --vault V [--write]
+    obsidian_projection.py verify --corpus C --compile K --vault V
+
+The vault is a SEPARATE directory — a separate repository (owner decision D3), never
+inside the corpus (refused). `render` writes `kort/<RND-id>.md` per record,
+`kort/SRC-<id>.md` per bound source, `linser/<lens>.canvas` per coverage lens (plus
+`unlensed`, `oplacerat`, `kallor`), `INDEX.md` and `projection-manifest.json`
+binding `ir_sha256`, `cut_sha256`, the corpus commit and the sha of every generated
+region. Deterministic: no clocks, Obsidian's own canvas serialisation (tab indent, one
+object per line, file order preserved) so a save without edits is a no-op. Preserving:
+a card's `## Anteckningar` section is carried across renders byte for byte; generated
+canvas objects (`pj:` ids) are refreshed only where they are still what the generator
+last wrote, a moved node stays moved, a manual node or edge is never touched, a
+manually deleted generated node is never recreated (tombstoned in
+`.projection-state.json`). `verify` is the chain link:
+
+    PROJECTION_STALE                 manifest ir_sha256/cut ≠ the compile's, or a
+                                     generated region was edited or is behind the IR
+    PROJECTION_ITEM_MISSING          a record without a card
+    PROJECTION_CARD_ORPHANED         a card whose record the IR does not hold (unless
+                                     marked `retired: true`, which keeps its notes)
+    PROJECTION_PROVENANCE_UNRESOLVED a card's provenance row resolves to no bound bytes
+    PROJECTION_AUTHORITY_VOCABULARY  priority/status/disposition/rank/… in a card —
+                                     generated OR annotation — the vault is not a backlog
+    PROJECTION_ANNOTATION_LOST       a notes section or a recorded manual canvas
+                                     object is gone
+    PROJECTION_NONDETERMINISTIC      two renders differ
+    PROJECTION_CANVAS_INVALID        unparsable canvas, dangling edge, missing file node
+    PROJECTION_MANIFEST_MISSING      nothing binds the vault to a compile
+
+A projection carries no execution authority and no priority; a card is a reading of a
+record, the record is canonical, the corpus is evidence. Systemvyer (the pilot's eight
+areas from FILE-001) are an interpretation layer and stay pilot-side as annotation.
+
+## The intake chain (v4.4) — one generated vector
+
+R38's closeout vector was typed by hand, which is the one thing a completeness vector
+must never be. `project_contract.py chain --project P [--compile K] [--vault V]
+[--require-skill-frozen]` reads every line from an instrument that already exists and
+prints the conjunction:
+
+    ENUMERATION_VERIFIED=YES|NO          SOURCE_COVERAGE_COMPLETE=YES|NO
+    SOURCE_CUT=<sha>|NONE                SOURCE_CUT_STATE=CURRENT|STALE|BROKEN|NONE
+    FULL_SOURCE_CAPTURE=<per source>     CORPUS_INTEGRITY=PASS|FAIL
+    DOCUMENT_SOURCES=n
+    RND_COMPILE=K  RND_COMPILE_VALID  RND_COMPILE_AUDITED  RND_SEMANTIC_RULES_APPLIED
+    RND_IR_VERSION=4  TURNS_ACCOUNTED=100%  RND_BOUND_TO_CUT=YES|NO
+    PROJECTION_VAULT=V  PROJECTION_VERIFIED=YES|NO  PROJECTION_CARDS=n
+    INTAKE_SKILL_VERSION=v4.4  SKILL_DRIFT=NONE|UNCOMMITTED|AHEAD|BEHIND_ORIGIN|UNKNOWN
+    CHAIN_COMPLETE=YES|NO
+
+`CHAIN_COMPLETE=YES` (exit 0) requires: enumeration verified, no hard gap, a CURRENT
+cut, corpus integrity, a valid AND audited version-4 compile bound to that cut with
+every turn accounted for, and a verified projection. `--require-skill-frozen` adds
+`SKILL_DRIFT=NONE`. No line can be typed to YES, and pulling any link flips the
+conjunction — proved link by link in `evals/test_project_v44.py`.
+
+## The skill answers for its own version (v4.4, owner decision D1)
+
+The 2026-09-11 gap analysis found the installed skill three versions behind the
+published one, refusing the published corpus, with SKILL.md still reading `v4.0
+FROZEN`. `scripts/skill_version.py check` compares, offline, the freeze block's
+registered identities with the checkout it lives in — HEAD, the tree of `scripts/`
+(the runtime surface a corpus, a CI workflow or a pilot actually executes) and
+origin/main when fetched — and prints `SKILL_DRIFT` plus the versioned contract
+surfaces the code speaks (`rnd-ir:4 project-manifest:1 attachment-manifest:2
+projection:1`). The freeze block records `SKILL_SCRIPTS_TREE` so the comparison is a
+byte identity, not a version string. The chain prints the line; the full-sweep
+mission passes `--require-skill-frozen`; the corpus's own hooks are the next place
+to call it (that is a corpus change, outside this build).
 
 ## Execution checklist
 
