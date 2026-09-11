@@ -27,6 +27,18 @@ Sedan v4.0 har skillen **tre uttryckliga lägen** — aldrig gissade, alltid beg
   "komplett". Se Project sweep-avsnittet i SKILL.md samt
   `_projects/<projekt>/`-artefakterna (manifest, källor, granskningskö, oberoende
   svepaudit).
+- **v4.4 — Project/Corpus Intake för en full, verifierbar Improvements-sweep** (utökning,
+  ingen ersättning): bevisbar källskärning (`cut`, byte-verifierad per källa, aldrig
+  plattformens `update_time`), bilagebytes (`register-attachment`), projektfiler som egen
+  källtyp med evidensroll (`register-document` — `project_file` /
+  `conversation_attachment` / `external_reference`, den sista måste visa var den
+  faktiskt användes), IR version 4 (`init --atomic`: semantisk atomicitet, ledger för
+  VARJE tur oavsett roll, obligatorisk standing, motsägelseregister, fingeravtryck +
+  lineage mot föregående kompilat), Obsidian-projektion som kontraktsstyrt derivat i
+  separat valv (`obsidian_projection.py`), en genererad kedjevektor (`chain`) och en
+  driftvakt som gör att installerad skill och registrerad kontraktsversion inte kan
+  glida isär tyst (`skill_version.py`). Byggt och kvalificerat 2026-09-11 mot en
+  korpuskopia; ingen canonical korpus rördes.
 - **RND_COMPILE** ("kör rnd compile", "kompilera R&D-korpusen"): redan infångat och
   verifierat material — ett svept projektkorpus eller en uttrycklig källmängd — →
   en **typad, härledd, återuppbyggbar** förståelse av vad materialet faktiskt
@@ -251,7 +263,8 @@ Svenska eller engelska fungerar.
 | [references/review-queue-template.md](references/review-queue-template.md) | Granskningskön: registrera → köa → fortsätt; ett capture-glapp kan aldrig gömmas här |
 | [references/sweep-audit-template.md](references/sweep-audit-template.md) | Svepauditen: oberoende falsifiering på projektnivå, append-only rundor |
 | [references/rnd-compile-template.md](references/rnd-compile-template.md) | R&D-kompileringen: typad IR (sju kärntyper), tolvradig täckningslins, kompileringsaudit, lagarna |
-| [scripts/](scripts/) | Capture-, discovery- och verifieringsskripten samt de fyra kontrakten: `plan_contract.py`, `context_contract.py`, `project_contract.py`, `rnd_contract.py` |
+| [references/obsidian-projection-template.md](references/obsidian-projection-template.md) | Obsidian-projektionen (v4.4): valvets layout, kortets generade region kontra `## Anteckningar`, canvas-regler, vad `verify` vägrar |
+| [scripts/](scripts/) | Capture-, discovery- och verifieringsskripten samt kontrakten: `plan_contract.py`, `context_contract.py`, `project_contract.py` (svep, bilagebytes, dokument, cut, chain), `rnd_contract.py` (IR v1–v4), `obsidian_projection.py` (v4.4), `skill_version.py` (driftvakt) |
 | [evals/](evals/) | Regressionstesterna — körs efter varje ändring av skillen |
 
 ## Principerna bakom bygget

@@ -19,6 +19,14 @@ python3 evals/test_project_v3.py                      # 9 — v3: roles, attesta
 python3 evals/test_transport_v31.py                   # 10 — v3.1: bounded transport
 node    evals/test_discovery_v31.mjs                  # 11 — v3.1: cursor enumeration
 python3 evals/test_rnd_v4.py                          # 12 — v4: RND_COMPILE
+python3 evals/test_rnd_v41.py                         # 13 — v4.1: semantic coverage
+python3 evals/test_attachment_v42.py                  # 14 — v4.2: attachment surface
+python3 evals/test_attachment_ir_v42.py               # 15 — v4.2: attachments in the IR
+python3 evals/test_intake_v43.py                      # 16 — v4.3: epistemic status
+python3 evals/test_rnd_v44.py                         # 17 — v4.4: IR version 4
+python3 evals/test_project_v44.py                     # 18 — v4.4: cut, bytes, documents, chain
+python3 evals/test_projection_v44.py                  # 19 — v4.4: Obsidian projection
+python3 scripts/skill_version.py check                # the installed skill vs its freeze
 python3 scripts/plan_contract.py validate             # the real corpus
 python3 scripts/context_contract.py validate          # the real corpus
 python3 scripts/project_contract.py validate          # real projects, when any exist
@@ -362,3 +370,18 @@ never touch — and drives the real CLI end to end.
 (The v3.1.1 regression itself — eval class O — is suites 1 and 6–11 run unchanged
 beside this one; the freeze/lineage class P is contract_check's Z-series and
 RD-series.)
+
+## 17–19. v4.4 suites (`test_rnd_v44.py`, `test_project_v44.py`, `test_projection_v44.py`)
+
+Every FAIL code introduced by v4.4 has a POSITIVE check (a control that passes) and a
+MUTANT check (the planted defect produces exactly the code), in the same run — the
+owner's rule for this build. `test_rnd_v44.py` covers IR version 4: atomicity
+(ATOM-1..4), the all-role turn ledger, contradiction reconciliation, fingerprint and
+lineage, document sources, the audit obligation and render determinism, and the
+version seal (no v4 rule reaches a version-1/2/3 compile). `test_project_v44.py`
+covers the byte-verified cut (UNVERIFIED / BROKEN / STALE), attachment byte
+registration and the artifact-mutation guard, document registration with evidence
+roles, and drives the WHOLE chain end to end on a synthetic project — then pulls each
+link and proves `CHAIN_COMPLETE` flips to NO. `test_projection_v44.py` renders a vault,
+proves byte-identical re-render, note and manual-canvas survival, and plants every
+PROJECTION_* defect. Floors: 70 / 50 / 24 checks.

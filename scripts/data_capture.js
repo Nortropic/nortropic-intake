@@ -71,10 +71,18 @@ await (async function(){
       } else if(c.content_type==='multimodal_text'){
         text=(c.parts||[]).map(p=>typeof p==='string'?p:(p&&p.text)||'').filter(Boolean).join('\n');
         (c.parts||[]).forEach(p=>{ if(p&&typeof p==='object'&&!p.text)
-          attachments.push({msg:msgs.length,label:String(p.asset_pointer||p.content_type||'non-text part').slice(0,80)}); });
+          attachments.push({msg:msgs.length,label:String(p.asset_pointer||p.content_type||'non-text part').slice(0,80),
+            // v4.4: the platform's own identity for the asset, so a later session can
+            // fetch the BYTES by id (register-attachment) instead of guessing by name.
+            // Identity fields are recorded as the platform sends them; nothing here is
+            // a claim that the bytes were captured.
+            asset_pointer:p.asset_pointer||null,content_type:p.content_type||null,
+            size_bytes:(typeof p.size_bytes==='number')?p.size_bytes:null}); });
       } else continue; // thoughts / code / execution_output etc. — not user-visible chat text
       ((m.metadata&&m.metadata.attachments)||[]).forEach(a=>
-        attachments.push({msg:msgs.length,label:String(a.name||a.id||'bilaga').slice(0,80)}));
+        attachments.push({msg:msgs.length,label:String(a.name||a.id||'bilaga').slice(0,80),
+          file_id:a.id||null,name:a.name||null,mime_type:a.mime_type||a.mimeType||null,
+          size_bytes:(typeof a.size==='number')?a.size:null}));
       if(!text.trim()) continue;
       msgs.push({role,text});
     }
@@ -134,7 +142,10 @@ await (async function(){
         return true;
       }).map(c=>c.text||'').filter(Boolean).join('\n');
       [].concat(m.attachments||[],m.files||[]).forEach(a=>
-        attachments.push({msg:msgs.length,label:String((a&&(a.file_name||a.name||a.id))||'bilaga').slice(0,80)}));
+        attachments.push({msg:msgs.length,label:String((a&&(a.file_name||a.name||a.id))||'bilaga').slice(0,80),
+          file_id:(a&&(a.id||a.file_uuid))||null,name:(a&&(a.file_name||a.name))||null,
+          mime_type:(a&&(a.file_type||a.mime_type))||null,
+          size_bytes:(a&&typeof a.file_size==='number')?a.file_size:null}));
       if(!text.trim()) continue;
       msgs.push({role,text});
     }
