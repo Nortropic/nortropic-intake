@@ -398,5 +398,8 @@ a bytes-absent DUPLICATE and a tampered artifact all still refuse), B3 revision-
 witnessing of historical compiles (growth after the compile is STALE, never
 incomplete; a wrong or nonexistent declared revision, an omitted pre-existing source,
 an undatable source, a compile with no inventory revision and altered bytes all still
-fail). 45 checks, floor 30. Run against the v4.4 scripts the same file scores 17/45 —
-that is the reproduction, kept runnable rather than described.
+fail). The independent review's three probes are mutants too: an unanchored
+`inventory_revision`, a current compile binding a superseded revision, and a copied
+manifest row under a second attachment id. 61 checks, floor 30. Run against the v4.4
+scripts the same file scores 22/55 — that is the reproduction, kept runnable rather
+than described.

@@ -422,7 +422,37 @@ def bytes_corroborate_declaration(declared, rows):
             return False
         if not str(r.get("platform_file_id", "")).strip():
             return False
-    return True
+    # one identity, one item: a row copied under a second attachment id must not
+    # count twice (the review's probe). Rows may share a platform id only as an
+    # explicit duplicate chain (`duplicate_of` -> the one primary) — the shape the
+    # adapter's double listing produces and RECOVERED_DUPLICATE records.
+    return not platform_identity_conflicts(rows)
+
+
+def platform_identity_conflicts(rows):
+    """[(platform_file_id, [attachment ids])] for every platform id shared by rows
+    that are not one primary plus rows declaring `duplicate_of` that primary."""
+    groups = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        pid = str(r.get("platform_file_id", "")).strip()
+        if pid:
+            groups.setdefault(pid, []).append(r)
+    bad = []
+    for pid, members in sorted(groups.items()):
+        if len(members) < 2:
+            continue
+        primaries = [m for m in members if not str(m.get("duplicate_of", "")).strip()]
+        ids = [str(m.get("attachment_id", "")).strip() for m in members]
+        if len(primaries) != 1:
+            bad.append((pid, ids))
+            continue
+        primary = str(primaries[0].get("attachment_id", "")).strip()
+        if any(str(m.get("duplicate_of", "")).strip() != primary
+               for m in members if m is not primaries[0]):
+            bad.append((pid, ids))
+    return bad
 
 
 # ---------------------------------------------------------------- manifest --
@@ -599,6 +629,15 @@ def validate_manifest(data, source_id, revision, slug, corpus=None):
             fail("ATTACHMENT_DUPLICATE_UNBOUND",
                  "%s is DUPLICATE but names no duplicate_of — an unbound equivalence "
                  "claim cannot be checked" % aid)
+
+    # v4.4.1 (B2): a platform identity names ONE item. Two rows under the same id
+    # are either a declared duplicate chain or a copied row pretending to be a
+    # second attachment — and a copied row must never reach a count.
+    for pid, ids in platform_identity_conflicts(rows):
+        fail("ATTACHMENT_PLATFORM_ID_DUPLICATE",
+             "platform_file_id %s is carried by %s — one platform identity is one "
+             "item; a second row under the same id must declare duplicate_of the one "
+             "primary row, or it is a copy counted twice" % (pid, ", ".join(ids)))
 
     # --- recovery exhaustion: a claim about the SEARCH, never about the source ---
     rex = data.get("recovery_exhaustion")

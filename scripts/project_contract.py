@@ -68,7 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, fails, fm_str, git_head_blob, git_immutability,
     block_opening_headers, parse_transcript_roles, read_frontmatter, read_json,
-    report, sha256_file,
+    report, sha256_file, TRANSCRIPT_HEADER_RE, _BLOCK_SEPARATOR_RE,
     sha256_text, source_surface_identity, transcript_source_sha256, write_json,
     full_source_capture, transcript_source_region, ROLE_UNKNOWN,
 )
@@ -2172,6 +2172,15 @@ def verify_transcript_format(text):
     headers = block_opening_headers(text)
     if not headers:
         return False, "no '## Meddelande N — <roll>' message headers found", 0
+    # Header lines that open no block are content ONLY in a transcript that has
+    # separators to open blocks with. A transcript with header lines and no separator
+    # at all cannot tell a boundary from a quote, and is refused rather than read as
+    # one long message (the review's probe: v4.4 counted N, this must not count 1).
+    all_headers = list(TRANSCRIPT_HEADER_RE.finditer(text))
+    if len(all_headers) > len(headers) and not any(
+            _BLOCK_SEPARATOR_RE.fullmatch(line.strip()) for line in text.split("\n")):
+        return False, ("%d header lines but no separator lines — message boundaries "
+                       "are undecidable" % len(all_headers)), len(headers)
     numbers = [int(h.group(1)) for h in headers]
     if numbers != list(range(1, len(numbers) + 1)):
         return False, ("message numbering not contiguous 1..%d: %s…"
@@ -3063,6 +3072,12 @@ def cmd_register_attachment(proj, args):
     if not payload:
         print("REGISTER_REFUSED — %s is empty; zero bytes are not an attachment" % src)
         return 2
+    pid = (getattr(args, "platform_file_id", None) or "").strip()
+    if getattr(args, "platform_file_id", None) is not None and \
+            not re.match(r"^\S{8,}$", pid):
+        print("REGISTER_REFUSED — --platform-file-id %r is not a platform identity "
+              "(no whitespace, at least 8 characters, as the platform sent it)" % pid)
+        return 2
     digest = hashlib.sha256(payload).hexdigest()
     number = int(rev.get("revision"))
     mpath = att.manifest_path(proj.source_dir(args.source), number)
@@ -3153,8 +3168,9 @@ def cmd_register_attachment(proj, args):
         row["message_binding"] = args.message_binding
     if getattr(args, "platform_file_id", None):
         # v4.4.1 (B2): the platform's own identity for THIS item, recorded as the
-        # platform sent it. It is what lets bytes corroborate a declaration; it is
-        # never inferred here from a filename.
+        # platform sent it (checked for shape only — an operator's claim, witnessed
+        # by the capture inventory, never inferred here from a filename). It is
+        # what lets bytes corroborate a declaration.
         row["platform_file_id"] = args.platform_file_id.strip()
     if args.recovered:
         row["recovery_provenance"] = args.recovery_provenance.strip()

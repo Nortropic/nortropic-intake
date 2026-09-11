@@ -740,11 +740,11 @@ def _manifest_witness(manifest):
         if not sid or not revs:
             continue
         by_rev = {}
-        for r in revs:
+        for idx, r in enumerate(revs):
             try:
                 n = int(r.get("revision"))
             except (TypeError, ValueError):
-                continue
+                n = idx + 1           # legacy: position is the revision number
             by_rev[n] = {
                 "path": str(r.get("path", "")).strip(),
                 "sha256": str(r.get("sha256", "")).strip().lower(),
@@ -775,6 +775,55 @@ def _witness_for(witness, bound):
 
 
 _FIRST_CAPTURE_RE = re.compile(r"^(?:capture (CONV-\d+) r1|register-document (DOC-\d+) \()")
+_CAPTURE_RE = re.compile(r"^capture (CONV-\d+) r(\d+)$")
+
+
+def _history_anchor(manifest, bound_inv, bound_sha):
+    """The inventory_history entry the compile's (inventory_revision, inventory_sha256)
+    pair names, or None. A compile may claim a HISTORICAL scope only through this
+    anchor: the review of the first draft showed that an unanchored number (0, -1,
+    anything below the earliest history entry) would otherwise exempt every source —
+    the v4.4 F-1 hole reopened. Unanchored means the strict reading: every captured
+    source, at its latest revision, must be bound."""
+    if not isinstance(bound_inv, int) or bound_inv < 1:
+        return None
+    for e in (manifest.get("inventory_history") or []):
+        if not isinstance(e, dict):
+            continue
+        try:
+            if int(e.get("revision")) != bound_inv:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if str(e.get("inventory_sha256", "")).strip().lower() == \
+                str(bound_sha or "").strip().lower() and str(bound_sha or "").strip():
+            return e
+        return None
+    return None
+
+
+def _latest_captured_as_of(manifest, bound_inv):
+    """{source_id: highest revision number the history records as captured at or
+    before inventory revision bound_inv}. A compile of its own time binds THAT
+    revision; a lower one omits captured turns, which is the same class of silence as
+    an omitted source."""
+    out = {}
+    for e in (manifest.get("inventory_history") or []):
+        if not isinstance(e, dict):
+            continue
+        try:
+            rev = int(e.get("revision"))
+        except (TypeError, ValueError):
+            continue
+        if rev > bound_inv:
+            continue
+        m = _CAPTURE_RE.match(str(e.get("note", "")).strip())
+        if not m:
+            continue
+        sid, n = m.group(1), int(m.group(2))
+        if n > out.get(sid, 0):
+            out[sid] = n
+    return out
 
 
 def _first_capture_revisions(manifest):
@@ -1217,8 +1266,14 @@ def validate_compile(corpus, compile_id):
                     bound_inv = int(bound_inv)
                 except (TypeError, ValueError):
                     bound_inv = None
+                anchor = _history_anchor(manifest, bound_inv,
+                                         src.get("inventory_sha256"))
+                if anchor is None:
+                    bound_inv = None      # unanchored: the strict reading applies
                 first_seen = _first_capture_revisions(manifest) if bound_inv is not None \
                     else {}
+                latest_as_of = _latest_captured_as_of(manifest, bound_inv) \
+                    if bound_inv is not None else {}
                 for msid, last in sorted(captured_in_manifest.items()):
                     b = sources.get(msid)
                     if b is None and bound_inv is not None \
@@ -1252,7 +1307,24 @@ def validate_compile(corpus, compile_id):
                             "%s is bound but outside source_set.scope %s — the scope "
                             "list and the bound set disagree" % (msid, declared_scope)))
                     try:
-                        if int(b.rec.get("revision") or 0) != int(last.get("revision") or 0):
+                        bound_rev = int(b.rec.get("revision") or 0)
+                        latest_rev = int(last.get("revision") or 0)
+                        # the revision a compile OF ITS OWN TIME had to bind: the
+                        # highest one captured at or before its inventory revision
+                        # (undatable in the history -> the manifest's latest)
+                        owed = latest_as_of.get(msid, latest_rev) \
+                            if bound_inv is not None else latest_rev
+                        if bound_rev < owed and not b.is_document():
+                            findings.append(Finding(
+                                cid, "RND_SOURCE_SET_INCOMPLETE",
+                                "%s is bound at revision %s, but revision %s was "
+                                "already captured at inventory revision %s — a "
+                                "compile binds the latest revision of its own time; "
+                                "turns captured before it are not growth it may "
+                                "leave out" % (msid, bound_rev, owed,
+                                               bound_inv if bound_inv is not None
+                                               else "(current)")))
+                        elif bound_rev != latest_rev:
                             findings.append(Finding(
                                 cid, "RND_SOURCE_SET_STALE",
                                 "%s bound at revision %s, manifest latest is %s — "
