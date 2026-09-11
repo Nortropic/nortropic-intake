@@ -26,8 +26,11 @@ is the TREE of scripts/ at the registered freeze commit, recorded in SKILL.md as
     SKILL_DRIFT=AHEAD              committed scripts/ differ from the registered tree
                                    (a release that was never frozen, or a freeze
                                    that was never registered)
+    SKILL_DRIFT=UNPUBLISHED        the freeze is registered and installed but origin/main
+                                   has not received it — nobody else can install it
     SKILL_DRIFT=BEHIND_ORIGIN      origin/main's scripts/ differ from the installed
                                    tree — the published contract moved on
+    SKILL_DRIFT=DIVERGED           installed and published histories disagree both ways
     SKILL_DRIFT=UNKNOWN            no git, or no registration to compare against
 
 Exit 0 on NONE; with --require-frozen exit 1 on anything else. Every other tool
@@ -85,6 +88,13 @@ def installed():
         if git("rev-parse", "--verify", "-q", "refs/remotes/origin/main"):
             out["origin_main"] = git("rev-parse", "refs/remotes/origin/main")
             out["origin_scripts_tree"] = git("rev-parse", "refs/remotes/origin/main:scripts")
+            # is the installed HEAD ahead of, behind, or diverged from origin/main?
+            rel = None
+            if git("merge-base", "--is-ancestor", "refs/remotes/origin/main", "HEAD") is not None:
+                rel = "UNPUBLISHED"        # origin/main is an ancestor: a freeze not yet pushed
+            elif git("merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/main") is not None:
+                rel = "BEHIND_ORIGIN"      # the published contract moved on
+            out["origin_relation"] = rel or "DIVERGED"
     return out
 
 
@@ -126,7 +136,8 @@ def drift(reg, inst):
     if inst.get("scripts_tree") != want:
         return "AHEAD"
     if inst.get("origin_scripts_tree") and inst["origin_scripts_tree"] != inst["scripts_tree"]:
-        return "BEHIND_ORIGIN"
+        # the registered freeze and the published contract differ: say WHICH way
+        return inst.get("origin_relation") or "DIVERGED"
     return "NONE"
 
 

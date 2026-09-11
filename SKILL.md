@@ -1323,7 +1323,9 @@ anchored on the cited turns' own words: the document's `use_anchor` (the phrase 
 turn uses for it — `--use-anchor masterplanen`), else its title, else its filename
 stem — at least four letters, matched on word boundaries — must occur in the cited
 messages (`SOURCE_USE_UNANCHORED`); a range that merely exists is not a use, and a
-one-letter "anchor" is not an anchor. Documents are NOT treated as conversations: no
+one-letter "anchor" is not an anchor. Stated exactly: the validator proves PHRASE
+PRESENCE in the cited turns; whether the phrase denotes this document is the audit's
+judgement. Documents are NOT treated as conversations: no
 turns, no roles, no owner voice, no extraction/routing lifecycle — DISCOVERED until
 the bytes are in, then CAPTURED, and a compile cites them by LINE
 (`{"source_id": "DOC-001", "revision": 1, "lines": "12-14"}`), never by message. A
