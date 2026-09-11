@@ -1134,9 +1134,12 @@ def _validate_document(proj, data, s, sid, findings, recorded_paths):
         # when using it), else its title, else its filename stem. A range that
         # merely exists is not a use.
         anchor = str(u.get("anchor", "") or s.get("use_anchor", "")).strip()
+        # an anchor is a WORD or phrase (>= 4 chars, matched on word boundaries) —
+        # a review satisfied SOURCE_USE_UNANCHORED with 'e', 'vi' and '.'
         anchors = [a for a in (anchor, str(s.get("title", "")).strip(),
                                Path(str((s.get("revisions") or [{}])[0].get("path", "")
-                                        ).strip()).stem) if a and a != "document"]
+                                        ).strip()).stem)
+                   if a and a != "document" and len(re.sub(r"\W", "", a)) >= 4]
         target = proj.corpus / str(rev.get("path", "")).strip()
         cited_text = ""
         if target.is_file():
@@ -1144,7 +1147,8 @@ def _validate_document(proj, data, s, sid, findings, recorded_paths):
             parts = re.split(r"^## Meddelande (\d+) — [^\n]+$", region, flags=re.M)
             texts = {int(parts[i]): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
             cited_text = "\n".join(texts.get(n, "") for n in range(lo, hi + 1)).lower()
-        if not any(a.lower() in cited_text for a in anchors):
+        if not any(re.search(r"(?<!\w)%s(?!\w)" % re.escape(a.lower()), cited_text)
+                   for a in anchors):
             findings.append(Finding(
                 proj.name, "SOURCE_USE_UNANCHORED",
                 "%s: used_in %s msg %s does not contain any of the document's use "
@@ -1183,7 +1187,8 @@ def _validate_document(proj, data, s, sid, findings, recorded_paths):
                                 str(a.get("attachment_id", "")).strip() == aid:
                             # the document IS the attachment: same bytes, proven by
                             # the attachment row's own content hash
-                            ok = bool(doc_sha) and \
+                            ok = bool(doc_sha) and att.attachment_bytes_available(
+                                str(a.get("capture_status", "")).strip().upper()) and \
                                 str(a.get("content_sha256", "")).strip().lower() == doc_sha
         if not ok:
             findings.append(Finding(

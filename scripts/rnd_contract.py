@@ -2264,7 +2264,8 @@ def validate_compile(corpus, compile_id):
         # partiality by omission — it is reported as scoped, and the chain refuses
         # to call a scoped compile the project's compile, but it does not trip the
         # guard against quietly excusing a corpus
-        _declared = src.get("scope") if (atomic and isinstance(src.get("scope"), list)) \
+        _declared = src.get("scope") if (atomic and isinstance(src.get("scope"), list)
+                                         and str(src.get("kind", "")) == "project") \
             else None
         _scoped = [sid for sid, b in sources.items()
                    if b.excluded and _declared is not None and sid not in _declared
@@ -2713,13 +2714,39 @@ def validate_compile(corpus, compile_id):
                            or standings_seen.get(rby) in ("SUPERSEDED", "REJECTED",
                                                           "HISTORICAL")):
                     ok = False
+                # and it resolves on EVIDENCE the superseded side did not cite: at
+                # least one (source, message) or RQ the resolver cites that the
+                # superseded record does not — a throwaway judgement re-citing the same
+                # turn adds nothing
+                if ok:
+                    def _keys(rec):
+                        ks = set()
+                        for pp in (rec.get("provenance") or []):
+                            if not isinstance(pp, dict):
+                                continue
+                            if pp.get("rq"):
+                                ks.add(("rq", str(pp["rq"])))
+                                continue
+                            rng_ = parse_msg_range(pp.get("messages", pp.get("lines", "")))
+                            sid_ = str(pp.get("source_id", "")).strip()
+                            if rng_:
+                                for n in range(rng_[0], rng_[1] + 1):
+                                    ks.add((sid_, n))
+                        return ks
+                    sup_keys = set()
+                    for x in superseded:
+                        sup_keys |= _keys(by_id.get(x, {}))
+                    if not (_keys(resolver) - sup_keys):
+                        ok = False
                 if not ok:
                     findings.append(Finding(
                         cid, "RND_CONTRADICTION_RESOLUTION_UNBACKED",
                         "%s vs %s is registered RESOLVED by %r, but a resolution is a "
                         "LIVE THIRD record (not a side of the pair, not UNKNOWN, not "
                         "itself superseded/rejected) that supersedes one side, with "
-                        "that side standing SUPERSEDED/REJECTED/HISTORICAL"
+                        "that side standing SUPERSEDED/REJECTED/HISTORICAL, and that "
+                        "cites at least one turn or owner answer the superseded side "
+                        "did not"
                         % (a, b_, rby or "?")))
                     continue
                 registered[pair] = "RESOLVED"
@@ -3077,8 +3104,7 @@ def validate_audit(corpus, compile_id, ir):
             srcs = bind_sources(corpus, ir)
             owner_ledgered = []
             for e in (ir.get("turn_ledger") or []):
-                if not isinstance(e, dict) or \
-                        str(e.get("reason", "")).strip() != "no-material-content":
+                if not isinstance(e, dict):
                     continue
                 lb = srcs.get(str(e.get("source_id", "")).strip())
                 rng = parse_msg_range(e.get("messages"))
@@ -3090,16 +3116,34 @@ def validate_audit(corpus, compile_id, ir):
                         owner_ledgered.append("%s:%d" % (lb.source_id, n))
         except Exception:                                        # noqa: BLE001
             owner_ledgered = []
-        named = set(re.findall(r"(CONV-\d{3,}):(\d+)",
+        named = set(re.findall(r"((?:CONV|EXP|DOC)-\d{3,}):(\d+)",
                                str(latest["fields"].get("owner_ledger_reviewed", ""))))
         named = {"%s:%s" % (a, b) for a, b in named}
+        resolved_pairs = []
+        for e in (ir.get("contradiction_register") or []):
+            if isinstance(e, dict) and str(e.get("state", "")).strip().upper() == "RESOLVED" \
+                    and isinstance(e.get("pair"), list) and len(e["pair"]) == 2:
+                resolved_pairs.append("%s vs %s by %s" % (
+                    sorted(str(x) for x in e["pair"])[0], sorted(str(x) for x in e["pair"])[1],
+                    str(e.get("resolved_by", "?"))))
+        rv_text = str(latest["fields"].get("contradictions_reviewed", ""))
+        rv_named = set(re.findall(r"(RND-\d{3,})\s+vs\s+(RND-\d{3,})\s+by\s+(RND-\d{3,})", rv_text))
+        rv_named = {"%s vs %s by %s" % (sorted((a, b))[0], sorted((a, b))[1], c) for a, b, c in rv_named}
+        rmissing = [x for x in resolved_pairs if x not in rv_named]
+        if rmissing:
+            findings.append(Finding(
+                cid, "RND_AUDIT_CONTRADICTION_UNREVIEWED",
+                "%d RESOLVED contradiction(s) and the latest audit round does not name %s "
+                "under contradictions_reviewed — a resolution is judged by a reader, by "
+                "pair and resolver" % (len(resolved_pairs), "; ".join(rmissing[:4]))))
+            audited = False
         missing = [x for x in owner_ledgered if x not in named]
         if missing:
             findings.append(Finding(
                 cid, "RND_AUDIT_LEDGER_UNREVIEWED",
-                "%d owner turn(s) are ledgered `no-material-content` and the latest "
-                "audit round does not name %s under owner_ledger_reviewed — dropping "
-                "the owner's voice is reviewed turn by turn, never by a blanket reason"
+                "%d owner turn(s) are ledgered (any reason) and the latest audit round "
+                "does not name %s under owner_ledger_reviewed — every uncited owner turn "
+                "is reviewed by id, whatever reason the ledger gave it"
                 % (len(owner_ledgered), ", ".join(missing[:8]))))
             audited = False
     if latest.get("ir_sha256") and latest["ir_sha256"] != current_sha:

@@ -450,6 +450,19 @@ def scenario_r_contradictions(tmp):
                                          "state": "RESOLVED", "resolved_by": "RND-006"}]
         refingerprint(ir)
 
+    def resolved_by_throwaway(ir):
+        contradicting(ir)
+        ir["items"].append({"id": "RND-012", "kind": "DERIVED_JUDGMENT", "atomicity": "ATOMIC",
+                            "claim": "x", "scope": "x",
+                            "provenance": [{"source_id": "CONV-001", "revision": 1, "messages": "1"}],
+                            "authority_class": "derived", "uncertainty": "x", "tags": [],
+                            "relations": [{"rel": "supersedes", "target": "RND-001"}]})
+        item(ir, "RND-001")["standing"] = "SUPERSEDED"
+        ir["coverage"][0]["basis"].append("RND-012")
+        ir["contradiction_register"] = [{"pair": ["RND-001", "RND-005"],
+                                         "state": "RESOLVED", "resolved_by": "RND-012"}]
+        refingerprint(ir)
+
     def bad_state(ir):
         contradicting(ir)
         ir["contradiction_register"] = [{"pair": ["RND-001", "RND-005"],
@@ -461,7 +474,8 @@ def scenario_r_contradictions(tmp):
                    ("contra-bad-pair", bad_pair), ("contra-unbacked", unbacked),
                    ("contra-no-unknown", unresolved_no_unknown), ("contra-bad-state", bad_state),
                    ("contra-by-side", resolved_by_side), ("contra-by-dead", resolved_by_dead),
-                   ("contra-by-unknown", resolved_by_unknown)):
+                   ("contra-by-unknown", resolved_by_unknown),
+                   ("contra-throwaway", resolved_by_throwaway)):
         v4_ir(corpus, cid, mutate=m)
     rc_, out = run(corpus, "validate")
     check("R control (no contradictions, empty register) passes", control_clean(out), out)
@@ -492,6 +506,8 @@ def scenario_r_contradictions(tmp):
           expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-by-dead"), out)
     check("R (F-12) an UNKNOWN record cannot resolve a contradiction",
           expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-by-unknown"), out)
+    check("R (R2-2) a throwaway resolver re-citing only the superseded side's turn is unbacked",
+          expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-throwaway"), out)
     check("R both sides of a resolved contradiction survive as records",
           all(iid in json.loads((corpus / "_rnd/contra-resolved-ok/rnd-ir.json").read_text())
               ["items"].__repr__() for iid in ("RND-001", "RND-005")), "")
@@ -756,10 +772,12 @@ def scenario_s_audit_and_render(tmp):
     check("S a v4 audit round without atomicity_reviewed is not an audit",
           expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "control-ok")
           and "RND_COMPILE_AUDITED=NO" in out, out)
-    (cdir / "compile-audit.md").write_text(audit + "- atomicity_reviewed: yes\n",
-                                           encoding="utf-8")
+    (cdir / "compile-audit.md").write_text(
+        audit + "- atomicity_reviewed: yes\n- owner_ledger_reviewed: CONV-002:1 "
+        "(duplicate-restatement — verified against msg 1)\n", encoding="utf-8")
     rc_, out = run(corpus, "validate", "--compile", "control-ok")
-    check("S with atomicity_reviewed: yes the v4 compile is audited",
+    check("S with atomicity_reviewed: yes and the ledgered owner turn named, the v4 "
+          "compile is audited",
           not expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "control-ok")
           and "RND_COMPILE_AUDITED=YES" in out, out)
     # F-10 / F-8: a WARN is a question the audit answers BY ID
@@ -771,7 +789,7 @@ def scenario_s_audit_and_render(tmp):
                        "assumed, and proposes challenger fixtures after the slice.")
         refingerprint(ir)
         ir["turn_ledger"].append({"source_id": "CONV-001", "messages": "5",
-                                  "reason": "no-material-content"})
+                                  "reason": "question-only"})
         ir["items"] = [i for i in ir["items"] if i["id"] not in ("RND-006", "RND-007")]
         for row in ir["coverage"]:
             row["basis"] = [b for b in row["basis"] if b not in ("RND-006", "RND-007")]
@@ -790,17 +808,44 @@ def scenario_s_audit_and_render(tmp):
           "RND_AUDIT_ATOMICITY_UNREVIEWED", expect_warn(out, "RND_CLAIM_COMPOUND_SUSPECT", "suspect")
           and expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "suspect")
           and "RND_COMPILE_AUDITED=NO" in out, out)
-    check("S (F-8) an owner turn ledgered no-material-content the audit does not name is "
+    check("S (F-8/R2-1) an owner turn ledgered under ANY reason the audit does not name is "
           "RND_AUDIT_LEDGER_UNREVIEWED", expect_code(out, "RND_AUDIT_LEDGER_UNREVIEWED", "suspect"),
           out)
     (sdir / "compile-audit.md").write_text(
         base_audit + "- compound_suspects_reviewed: RND-003 (judged compound — a FIND would "
-        "follow; here named for the obligation)\n- owner_ledger_reviewed: CONV-001:5\n",
+        "follow; here named for the obligation)\n- owner_ledger_reviewed: CONV-001:5, "
+        "CONV-002:1\n",
         encoding="utf-8")
     rc_, out = run(corpus, "validate", "--compile", "suspect")
     check("S (F-10/F-8) naming the suspect and the owner turn by id discharges both",
           not expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "suspect")
           and not expect_code(out, "RND_AUDIT_LEDGER_UNREVIEWED", "suspect")
+          and "RND_COMPILE_AUDITED=YES" in out, out)
+    # R2-2: a RESOLVED pair must be named in the audit
+    v4_ir(corpus, "resolved-audit", mutate=lambda ir: (
+        item(ir, "RND-005")["relations"].append({"rel": "contradicts", "target": "RND-001"}),
+        item(ir, "RND-007")["relations"].append({"rel": "supersedes", "target": "RND-001"}),
+        item(ir, "RND-001").__setitem__("standing", "SUPERSEDED"),
+        ir.__setitem__("contradiction_register", [{"pair": ["RND-001", "RND-005"],
+                                                   "state": "RESOLVED", "resolved_by": "RND-007"}]),
+        refingerprint(ir)))
+    rdir = corpus / "_rnd/resolved-audit"
+    r_sha = rc.sha256_file(rdir / "rnd-ir.json")
+    r_audit = ("---\ntitle: audit\ntype: compile-audit\ncompile: resolved-audit\n"
+               "append_only: true\n---\n\n## AUDIT-1\n- auditor: fresh reviewer\n"
+               "- audited_at: 2026-09-11\n- scope: ir_sha256=%s\n- verdict: PASS\n"
+               "- atomicity_reviewed: yes\n- compound_suspects_reviewed: none\n"
+               "- owner_ledger_reviewed: CONV-002:1\n" % r_sha)
+    (rdir / "compile-audit.md").write_text(r_audit, encoding="utf-8")
+    rc_, out = run(corpus, "validate", "--compile", "resolved-audit")
+    check("S (R2-2) a RESOLVED pair the audit does not name is RND_AUDIT_CONTRADICTION_UNREVIEWED",
+          expect_code(out, "RND_AUDIT_CONTRADICTION_UNREVIEWED", "resolved-audit"), out)
+    (rdir / "compile-audit.md").write_text(
+        r_audit + "- contradictions_reviewed: RND-001 vs RND-005 by RND-007 (the later owner "
+        "decision supersedes; both survive)\n", encoding="utf-8")
+    rc_, out = run(corpus, "validate", "--compile", "resolved-audit")
+    check("S (R2-2) naming the pair and resolver discharges it",
+          not expect_code(out, "RND_AUDIT_CONTRADICTION_UNREVIEWED", "resolved-audit")
           and "RND_COMPILE_AUDITED=YES" in out, out)
     check("S (F-10) the fused 'facts; the assistant concludes' shape is a suspect at 300 chars",
           rc.compound_suspect("Three releases landed and were relayed with citation chips in "

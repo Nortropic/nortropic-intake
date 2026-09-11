@@ -1321,8 +1321,9 @@ out of scope by default (`SOURCE_USE_UNEVIDENCED`, `SOURCE_USE_UNRESOLVED`);
 WITH bytes equal to the document's (`DOCUMENT_ATTACHMENT_UNBOUND`). And "used" is
 anchored on the cited turns' own words: the document's `use_anchor` (the phrase the
 turn uses for it — `--use-anchor masterplanen`), else its title, else its filename
-stem, must occur in the cited messages (`SOURCE_USE_UNANCHORED`) — a range that merely
-exists is not a use. Documents are NOT treated as conversations: no
+stem — at least four letters, matched on word boundaries — must occur in the cited
+messages (`SOURCE_USE_UNANCHORED`); a range that merely exists is not a use, and a
+one-letter "anchor" is not an anchor. Documents are NOT treated as conversations: no
 turns, no roles, no owner voice, no extraction/routing lifecycle — DISCOVERED until
 the bytes are in, then CAPTURED, and a compile cites them by LINE
 (`{"source_id": "DOC-001", "revision": 1, "lines": "12-14"}`), never by message. A
@@ -1348,9 +1349,11 @@ attachment manifest and artifact, every document and text derivative, the review
 queue (owner answers a compile cites) and the sweep audit, the inventory identity —
 REFUSING unless every source has a capture or a byte-verification on/after D
 (`SOURCE_CUT_UNVERIFIED`) and the project has no hard gap. What the cut proves is
-stated exactly: that a capture command ran with byte-identical PLATFORM input on/after
-D for every source. That the input truly came from the platform is the mission's
-obligation (a Chrome session), recorded on the event, not something a digest can see. It also runs the branch probe (shared verbatim message prefixes between
+stated exactly: that for every source a capture command ran on/after D with input
+byte-identical to the stored revision (or a new revision was captured), the input not
+being a corpus file. Whether that input was a genuine platform re-read is the mission's
+obligation (a Chrome session, the adapter and input name recorded on the event) — a
+digest cannot see where bytes came from, and this contract does not claim it can. It also runs the branch probe (shared verbatim message prefixes between
 conversations, the trace a branched chat leaves in captured bytes — RND-223) and
 reports the count; lineage design waits for an observed branch, and the cut is where
 the observation happens. Afterwards `validate` re-hashes every bound file:
@@ -1747,13 +1750,20 @@ copy, and the chain said so.
 
 *The audit answers the validator's questions by id.* A version-4 audit round names
 every record the validator flags as a compound suspect under
-`compound_suspects_reviewed` and every owner turn ledgered `no-material-content` under
-`owner_ledger_reviewed` (`source:msg`), or the compile is not audited
-(`RND_AUDIT_ATOMICITY_UNREVIEWED`, `RND_AUDIT_LEDGER_UNREVIEWED`). "yes" alone is a
-phrase; an id is an answer. A contradiction is RESOLVED only by a live THIRD record
-(not a side of the pair, not UNKNOWN, not itself superseded); SPLIT_FROM requires the
-part's provenance to lie within the whole's, MERGED_FROM names at least two baseline
-records, and neither may have a fingerprint equal to a baseline record (that is SAME).
+`compound_suspects_reviewed`, every owner turn the ledger accounts for — whatever the
+reason — under `owner_ledger_reviewed` (`source:msg`), and every RESOLVED
+contradiction under `contradictions_reviewed` (`A vs B by R`), or the compile is not
+audited (`RND_AUDIT_ATOMICITY_UNREVIEWED`, `RND_AUDIT_LEDGER_UNREVIEWED`,
+`RND_AUDIT_CONTRADICTION_UNREVIEWED`). "yes" alone is a phrase; an id is an answer.
+**The attestation residue, stated plainly:** the validator checks that the ids are
+NAMED, not that they were read — a program can extract every id from the IR and paste
+it. What the obligation buys is that a reviewer who did not look has to write down, by
+id, that they did; the audit's honesty is the reviewer's, exactly as every other
+independent review in this skill. A contradiction is RESOLVED only by a live THIRD
+record (not a side of the pair, not UNKNOWN, not itself superseded) that cites at least
+one turn or owner answer the superseded side did not; SPLIT_FROM requires the part's
+provenance to lie within the whole's, MERGED_FROM names at least two baseline records,
+and neither may have a fingerprint equal to a baseline record (that is SAME).
 
 **The command surface** (all accept `--corpus`; writes only `_rnd/<compile>/`):
 

@@ -349,6 +349,18 @@ def scenario_register_document(tmp):
           "(SOURCE_USE_UNANCHORED)", rc_ == 1 and "SOURCE_USE_UNANCHORED" in out, out)
     rc_, out = proj(["register-document", "--project", name, "--file", str(doc),
                      "--role", "external_reference", "--title", "Spec",
+                     "--used-in", "CONV-001:2-3", "--use-anchor", "e",
+                     "--at", "2026-08-30"], corpus)
+    check("DOC1c (R2-3) a one-letter anchor is not an anchor", rc_ == 1 and "SOURCE_USE_UNANCHORED" in out,
+          out)
+    rc_, out = proj(["register-document", "--project", name, "--file", str(doc),
+                     "--role", "external_reference", "--title", "Spec",
+                     "--used-in", "CONV-001:2-3", "--use-anchor", "ipelin",
+                     "--at", "2026-08-30"], corpus)
+    check("DOC1d (R2-3) an anchor inside a word does not match (word boundaries)",
+          rc_ == 1 and "SOURCE_USE_UNANCHORED" in out, out)
+    rc_, out = proj(["register-document", "--project", name, "--file", str(doc),
+                     "--role", "external_reference", "--title", "Spec",
                      "--used-in", "CONV-001:2-3", "--use-anchor", "pipelinen",
                      "--at", "2026-08-30"], corpus)
     check("DOC2 an external_reference with evidenced, anchored use is registered as DOC-001",
