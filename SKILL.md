@@ -1277,7 +1277,8 @@ validating under the rules they were published against.
 
 **P2.7 — Bytes of an attachment (v4.4).** `register-attachment --project P --source
 CONV-NNN --file F [--original-filename N] [--declared-kind K] [--materiality M]
-[--message-binding "owner msg 12"] [--recovered --recovery-provenance …]` records a
+[--message-binding "owner msg 12"] [--platform-file-id ID] [--recovered
+--recovery-provenance …]` records a
 local file as THE bytes of one attachment of the BOUND revision: copied under
 `sources/CONV-NNN/attachments/<ATT-id>-<sha12><ext>`, hashed, named in
 `attachments-rN.json` as `CAPTURED_CONTENT` (or `RECOVERED_EXACT`, which then
@@ -1878,7 +1879,7 @@ prints the conjunction:
     RND_COMPILE=K  RND_COMPILE_VALID  RND_COMPILE_AUDITED  RND_SEMANTIC_RULES_APPLIED
     RND_IR_VERSION=4  TURNS_ACCOUNTED=100%  RND_BOUND_TO_CUT=YES|NO
     PROJECTION_VAULT=V  PROJECTION_VERIFIED=YES|NO  PROJECTION_CARDS=n
-    INTAKE_SKILL_VERSION=v4.4  SKILL_DRIFT=NONE|UNCOMMITTED|AHEAD|BEHIND_ORIGIN|UNKNOWN
+    INTAKE_SKILL_VERSION=v4.4.1  SKILL_DRIFT=NONE|UNCOMMITTED|AHEAD|BEHIND_ORIGIN|UNKNOWN
     CHAIN_COMPLETE=YES|NO
 
 `CHAIN_COMPLETE=YES` (exit 0) requires: enumeration verified, no hard gap, a CURRENT
@@ -1888,7 +1889,85 @@ turn accounted for, and a verified projection in a vault OUTSIDE the corpus. `--
 `SKILL_DRIFT=NONE`. No line can be typed to YES, and pulling any link flips the
 conjunction — proved link by link in `evals/test_project_v44.py`.
 
-## The skill answers for its own version (v4.4, owner decision D1)
+## v4.4.1 — the three R39 blockers (correction only, no new capability)
+
+The first real full sweep (R39, 2026-09-11) ran the frozen v4.4 to the end of its
+capture layer — 55 conversations, 111 byte-verified attachments and project files —
+and then could not cut, because three v4.4 rules refused correct evidence. Each was
+recorded in the corpus's review queue with its evidence before anything was changed
+(RQ-037, RQ-038, RQ-041), and each correction ships with a positive check and mutants
+that prove the fail-closed direction survived (`evals/test_v441.py`, 70 checks; the
+same file run against the v4.4 scripts scores 23/59 — the reproduction, kept
+runnable). Two rounds of independent adversarial review found four bypasses in the
+drafts; each is closed below and has its own mutant.
+
+**B1 — a quoted header is content, not a boundary (RQ-037).** `verify_transcript_format`
+counted every `## Meddelande N` line, so a conversation that QUOTES another transcript
+(CONV-054 msg 131 quotes CONV-001's R38 prompt) read as "not contiguous" and became a
+hard gap. It now reads only BLOCK-OPENING headers over the source region — the first
+header, and every header that follows a separator line — which is the reading
+`rnd_contract.genuine_message_roles` has applied since v4.1
+(`intake_common.block_opening_headers`, `parse_transcript_roles(block_opening=True)`).
+Kept: a block-opening header out of sequence, an empty body, an unbalanced fence and a
+quoted header that follows a separator (an injected boundary looks exactly like that)
+are all still refused. Added by the review: a transcript with header lines and no
+separator outside code fences is refused as undecidable rather than read as one long
+message, and a non-opening header that CONTINUES the sequence (`Meddelande 3` where
+3 is next) is refused as a lost boundary — absorbing a real turn into the previous
+speaker is the one silence this reading must never introduce.
+
+**B2 — bytes corroborate a declaration where prose cannot (RQ-038).** A source
+declaring N attachments whose body carries no citation marker or upload phrase (eight
+silent images) reconciled `UNKNOWN`, and once its manifest existed that was a FAIL with
+no way out — the owner acknowledgement exists only for `DISAGREE`. `reconcile` now
+answers `AGREE` when the manifest holds exactly N rows and EVERY row is bytes-in-hand
+(`CAPTURED_CONTENT` / `RECOVERED_*`) with a `content_sha256` AND a `platform_file_id`
+(`attachment_surface.bytes_corroborate_declaration`); `register-attachment
+--platform-file-id` records that identity as the platform sent it (shape-checked
+only: it is the operator's claim, witnessed by the capture inventory the sweep stores
+as evidence, never inferred from a filename). Nothing is upgraded: a row without
+bytes, a `DUPLICATE`, a hash without identity, more or fewer rows than declared, a
+silent header (`declared=None`) and a body naming uploads the declaration omits all
+answer as before, and `validate_manifest` still re-hashes every artifact
+(`ATTACHMENT_ARTIFACT_MUTATED`). One identity is one item: rows sharing a
+`platform_file_id` must form a declared duplicate chain (`duplicate_of` → the one
+primary) — a copied row under a second attachment id counts nothing and fails
+`ATTACHMENT_PLATFORM_ID_DUPLICATE` (the review's probe). And shared BYTES must be
+declared: two bytes-rows with one `content_sha256` are a `duplicate_of` chain or a
+distinct platform item saying `byte_identical_to` the row whose artifact it reuses
+(the platform does serve two ids with identical bytes — seen in the first sweep);
+a silent copy, even under a renamed platform id, counts nothing and fails
+`ATTACHMENT_BYTES_SHARED_UNDECLARED` (the review's second probe).
+
+**B3 — a historical compile is witnessed against the revision it declares (RQ-041).**
+`rnd validate` witnessed every bound source against the manifest's LATEST revision, so
+the first new capture of any source turned three correct r38 compiles into 415 FAILs
+and the corpus's pre-commit gate refused every growing commit. The witness now keeps
+every manifest revision and resolves each bound source by the revision its IR declares
+(`_manifest_witness`, `_witness_for`); a declared revision the manifest never recorded
+is `RND_SOURCE_NOT_WITNESSED`. Completeness (`RND_SOURCE_SET_INCOMPLETE`) is measured
+against the sources that existed at the compile's own `inventory_revision`, dated from
+the manifest's `inventory_history` (`capture <sid> r1` / `register-document <sid>`):
+a source first captured later is growth the compile could not bind — `STALE` (WARN),
+never incomplete. The historical scope is available ONLY through an anchor: the
+compile's `(inventory_revision, inventory_sha256)` pair must be an entry of the
+manifest's `inventory_history`; unanchored (0, −1, a number with the wrong sealed sha,
+no number at all) means the strict v4.4 reading — the review's probe declared
+`inventory_revision: 0` and exempted everything. And a compile binds the latest
+revision OF ITS OWN TIME: binding r1 where the history shows r2 captured at or before
+the compile's inventory revision is `RND_SOURCE_SET_INCOMPLETE` (omitted turns are the
+same silence as an omitted source), not a warning. A source the history cannot date
+is treated as pre-existing and must be bound; altered bound bytes still fail. IRs
+written by `init` are unchanged. Residual, stated: `inventory_history` notes are
+written by the tool and git-witnessed after commit but are not inside
+`inventory_identity`; a hand-edited note before commit is the same trust class as a
+hand-edited manifest source list, which v4.4's completeness check already trusted.
+
+Out of this correction on purpose: the adapter's double listing of images (RQ-036),
+extraction semantics, projection, Recompile. `SINGLE` semantics untouched; the v4.4
+suites run unchanged.
+
+## The skill answers for its own version (v4.4.1, owner decision D1)
 
 The 2026-09-11 gap analysis found the installed skill three versions behind the
 published one, refusing the published corpus, with SKILL.md still reading `v4.0
@@ -2196,27 +2275,33 @@ visible negative space, owner-vs-assistant provenance held, rebuildable derived 
 zero corpus mutations). The reopen was authority, not drift.
 
 ```
-NORTROPIC_INTAKE_VERSION=v4.4
+NORTROPIC_INTAKE_VERSION=v4.4.1
 ARCHITECTURE_STATE=FROZEN
 FREEZE_DATE=2026-09-11
-REOPENED_FROM=v4.0 (frozen 2026-09-01; reopened 2026-09-11 by OWNER ARCHITECTURE
-              CHANGE + MATERIAL NEW CAPABILITY — the owner approved the gap analysis
-              for a full, verifiable Improvements Project Sweep and ordered Project/
-              Corpus Intake as an EXTENSION: byte-verified cut, attachment bytes,
-              document sources, IR version 4, Obsidian projection, chain, drift guard;
-              SINGLE and PROJECT_SWEEP semantics unchanged, no v4.x property weakened.
-              v4.1–v4.3 shipped on main between the two freezes without a
-              registration — the drift this freeze's SKILL_SCRIPTS_TREE now closes.)
+REOPENED_FROM=v4.4 (frozen 2026-09-11; reopened the same day under OBSERVED FAILURE —
+              the first real full sweep (R39) hit three v4.4 rules that refused correct
+              evidence: RQ-037 quoted headers counted as boundaries, RQ-038 a silent body
+              with every declared item's bytes in hand stuck at UNKNOWN, RQ-041 historical
+              compiles witnessed against the latest revision. A correction only: no new
+              capability, SINGLE / PROJECT_SWEEP / RND_COMPILE semantics unchanged, no
+              fail-closed or provenance property weakened — each fix carries positive and
+              mutant checks; three rounds of independent adversarial review, two with
+              findings, all closed — REVIEW-v441-B1-B3.md in the build worktree.)
 
-SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8
-SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc
-SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f
+SKILL_MAIN=f015d2269a64d794615851cb89514363cd9853ee
+SKILL_TREE=d78c81097eeb16ed8ac0822cb5adca55a427b786
+SKILL_SCRIPTS_TREE=14b0acf6524e1972b128ff3fe32c7c7f5ec1c133
 
 CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33
-CORPUS_TREE=NOT_MOVED (v4.4 mutated no corpus content — the proving run wrote only
-            to a corpus COPY; the canonical corpus stayed at a1680869, clean)
+CORPUS_TREE=NOT_MOVED (v4.4.1 mutated no corpus content — measured against the r38
+            proving copy and the uncommitted-to-origin R39 working branch; the
+            canonical corpus stayed at a1680869)
 
 LINEAGE:
+  v4.4  SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8
+        SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc
+        SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f  (frozen 2026-09-11)
+        CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33
   v4.3  SKILL_MAIN=1ab153a8989e5413ec448bb72a0620fc9545ea72  (origin/main 2026-09-04,
         never registered as a freeze — installed as the v4.4 baseline 2026-09-11)
   v4.0  SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c
@@ -2242,8 +2327,8 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v4.4 implementation head on `main` (the fast-forward of
-branch `intake-v44-project-corpus`), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
+commit: `SKILL_MAIN` is the v4.4.1 implementation head (branch `v441-r39-blockers`,
+merged to `main` by PR), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
 tree of `scripts/` — the runtime surface `skill_version.py check` compares against —
 and recording the freeze necessarily moves `main` past them by one documentation-only
 commit — this one — that changes no runtime behaviour (so `scripts/` is byte-identical

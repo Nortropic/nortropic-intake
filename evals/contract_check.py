@@ -420,17 +420,18 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
-        "NORTROPIC_INTAKE_VERSION=v4.4",
+        "NORTROPIC_INTAKE_VERSION=v4.4.1",
         "ARCHITECTURE_STATE=FROZEN",
         "FREEZE_DATE=2026-09-11",
-        "SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8",
-        "SKILL_TREE=57c0bd11aedeaa80ad80f7cdc1283513cfd37abc",
-        "SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f",
+        "SKILL_MAIN=f015d2269a64d794615851cb89514363cd9853ee",
+        "SKILL_TREE=d78c81097eeb16ed8ac0822cb5adca55a427b786",
+        "SKILL_SCRIPTS_TREE=14b0acf6524e1972b128ff3fe32c7c7f5ec1c133",
+        "v4.4  SKILL_MAIN=da1c2987bef9226dd7fb3d442110f843d81539c8",
+        "SKILL_SCRIPTS_TREE=a23cb4a93d82abd343d4f0c5005866032b985f0f  (frozen 2026-09-11)",
         "CORPUS_MAIN=a16808697fae02480023ddfc633089085e536c33",
-        "v4.4 mutated no corpus content",
-        "REOPENED_FROM=v4.0 (frozen 2026-09-01; reopened 2026-09-11 by OWNER ARCHITECTURE\n"
-        "              CHANGE + MATERIAL NEW CAPABILITY",
-        "SINGLE and PROJECT_SWEEP semantics unchanged, no v4.x property weakened",
+        "v4.4.1 mutated no corpus content",
+        "REOPENED_FROM=v4.4 (frozen 2026-09-11; reopened the same day under OBSERVED FAILURE",
+        "no new\n              capability, SINGLE / PROJECT_SWEEP / RND_COMPILE semantics unchanged, no\n              fail-closed or provenance property weakened",
         # every earlier frozen identity stays recorded as lineage — history is never dropped
         "v4.3  SKILL_MAIN=1ab153a8989e5413ec448bb72a0620fc9545ea72",
         "v4.0  SKILL_MAIN=320419e6afb5202b3cb860f0542d6850913cd82c",
@@ -481,7 +482,7 @@ CHECKS = [
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "The current SKILL identities are the **frozen architecture**, not this "
         "file's current\ncommit",
-        "`SKILL_MAIN` is the v4.4 implementation head on `main`",
+        "`SKILL_MAIN` is the v4.4.1 implementation head",
         "`SKILL_SCRIPTS_TREE` the\ntree of `scripts/`",
         "Recording\ninvented SHAs would have been a forged freeze",
         "v4 mutated no corpus content",

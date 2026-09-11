@@ -67,7 +67,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, fails, fm_str, git_head_blob, git_immutability,
-    parse_transcript_roles, read_frontmatter, read_json, report, sha256_file,
+    block_opening_headers, parse_transcript_roles, read_frontmatter, read_json,
+    report, sha256_file, TRANSCRIPT_HEADER_RE, _BLOCK_SEPARATOR_RE, outside_fences,
     sha256_text, source_surface_identity, transcript_source_sha256, write_json,
     full_source_capture, transcript_source_region, ROLE_UNKNOWN,
 )
@@ -2162,15 +2163,44 @@ def verify_transcript_format(text):
     roles; an unprovable speaker would poison role-aware provenance downstream).
     Returns (ok, detail, message_count).
     """
-    headers = list(re.finditer(r"^##\s*(?:Meddelande|Message)\s+(\d+)[^\n]*$",
-                               text, re.M))
+    # v4.4.1 (B1, RQ-037): only BLOCK-OPENING headers are message boundaries. A
+    # header-shaped line inside a body (a quoted transcript) is content; v4.4 counted
+    # it and refused a correct capture. Same reading, over the same source region,
+    # as rnd's genuine_message_roles: the first header opens the region, every later
+    # boundary follows a separator line.
+    text, _found = transcript_source_region(text)
+    headers = block_opening_headers(text)
     if not headers:
         return False, "no '## Meddelande N — <roll>' message headers found", 0
+    # Header lines that open no block are content ONLY in a transcript that has
+    # separators to open blocks with. A transcript with header lines and no separator
+    # at all cannot tell a boundary from a quote, and is refused rather than read as
+    # one long message (the review's probe: v4.4 counted N, this must not count 1).
+    all_headers = list(TRANSCRIPT_HEADER_RE.finditer(text))
+    if len(all_headers) > len(headers):
+        seps = outside_fences(text, list(re.finditer(r"^[^\n]*$", text, re.M)))
+        if not any(_BLOCK_SEPARATOR_RE.fullmatch(m.group(0).strip()) for m in seps):
+            return False, ("%d header lines but no separator lines outside code "
+                           "fences — message boundaries are undecidable"
+                           % len(all_headers)), len(headers)
+        # A non-opening header that CONTINUES the sequence is far more likely a
+        # boundary whose separator went missing (absorbing a real turn into the
+        # previous speaker) than a quote that happens to name the next number.
+        # Fail closed: the capture is refused and the operator looks (review, r2).
+        opening_starts = [h.start() for h in headers]
+        for h in all_headers:
+            if h.start() in opening_starts:
+                continue
+            before = sum(1 for st in opening_starts if st < h.start())
+            if int(h.group(1)) == before + 1:
+                return False, ("header line 'Meddelande %d' continues the sequence but "
+                               "opens no block — a missing separator, not a quote"
+                               % int(h.group(1))), len(headers)
     numbers = [int(h.group(1)) for h in headers]
     if numbers != list(range(1, len(numbers) + 1)):
         return False, ("message numbering not contiguous 1..%d: %s…"
                        % (len(numbers), numbers[:10])), len(numbers)
-    roles = parse_transcript_roles(text)
+    roles = parse_transcript_roles(text, block_opening=True)
     unknown = sorted(n for n, role in roles.items() if role == ROLE_UNKNOWN)
     if len(roles) != len(numbers) or unknown:
         return False, ("speaker role unprovable for message(s) %s — every captured "
@@ -3057,6 +3087,12 @@ def cmd_register_attachment(proj, args):
     if not payload:
         print("REGISTER_REFUSED — %s is empty; zero bytes are not an attachment" % src)
         return 2
+    pid = (getattr(args, "platform_file_id", None) or "").strip()
+    if getattr(args, "platform_file_id", None) is not None and \
+            not re.match(r"^\S{8,}$", pid):
+        print("REGISTER_REFUSED — --platform-file-id %r is not a platform identity "
+              "(no whitespace, at least 8 characters, as the platform sent it)" % pid)
+        return 2
     digest = hashlib.sha256(payload).hexdigest()
     number = int(rev.get("revision"))
     mpath = att.manifest_path(proj.source_dir(args.source), number)
@@ -3145,6 +3181,12 @@ def cmd_register_attachment(proj, args):
         row["media_type"] = args.media_type
     if args.message_binding:
         row["message_binding"] = args.message_binding
+    if getattr(args, "platform_file_id", None):
+        # v4.4.1 (B2): the platform's own identity for THIS item, recorded as the
+        # platform sent it (checked for shape only — an operator's claim, witnessed
+        # by the capture inventory, never inferred here from a filename). It is
+        # what lets bytes corroborate a declaration.
+        row["platform_file_id"] = args.platform_file_id.strip()
     if args.recovered:
         row["recovery_provenance"] = args.recovery_provenance.strip()
         row["byte_identity"] = "ESTABLISHED"
@@ -3605,6 +3647,9 @@ def main(argv=None):
     p.add_argument("--media-type")
     p.add_argument("--materiality", choices=["MATERIAL", "NON_MATERIAL", "UNKNOWN"])
     p.add_argument("--message-binding", help="e.g. 'owner msg 12'")
+    p.add_argument("--platform-file-id",
+                   help="the platform's own id for this item (v4.4.1) — lets "
+                        "verified bytes corroborate the declared count")
     p.add_argument("--recovered", action="store_true",
                    help="historical bytes recovered later — requires "
                         "--recovery-provenance")
