@@ -400,6 +400,8 @@ incomplete; a wrong or nonexistent declared revision, an omitted pre-existing so
 an undatable source, a compile with no inventory revision and altered bytes all still
 fail). The independent review's three probes are mutants too: an unanchored
 `inventory_revision`, a current compile binding a superseded revision, and a copied
-manifest row under a second attachment id. 61 checks, floor 30. Run against the v4.4
-scripts the same file scores 22/55 — that is the reproduction, kept runnable rather
+manifest row under a second attachment id — and, from the second round, the same copy
+under a renamed platform id, a fenced `---` posing as a separator and a missing
+separator that would absorb a real turn. 70 checks, floor 30. Run against the v4.4
+scripts the same file scores 25/64 — that is the reproduction, kept runnable rather
 than described.

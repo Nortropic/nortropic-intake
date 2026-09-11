@@ -425,8 +425,44 @@ def bytes_corroborate_declaration(declared, rows):
     # one identity, one item: a row copied under a second attachment id must not
     # count twice (the review's probe). Rows may share a platform id only as an
     # explicit duplicate chain (`duplicate_of` -> the one primary) — the shape the
-    # adapter's double listing produces and RECOVERED_DUPLICATE records.
-    return not platform_identity_conflicts(rows)
+    # adapter's double listing produces and RECOVERED_DUPLICATE records — and rows
+    # may share BYTES only when the sharing is declared (`duplicate_of`, or
+    # `byte_identical_to` for two platform items that really carried the same bytes).
+    return not platform_identity_conflicts(rows) and not shared_bytes_undeclared(rows)
+
+
+def shared_bytes_undeclared(rows):
+    """[(content_sha256, [attachment ids])] for bytes shared by rows that do not
+    say so. Two declared items may carry identical bytes (the platform serves two
+    ids with the same content — observed in the first real sweep), but the row that
+    reuses another row's artifact must SAY which row: `duplicate_of` (a second
+    listing of one item) or `byte_identical_to` (a distinct item, same bytes). A
+    silent copy is one artifact counted twice — the review's renamed-id probe."""
+    groups = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        if not attachment_bytes_available(str(r.get("capture_status", "")).strip()):
+            continue
+        sha = str(r.get("content_sha256", "")).strip().lower()
+        if sha:
+            groups.setdefault(sha, []).append(r)
+    bad = []
+    for sha, members in sorted(groups.items()):
+        if len(members) < 2:
+            continue
+        ids = {str(m.get("attachment_id", "")).strip() for m in members}
+        undeclared = []
+        for m in members:
+            ref = str(m.get("duplicate_of", "")).strip() or \
+                str(m.get("byte_identical_to", "")).strip()
+            if ref and ref in ids and ref != str(m.get("attachment_id", "")).strip():
+                continue
+            undeclared.append(m)
+        # exactly one row may stand undeclared: the one the others point at
+        if len(undeclared) != 1:
+            bad.append((sha, sorted(ids)))
+    return bad
 
 
 def platform_identity_conflicts(rows):
@@ -638,6 +674,12 @@ def validate_manifest(data, source_id, revision, slug, corpus=None):
              "platform_file_id %s is carried by %s — one platform identity is one "
              "item; a second row under the same id must declare duplicate_of the one "
              "primary row, or it is a copy counted twice" % (pid, ", ".join(ids)))
+    for sha, ids in shared_bytes_undeclared(rows):
+        fail("ATTACHMENT_BYTES_SHARED_UNDECLARED",
+             "content_sha256 %s… is carried by %s and the sharing is not declared — a "
+             "row reusing another row's bytes must say which (duplicate_of, or "
+             "byte_identical_to for a distinct platform item with the same bytes); a "
+             "silent copy is one artifact counted twice" % (sha[:12], ", ".join(ids)))
 
     # --- recovery exhaustion: a claim about the SEARCH, never about the source ---
     rex = data.get("recovery_exhaustion")

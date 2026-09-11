@@ -1896,10 +1896,10 @@ capture layer — 55 conversations, 111 byte-verified attachments and project fi
 and then could not cut, because three v4.4 rules refused correct evidence. Each was
 recorded in the corpus's review queue with its evidence before anything was changed
 (RQ-037, RQ-038, RQ-041), and each correction ships with a positive check and mutants
-that prove the fail-closed direction survived (`evals/test_v441.py`, 61 checks; the
-same file run against the v4.4 scripts scores 22/55 — the reproduction, kept
-runnable). An independent adversarial review of the first draft found three
-bypasses; each is closed below and has its own mutant.
+that prove the fail-closed direction survived (`evals/test_v441.py`, 70 checks; the
+same file run against the v4.4 scripts scores 25/64 — the reproduction, kept
+runnable). Two rounds of independent adversarial review found four bypasses in the
+drafts; each is closed below and has its own mutant.
 
 **B1 — a quoted header is content, not a boundary (RQ-037).** `verify_transcript_format`
 counted every `## Meddelande N` line, so a conversation that QUOTES another transcript
@@ -1910,8 +1910,11 @@ header, and every header that follows a separator line — which is the reading
 (`intake_common.block_opening_headers`, `parse_transcript_roles(block_opening=True)`).
 Kept: a block-opening header out of sequence, an empty body, an unbalanced fence and a
 quoted header that follows a separator (an injected boundary looks exactly like that)
-are all still refused. Added by the review: a transcript with header lines and NO
-separator at all is refused as undecidable rather than read as one long message.
+are all still refused. Added by the review: a transcript with header lines and no
+separator outside code fences is refused as undecidable rather than read as one long
+message, and a non-opening header that CONTINUES the sequence (`Meddelande 3` where
+3 is next) is refused as a lost boundary — absorbing a real turn into the previous
+speaker is the one silence this reading must never introduce.
 
 **B2 — bytes corroborate a declaration where prose cannot (RQ-038).** A source
 declaring N attachments whose body carries no citation marker or upload phrase (eight
@@ -1929,7 +1932,12 @@ answer as before, and `validate_manifest` still re-hashes every artifact
 (`ATTACHMENT_ARTIFACT_MUTATED`). One identity is one item: rows sharing a
 `platform_file_id` must form a declared duplicate chain (`duplicate_of` → the one
 primary) — a copied row under a second attachment id counts nothing and fails
-`ATTACHMENT_PLATFORM_ID_DUPLICATE` (the review's probe).
+`ATTACHMENT_PLATFORM_ID_DUPLICATE` (the review's probe). And shared BYTES must be
+declared: two bytes-rows with one `content_sha256` are a `duplicate_of` chain or a
+distinct platform item saying `byte_identical_to` the row whose artifact it reuses
+(the platform does serve two ids with identical bytes — seen in the first sweep);
+a silent copy, even under a renamed platform id, counts nothing and fails
+`ATTACHMENT_BYTES_SHARED_UNDECLARED` (the review's second probe).
 
 **B3 — a historical compile is witnessed against the revision it declares (RQ-041).**
 `rnd validate` witnessed every bound source against the manifest's LATEST revision, so

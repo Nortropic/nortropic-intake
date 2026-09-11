@@ -166,6 +166,24 @@ def scenario_b1(tmp):
     rc, out = capture(corpus, name, "CONV-003", no_sep, tmp)
     check("B1.12 MUTANT …and the CLI records it as a hard gap",
           rc != 0 and "VERIFIED=NO" in out and "STATE=CAPTURED" in out, out)
+    # MUTANT (review r2): a `---` INSIDE a code fence is not a separator
+    fenced_sep = no_sep.replace("Förslag: pipelinen först.",
+                                "Förslag:\n```yaml\n---\nkey: value\n```")
+    ok, detail, n = pc.verify_transcript_format(fenced_sep)
+    check("B1.13 MUTANT a fenced `---` does not make the transcript decidable",
+          not ok and "no separator" in detail, (detail, n))
+    # MUTANT (review r2): one separator missing — the header that CONTINUES the
+    # sequence is a lost boundary, not a quote; refused rather than absorbed
+    one_missing = SWEEP_CHAT_1.replace("\n---\n\n## Meddelande 3", "\n\n## Meddelande 3")
+    ok, detail, n = pc.verify_transcript_format(one_missing)
+    check("B1.14 MUTANT a missing separator before 'Meddelande 3' is refused, not absorbed",
+          not ok and "continues the sequence" in detail, (detail, n))
+    # …while a quote naming a NON-next number in the same position is content
+    quote_other = SWEEP_CHAT_1.replace("\n---\n\n## Meddelande 3 — Johnny (användare)\n",
+                                       "\n\n## Meddelande 9 — Johnny (användare)\n")
+    ok, detail, n = pc.verify_transcript_format(quote_other)
+    check("B1.15 a quoted header naming a non-next number is content (2 messages)",
+          ok and n == 2, (detail, n))
 
 
 # ================================================================== B2 ====
@@ -325,11 +343,38 @@ def scenario_b2(tmp):
     check("B2.23 MUTANT a duplicate pointing elsewhere is a conflict → UNKNOWN",
           att.platform_identity_conflicts(chain2) != []
           and att.reconcile(2, signals, chain2)[0] == "UNKNOWN")
+    # MUTANT (review r2): the same copy under a DIFFERENT platform id — one artifact
+    # still cannot satisfy two declared items unless the sharing is declared
+    m4 = json.loads(mpath.read_text(encoding="utf-8"))
+    m4["attachments"] = [m["attachments"][0], dict(m["attachments"][0],
+                                                   attachment_id="ATT-001-002", ordinal=2,
+                                                   platform_file_id="file_000000000000000000000000000000ff")]
+    mpath.write_text(json.dumps(m4, ensure_ascii=False, indent=2), encoding="utf-8")
+    rc, out, row = _att_report(corpus, name)
+    check("B2.25 MUTANT a copied row under a renamed platform id → not AGREE",
+          "UNKNOWN" in row and "AGREE" not in row, out)
+    rc, out = proj(["validate", "--project", name], corpus)
+    check("B2.26 MUTANT …and validate names it: ATTACHMENT_BYTES_SHARED_UNDECLARED",
+          "ATTACHMENT_BYTES_SHARED_UNDECLARED" in out, out)
+    # the declared form of the same shape (two platform items, identical bytes)
+    m4["attachments"][1]["byte_identical_to"] = "ATT-001-001"
+    mpath.write_text(json.dumps(m4, ensure_ascii=False, indent=2), encoding="utf-8")
+    rc, out, row = _att_report(corpus, name)
+    check("B2.27 two platform items declared byte_identical_to each other's bytes → AGREE",
+          "AGREE" in row and "YES" in row, out)
+    rc, out = proj(["validate", "--project", name], corpus)
+    check("B2.28 …and validate is clean of the sharing code",
+          "ATTACHMENT_BYTES_SHARED_UNDECLARED" not in out, out)
+    m4["attachments"][1]["byte_identical_to"] = "ATT-001-009"
+    check("B2.29 MUTANT byte_identical_to naming no row in the manifest is undeclared",
+          att.shared_bytes_undeclared(m4["attachments"]) != []
+          and att.reconcile(2, signals, m4["attachments"])[0] == "UNKNOWN")
     # restore the real manifest
     mpath.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
     rc, out = proj(["validate", "--project", name], corpus)
-    check("B2.24 the restored manifest validates clean of both codes",
+    check("B2.24 the restored manifest validates clean of all three codes",
           "ATTACHMENT_PLATFORM_ID_DUPLICATE" not in out
+          and "ATTACHMENT_BYTES_SHARED_UNDECLARED" not in out
           and "ATTACHMENT_SURFACE_UNRECONCILED" not in out, out)
 
 
@@ -435,6 +480,16 @@ def scenario_b3(tmp):
           ir["source_set"]["inventory_revision"] == 2
           and ir["source_set"]["inventory_sha256"] == sealed["inventory_sha256"]
           and all(s.get("revision") == 1 for s in ir["source_set"]["sources"]), ir["source_set"])
+
+    # a v4.0-shaped IR (no `revision` on its sources) still reads as "latest"
+    ir_legacy = copy.deepcopy(ir)
+    for s_ in ir_legacy["source_set"]["sources"]:
+        s_.pop("revision", None)
+    write_json(ir_path, ir_legacy)
+    rc, out = rnd_run(corpus, "validate", "--compile", cid)
+    check("B3.0d a legacy IR without revision numbers validates (binds the latest), rc=0",
+          rc == 0 and "RND_SOURCE_SET_INCOMPLETE" not in out, out)
+    write_json(ir_path, ir)
 
     _grow(corpus)
     rc, out = proj(["validate", "--project", "demo"], corpus)

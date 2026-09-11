@@ -68,7 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from intake_common import (  # noqa: E402
     Finding, corpus_root, fails, fm_str, git_head_blob, git_immutability,
     block_opening_headers, parse_transcript_roles, read_frontmatter, read_json,
-    report, sha256_file, TRANSCRIPT_HEADER_RE, _BLOCK_SEPARATOR_RE,
+    report, sha256_file, TRANSCRIPT_HEADER_RE, _BLOCK_SEPARATOR_RE, outside_fences,
     sha256_text, source_surface_identity, transcript_source_sha256, write_json,
     full_source_capture, transcript_source_region, ROLE_UNKNOWN,
 )
@@ -2177,10 +2177,25 @@ def verify_transcript_format(text):
     # at all cannot tell a boundary from a quote, and is refused rather than read as
     # one long message (the review's probe: v4.4 counted N, this must not count 1).
     all_headers = list(TRANSCRIPT_HEADER_RE.finditer(text))
-    if len(all_headers) > len(headers) and not any(
-            _BLOCK_SEPARATOR_RE.fullmatch(line.strip()) for line in text.split("\n")):
-        return False, ("%d header lines but no separator lines — message boundaries "
-                       "are undecidable" % len(all_headers)), len(headers)
+    if len(all_headers) > len(headers):
+        seps = outside_fences(text, list(re.finditer(r"^[^\n]*$", text, re.M)))
+        if not any(_BLOCK_SEPARATOR_RE.fullmatch(m.group(0).strip()) for m in seps):
+            return False, ("%d header lines but no separator lines outside code "
+                           "fences — message boundaries are undecidable"
+                           % len(all_headers)), len(headers)
+        # A non-opening header that CONTINUES the sequence is far more likely a
+        # boundary whose separator went missing (absorbing a real turn into the
+        # previous speaker) than a quote that happens to name the next number.
+        # Fail closed: the capture is refused and the operator looks (review, r2).
+        opening_starts = [h.start() for h in headers]
+        for h in all_headers:
+            if h.start() in opening_starts:
+                continue
+            before = sum(1 for st in opening_starts if st < h.start())
+            if int(h.group(1)) == before + 1:
+                return False, ("header line 'Meddelande %d' continues the sequence but "
+                               "opens no block — a missing separator, not a quote"
+                               % int(h.group(1))), len(headers)
     numbers = [int(h.group(1)) for h in headers]
     if numbers != list(range(1, len(numbers) + 1)):
         return False, ("message numbering not contiguous 1..%d: %s…"

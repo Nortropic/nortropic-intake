@@ -1307,8 +1307,11 @@ def validate_compile(corpus, compile_id):
                             "%s is bound but outside source_set.scope %s — the scope "
                             "list and the bound set disagree" % (msid, declared_scope)))
                     try:
-                        bound_rev = int(b.rec.get("revision") or 0)
                         latest_rev = int(last.get("revision") or 0)
+                        # a v4.0 IR carries no revision: it binds the latest, which
+                        # is how _witness_for reads it too (review, round 2)
+                        bound_rev = latest_rev if b.rec.get("revision") in (None, "") \
+                            else int(b.rec.get("revision"))
                         # the revision a compile OF ITS OWN TIME had to bind: the
                         # highest one captured at or before its inventory revision
                         # (undatable in the history -> the manifest's latest)
