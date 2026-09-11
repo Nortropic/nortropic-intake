@@ -130,7 +130,16 @@ COMPOSITE_STATE_RELATIONS = ("contradicts", "supersedes")
 _ENUMERATOR_RE = re.compile(r"(?:\((?:[a-h]|i{1,3}|iv|v|\d)\)|(?:^|\s)(?:[a-h]|\d)\)\s)")
 _CLAUSE_SPLIT_RE = re.compile(r";\s+")
 _SENTENCE_END_RE = re.compile(r"[.!?](?:\s|$)")
+# "facts; the assistant concludes X" fuses an OBSERVATION with a DERIVED_JUDGMENT or
+# OPTION — the shape the independent review found in the proving compile's longest
+# records and the heuristic missed. A fact and the conclusion drawn from it can be
+# contradicted independently, so the shape is a suspect on its own.
+_FUSED_CONCLUSION_RE = re.compile(
+    r"[;—–-]\s*(?:the\s+assistant|assistenten|the\s+compiler)\s+"
+    r"(?:concludes|proposes|reads|maps|calls|draws|recommends|suggests|keeps|"
+    r"adds|requires|föreslår|drar|läser|rekommenderar)\b", re.I)
 COMPOUND_SUSPECT_MIN_CHARS = 400
+COMPOUND_ENUMERATED_MIN_CHARS = 200
 
 # v4.4 --- LINEAGE (owner decision D6: proved, not assumed) --------------------
 # The probe over the three published compiles (r38 -> c1 -> c4) measured: 0 items
@@ -755,6 +764,20 @@ def project_review_queue_owner_answers(corpus, project):
 
 # ------------------------------------------------------- vocabulary guards --
 
+def compound_suspect(claim):
+    """ATOM-4 heuristic, shared by validate and the audit obligation: a claim that
+    LOOKS compound. Points; never decides."""
+    claim = str(claim or "")
+    enumerators = len(_ENUMERATOR_RE.findall(claim))
+    clauses = len(_CLAUSE_SPLIT_RE.split(claim))
+    sentences = len(_SENTENCE_END_RE.findall(claim))
+    if enumerators >= 2 and len(claim) >= COMPOUND_ENUMERATED_MIN_CHARS:
+        return True
+    if _FUSED_CONCLUSION_RE.search(claim) and len(claim) >= COMPOUND_ENUMERATED_MIN_CHARS:
+        return True
+    return len(claim) >= COMPOUND_SUSPECT_MIN_CHARS and (clauses >= 3 or sentences >= 3)
+
+
 def record_fingerprint(item):
     """v4.4 — sha256 over kind | normalised claim | sorted provenance keys.
 
@@ -1039,10 +1062,14 @@ def validate_compile(corpus, compile_id):
         findings.append(Finding(cid, "RND_SOURCE_SET_EMPTY",
                                 "a compile of nothing understands nothing"))
     for sid, b in sources.items():
-        if not b.excluded and not b.recorded_sha:
+        if not b.excluded and not b.is_document() and not b.recorded_sha:
             findings.append(Finding(cid, "RND_SOURCE_SET_INVALID",
                                     "%s carries no source_sha256 — an unbound "
                                     "source cannot witness anything" % sid))
+        if not b.excluded and b.is_document() and not b.recorded_file_sha:
+            findings.append(Finding(cid, "RND_SOURCE_SET_INVALID",
+                                    "%s is a document bound without sha256 — a "
+                                    "document is bound by its whole-file identity" % sid))
         # The derived layer is OUTPUT, never INPUT. A source path under `_rnd/` is
         # an agent-writable file masquerading as captured evidence — an independent
         # review minted a phantom owner turn exactly this way. The compile consumes
@@ -1095,6 +1122,68 @@ def validate_compile(corpus, compile_id):
                 # the bound bytes to the sweep's own record, not to the IR's
                 # self-report. The count oracle likewise reads from the manifest.
                 witness = _manifest_witness(manifest)
+                # v4.4 (F-1 of the independent review): a compile that simply OMITS
+                # a captured source, or excludes it with the tool's own "no captured
+                # revision" text when the manifest HAS a revision, validated clean and
+                # reported TURNS_ACCOUNTED=100%. Completeness is a property of the
+                # manifest, so it is checked against the manifest: every source the
+                # manifest has captured is bound, or excluded ONLY through the declared
+                # scope `init --only` writes into source_set.scope (version 4).
+                declared_scope = src.get("scope") if isinstance(src.get("scope"), list) \
+                    else None
+                if declared_scope is not None and not atomic:
+                    findings.append(Finding(
+                        cid, "RND_SOURCE_SET_INVALID",
+                        "source_set.scope is a version-4 field — a scoped compile "
+                        "declares rnd_ir_version 4"))
+                    declared_scope = None
+                captured_in_manifest = {}
+                for ms in (manifest.get("sources") or []):
+                    if not isinstance(ms, dict):
+                        continue
+                    msid = str(ms.get("source_id", "")).strip()
+                    revs = [r for r in (ms.get("revisions") or []) if isinstance(r, dict)]
+                    if msid and revs:
+                        captured_in_manifest[msid] = revs[-1]
+                for msid, last in sorted(captured_in_manifest.items()):
+                    b = sources.get(msid)
+                    if b is None:
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_SET_INCOMPLETE",
+                            "%s is captured in the project manifest (revision %s) but "
+                            "absent from the compile's source set — a compile of a "
+                            "project binds every captured source or declares the scope "
+                            "it left out" % (msid, last.get("revision"))))
+                        continue
+                    if b.excluded:
+                        legit = (declared_scope is not None
+                                 and msid not in declared_scope
+                                 and b.excluded.startswith(
+                                     "outside the compile's declared scope"))
+                        if not legit:
+                            findings.append(Finding(
+                                cid, "RND_SOURCE_SET_INCOMPLETE",
+                                "%s is captured in the project manifest (revision %s) "
+                                "but excluded as %r — the only exclusion of a captured "
+                                "source is the declared scope (init --only), recorded "
+                                "in source_set.scope" % (msid, last.get("revision"),
+                                                         b.excluded[:60])))
+                        continue
+                    if declared_scope is not None and msid not in declared_scope:
+                        findings.append(Finding(
+                            cid, "RND_SOURCE_SET_INVALID",
+                            "%s is bound but outside source_set.scope %s — the scope "
+                            "list and the bound set disagree" % (msid, declared_scope)))
+                    try:
+                        if int(b.rec.get("revision") or 0) != int(last.get("revision") or 0):
+                            findings.append(Finding(
+                                cid, "RND_SOURCE_SET_STALE",
+                                "%s bound at revision %s, manifest latest is %s — "
+                                "recompile against the current revision"
+                                % (msid, b.rec.get("revision"), last.get("revision")),
+                                level="WARN"))
+                    except (TypeError, ValueError):
+                        pass
                 for sid, b in sources.items():
                     if b.excluded:
                         continue
@@ -1284,14 +1373,16 @@ def validate_compile(corpus, compile_id):
                 enumerators = len(_ENUMERATOR_RE.findall(claim))
                 clauses = len(_CLAUSE_SPLIT_RE.split(claim))
                 sentences = len(_SENTENCE_END_RE.findall(claim))
-                if len(claim) >= COMPOUND_SUSPECT_MIN_CHARS and \
-                        (enumerators >= 2 or clauses >= 3 or sentences >= 3):
+                fused = bool(_FUSED_CONCLUSION_RE.search(claim))
+                if compound_suspect(claim):
                     findings.append(Finding(
                         cid, "RND_CLAIM_COMPOUND_SUSPECT",
                         "%s: the claim runs %d chars with %d enumerators / %d "
-                        "clauses / %d sentences — it may bundle claims that can "
-                        "change independently; the audit decides (RND_COMPOUND_CLAIM)"
-                        % (iid, len(claim), enumerators, clauses, sentences),
+                        "clauses / %d sentences%s — it may bundle claims that can "
+                        "change independently; the audit decides (RND_COMPOUND_CLAIM) "
+                        "and must name this record under compound_suspects_reviewed"
+                        % (iid, len(claim), enumerators, clauses, sentences,
+                           " / a fact fused with a conclusion" if fused else ""),
                         level="WARN"))
             fp_recorded = str(item.get("fingerprint", "")).strip().lower()
             fp_actual = record_fingerprint(item)
@@ -1863,6 +1954,14 @@ def validate_compile(corpus, compile_id):
                         cid, "RND_ATOMICITY_INVALID",
                         "%s carries composed_of but is not declared COMPOSITE"
                         % iid))
+                if rv == "composed_of" and str(tgt.get("kind", "")).strip() != \
+                        str(item.get("kind", "")).strip():
+                    findings.append(Finding(
+                        cid, "RND_COMPOSITE_KIND_MISMATCH",
+                        "%s (%s) composes %s (%s) — a container's parts are records of "
+                        "the container's own kind, so the standing and authority the "
+                        "kind demands sit on the parts" % (iid, item.get("kind"), target,
+                                                            tgt.get("kind"))))
                 if rv == "composed_of" and atomicity_seen.get(target) == "COMPOSITE":
                     findings.append(Finding(
                         cid, "RND_COMPOSITE_NESTED",
@@ -2161,7 +2260,23 @@ def validate_compile(corpus, compile_id):
         # for them. Exclusion is legitimate — a source with no captured revision is a
         # gap recorded rather than hidden — but it is not a way to shrink the corpus.
         _bound = [b for b in sources.values()]
-        _excl = [sid for sid, b in sources.items() if b.excluded]
+        # v4.4: a DECLARED scope (`init --only`) is partiality said up front, not
+        # partiality by omission — it is reported as scoped, and the chain refuses
+        # to call a scoped compile the project's compile, but it does not trip the
+        # guard against quietly excusing a corpus
+        _declared = src.get("scope") if (atomic and isinstance(src.get("scope"), list)) \
+            else None
+        _scoped = [sid for sid, b in sources.items()
+                   if b.excluded and _declared is not None and sid not in _declared
+                   and b.excluded.startswith("outside the compile's declared scope")]
+        _excl = [sid for sid, b in sources.items() if b.excluded and sid not in _scoped]
+        if _scoped:
+            findings.append(Finding(
+                cid, "RND_SOURCE_SET_SCOPED",
+                "%d of %d bound sources are outside the compile's declared scope (%s%s) "
+                "— a PARTIAL compile of the project, never its compile"
+                % (len(_scoped), len(_bound), ", ".join(sorted(_scoped)[:6]),
+                   ", …" if len(_scoped) > 6 else ""), level="WARN"))
         # `init` itself writes "no captured revision" exclusions, so a 2-source
         # project with one uncaptured source hard-FAILED on the tool's own happy
         # path. Excluding most of a LARGE set is still worth saying; it is a WARN,
@@ -2274,7 +2389,7 @@ def validate_compile(corpus, compile_id):
                         "to one place, not to two" % psid))
                 prog_map[psid] = e.get("examined_through")
             for sid, b in sorted(sources.items()):
-                if b.excluded or not b.path.exists():
+                if b.excluded or not b.path.exists() or b.is_document():
                     continue
                 total = b.message_count()
                 seen_through = prog_map.get(sid)
@@ -2481,6 +2596,20 @@ def validate_compile(corpus, compile_id):
                         "an assistant turn; a reason for the wrong role accounts for "
                         "nothing" % (lsid, e.get("messages"), reason, mis[0])))
                     continue
+                dup = [n for n in span if n in declared_all.get(lsid, set())]
+                if dup:
+                    findings.append(Finding(
+                        cid, "RND_TURN_LEDGER_INVALID",
+                        "%s msg %d is ledgered twice — one turn, one reason"
+                        % (lsid, dup[0])))
+                    continue
+                also_cited = [n for n in span if n in cited_msgs.get(lsid, set())]
+                if also_cited:
+                    findings.append(Finding(
+                        cid, "RND_TURN_LEDGER_INVALID",
+                        "%s msg %d is cited by a record AND ledgered as uncited — the "
+                        "ledger explains turns no record carries" % (lsid, also_cited[0])))
+                    continue
                 for n in span:
                     declared_all.setdefault(lsid, set()).add(n)
                     ledgered_by_role[lroles.get(n)] = \
@@ -2573,16 +2702,25 @@ def validate_compile(corpus, compile_id):
                 rby = str(e.get("resolved_by", "")).strip()
                 a, b_ = pair
                 superseded = [x for x in (a, b_) if rby in sup_map.get(x, set())]
+                resolver = by_id.get(rby) or {}
                 ok = bool(rby in by_id and superseded and all(
                     standings_seen.get(x) in ("SUPERSEDED", "REJECTED", "HISTORICAL")
                     for x in superseded))
+                # a resolution comes from a THIRD, LIVE record that can carry one: not
+                # one side of the pair, not an UNKNOWN, not itself dead
+                if ok and (rby in pair
+                           or str(resolver.get("kind", "")).strip() == "UNKNOWN"
+                           or standings_seen.get(rby) in ("SUPERSEDED", "REJECTED",
+                                                          "HISTORICAL")):
+                    ok = False
                 if not ok:
                     findings.append(Finding(
                         cid, "RND_CONTRADICTION_RESOLUTION_UNBACKED",
-                        "%s vs %s is registered RESOLVED by %r, but that record does "
-                        "not supersede either side with the superseded side standing "
-                        "SUPERSEDED/REJECTED/HISTORICAL — a resolution is a relation "
-                        "plus a standing, not a note" % (a, b_, rby or "?")))
+                        "%s vs %s is registered RESOLVED by %r, but a resolution is a "
+                        "LIVE THIRD record (not a side of the pair, not UNKNOWN, not "
+                        "itself superseded/rejected) that supersedes one side, with "
+                        "that side standing SUPERSEDED/REJECTED/HISTORICAL"
+                        % (a, b_, rby or "?")))
                     continue
                 registered[pair] = "RESOLVED"
             elif state == "UNRESOLVED":
@@ -2651,6 +2789,13 @@ def validate_compile(corpus, compile_id):
                     base_fp_inv.setdefault(f, []).append(bid)
                 claimed_ids = set()
                 referenced_base = set()
+                split_sources = {}
+                merged_by_record = {}
+                for iid, bid, rel in lineage_claims:
+                    if rel == "SPLIT_FROM":
+                        split_sources.setdefault(bid, set()).add(iid)
+                    if rel == "MERGED_FROM":
+                        merged_by_record.setdefault(iid, set()).add(bid)
                 for iid, bid, rel in lineage_claims:
                     claimed_ids.add(iid)
                     if bid not in base_by_id:
@@ -2672,6 +2817,40 @@ def validate_compile(corpus, compile_id):
                             cid, "RND_LINEAGE_RELATION_FALSE",
                             "%s claims REVISED from %s but the fingerprints are "
                             "equal — nothing was revised; declare SAME" % (iid, bid)))
+                    elif rel in ("SPLIT_FROM", "MERGED_FROM") and same:
+                        findings.append(Finding(
+                            cid, "RND_LINEAGE_RELATION_FALSE",
+                            "%s claims %s %s but its fingerprint EQUALS that record — "
+                            "it is the same record; declare SAME" % (iid, rel, bid)))
+                    elif rel == "SPLIT_FROM":
+                        # a PART cites a subset of what the whole cited (source-level);
+                        # a record citing sources the baseline never cited is not a
+                        # part of it. A single part is legitimate in a scoped compile
+                        # whose other parts lie outside the bound sources.
+                        part_src = {str(pp.get("source_id", pp.get("rq", ""))).strip()
+                                    for pp in (by_id[iid].get("provenance") or [])
+                                    if isinstance(pp, dict)}
+                        whole_src = {str(pp.get("source_id", pp.get("rq", ""))).strip()
+                                     for pp in (base_by_id[bid].get("provenance") or [])
+                                     if isinstance(pp, dict)}
+                        if not part_src <= whole_src:
+                            findings.append(Finding(
+                                cid, "RND_LINEAGE_RELATION_FALSE",
+                                "%s claims SPLIT_FROM %s but cites %s, which %s never cited "
+                                "— a part carries part of the whole's provenance, not new "
+                                "sources" % (iid, bid, ", ".join(sorted(part_src - whole_src)),
+                                             bid)))
+                    elif rel == "MERGED_FROM" and len(merged_by_record.get(iid, ())) < 2:
+                        findings.append(Finding(
+                            cid, "RND_LINEAGE_RELATION_FALSE",
+                            "%s claims MERGED_FROM %s alone — a merge names at least two "
+                            "baseline records" % (iid, bid)))
+                    if rel in ("SPLIT_FROM", "MERGED_FROM") and not same and \
+                            fingerprints.get(iid) in base_fp_inv:
+                        findings.append(Finding(
+                            cid, "RND_LINEAGE_RELATION_FALSE",
+                            "%s claims %s %s but is byte-identical to %s — declare SAME"
+                            % (iid, rel, bid, ", ".join(base_fp_inv[fingerprints[iid]]))))
                 for iid, f in fingerprints.items():
                     if iid in claimed_ids:
                         continue
@@ -2685,9 +2864,22 @@ def validate_compile(corpus, compile_id):
                 retired_ids = {str(r.get("id", "")).strip() for r in (retired or [])
                                if isinstance(r, dict) and str(r.get("reason", "")).strip()}
                 current_fps = set(fingerprints.values())
+                # a scoped compile (--only) carries only what its bound sources
+                # say: a baseline record whose provenance lies entirely outside the
+                # bound sources is OUT OF SCOPE, not retired — it was never asked
+                bound_ids = {sid for sid, b in sources.items() if not b.excluded}
+
+                def _in_scope(rec):
+                    provs = [pp for pp in (rec.get("provenance") or [])
+                             if isinstance(pp, dict)]
+                    cited = [str(pp.get("source_id", "")).strip() for pp in provs
+                             if str(pp.get("source_id", "")).strip()]
+                    if not cited:
+                        return True      # rq-only or unsourced: nothing excludes it
+                    return any(sid in bound_ids for sid in cited)
                 gone = sorted(bid for bid, f in base_fp.items()
                               if bid not in referenced_base and f not in current_fps
-                              and bid not in retired_ids)
+                              and bid not in retired_ids and _in_scope(base_by_id[bid]))
                 if gone:
                     findings.append(Finding(
                         cid, "RND_LINEAGE_RETIRED_UNDECLARED",
@@ -2720,6 +2912,8 @@ def validate_compile(corpus, compile_id):
         "source_set_kind": str(src.get("kind", "")).strip() or "?",
         "turns_accounted": turns_accounted,
         "contradictions": len(contradiction_pairs),
+        "scope": "PARTIAL" if (isinstance(src.get("scope"), list)
+                               or any(b.excluded for b in sources.values())) else "FULL",
     }
     return findings, summary
 
@@ -2859,6 +3053,55 @@ def validate_audit(corpus, compile_id, ir):
             "version-4 compile is audited for compound claims by a reader, and a "
             "round that did not say it looked did not look"))
         audited = False
+    if _rv >= IR_VERSION_ATOMIC:
+        # A WARN the validator raises is a question the audit must ANSWER by id:
+        # every compound-suspect record is named under `compound_suspects_reviewed`,
+        # and every owner turn the compile ledgered as `no-material-content` is
+        # named under `owner_ledger_reviewed` (source:msg). "yes" alone is a phrase.
+        suspects = sorted(str(i.get("id", "")).strip()
+                          for i in (ir.get("items") or []) if isinstance(i, dict)
+                          and str(i.get("atomicity", "")).strip().upper() == "ATOMIC"
+                          and compound_suspect(i.get("claim")))
+        reviewed = set(re.findall(r"RND-\d{3,}",
+                                  str(latest["fields"].get("compound_suspects_reviewed", ""))))
+        missing = [x for x in suspects if x not in reviewed]
+        if missing:
+            findings.append(Finding(
+                cid, "RND_AUDIT_ATOMICITY_UNREVIEWED",
+                "the validator flags %d compound-suspect record(s) and the latest "
+                "audit round does not name %s under compound_suspects_reviewed — a "
+                "suspect is a question, and the audit answers it by id"
+                % (len(suspects), ", ".join(missing[:8]))))
+            audited = False
+        try:
+            srcs = bind_sources(corpus, ir)
+            owner_ledgered = []
+            for e in (ir.get("turn_ledger") or []):
+                if not isinstance(e, dict) or \
+                        str(e.get("reason", "")).strip() != "no-material-content":
+                    continue
+                lb = srcs.get(str(e.get("source_id", "")).strip())
+                rng = parse_msg_range(e.get("messages"))
+                if lb is None or lb.excluded or rng is None or lb.is_document():
+                    continue
+                roles = lb.roles()
+                for n in range(rng[0], rng[1] + 1):
+                    if roles.get(n) == ROLE_OWNER:
+                        owner_ledgered.append("%s:%d" % (lb.source_id, n))
+        except Exception:                                        # noqa: BLE001
+            owner_ledgered = []
+        named = set(re.findall(r"(CONV-\d{3,}):(\d+)",
+                               str(latest["fields"].get("owner_ledger_reviewed", ""))))
+        named = {"%s:%s" % (a, b) for a, b in named}
+        missing = [x for x in owner_ledgered if x not in named]
+        if missing:
+            findings.append(Finding(
+                cid, "RND_AUDIT_LEDGER_UNREVIEWED",
+                "%d owner turn(s) are ledgered `no-material-content` and the latest "
+                "audit round does not name %s under owner_ledger_reviewed — dropping "
+                "the owner's voice is reviewed turn by turn, never by a blanket reason"
+                % (len(owner_ledgered), ", ".join(missing[:8]))))
+            audited = False
     if latest.get("ir_sha256") and latest["ir_sha256"] != current_sha:
         findings.append(Finding(
             cid, "RND_AUDIT_STALE",
@@ -3236,7 +3479,8 @@ def cmd_init(args):
     print("initialized %s" % ir_path)
     print("SOURCES_BOUND=%d" % len([s for s in sources if not s.get("excluded")]))
     if note:
-        print(note)
+        print(note.replace("(uncaptured — visible, not absorbed)",
+                           "(uncaptured or outside --only scope — visible, not absorbed)"))
     print("all %d coverage lenses start UNKNOWN — evidence moves them, "
           "silence never does" % len(BASELINE_LENSES))
     print("next: derive items into %s, then `validate --compile %s`"

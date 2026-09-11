@@ -164,6 +164,50 @@ def scenario_cut(tmp):
           and "SOURCE_CUT_BROKEN" not in out, out)
     rc_, out = proj(["coverage", "--project", name], corpus)
     check("CUT11 coverage reports SOURCE_CUT_STATE=STALE", "SOURCE_CUT_STATE=STALE" in out, out)
+    # F-4: dates are dates, and a capture's input never comes from the corpus itself
+    rc_, out = capture(corpus, name, "CONV-001", SWEEP_CHAT_1, tmp, at="later")
+    check("CUT13 capture --at that is not a date is refused", rc_ == 2 and "not a YYYY-MM-DD" in out,
+          out)
+    rc_, out = proj(["cut", "--project", name, "--at", "2099-13-45"], corpus)
+    check("CUT13b cut --at that is not a real date is refused", rc_ == 2, out)
+    inside = corpus / "_projects" / name / "sources" / "CONV-001" / "conversation.md"
+    rc_, out = proj(["capture", "--project", name, "--source", "CONV-001", "--file",
+                     str(inside), "--at", "2026-09-05"], corpus)
+    check("CUT14 re-feeding the corpus's own file is not a capture",
+          rc_ == 2 and "inside the corpus" in out, out)
+    data = read_project_manifest(corpus, name)
+    for s_ in data["sources"]:
+        if s_["source_id"] == "CONV-003":
+            s_["revisions"][-1]["captured_at"] = "unknown"
+    write_project_manifest(corpus, name, data)
+    rc_, out = proj(["validate", "--project", name], corpus)
+    check("CUT15 a captured_at that is not a date is SOURCE_DATE_INVALID",
+          "SOURCE_DATE_INVALID" in out, out)
+    for s_ in data["sources"]:
+        if s_["source_id"] == "CONV-003":
+            s_["revisions"][-1]["captured_at"] = "2026-09-01"
+    write_project_manifest(corpus, name, data)
+    # F-5: the review queue is bound by the cut
+    corpus3 = swept_and_routed(Path(tmp) / "rq", "rq")
+    for sid, text in (("CONV-001", SWEEP_CHAT_1), ("CONV-002", SWEEP_CHAT_2),
+                      ("CONV-003", SWEEP_CHAT_3)):
+        capture(corpus3, "rq", sid, text, tmp, at="2026-08-30")
+    q = corpus3 / "_projects" / "rq" / "review-queue.md"
+    q.write_text("---\ntitle: rq — review queue\ntype: review-queue\nproject: rq\n"
+                 "owner: Johnny (Nortropic)\nappend_only: true\n---\n\n# Review queue: rq\n\n"
+                 "## RQ-001\n- date: 2026-08-30\n- issue: is the gate deferred?\n"
+                 "- affects: CONV-001\n- recommendation: ask\n- evidence: msg 1\n"
+                 "- owner_judgment_required: yes\n\n## RQ-002\n- date: 2026-08-30\n"
+                 "- resolves: RQ-001\n- question: deferred?\n- owner_answer: Yes, deferred.\n",
+                 encoding="utf-8")
+    rc_, out = proj(["cut", "--project", "rq", "--at", "2026-08-30"], corpus3)
+    assert rc_ == 0, out
+    q.write_text(q.read_text(encoding="utf-8").replace("Yes, deferred.", "Yes, deferred — "
+                                                                       "for v1 only."),
+                 encoding="utf-8")
+    rc_, out = proj(["validate", "--project", "rq"], corpus3)
+    check("CUT16 an owner answer rewritten after the cut breaks the cut",
+          "SOURCE_CUT_BROKEN" in out and "review-queue.md" in out, out)
     # a hard gap refuses a cut
     corpus2 = sweep_project(Path(tmp) / "gap", "gap")
     capture(corpus2, "gap", "CONV-001", SWEEP_CHAT_1, tmp)
@@ -222,6 +266,47 @@ def scenario_register_attachment(tmp):
                      "--file", str(other), "--revision", "7"], corpus)
     check("ATT7 a revision other than the bound one is refused",
           rc_ == 2 and "BOUND revision" in out, out)
+    # F-3: a recorded bytes-absent row is a FACT; bytes for it are a RECOVERY.
+    # Own fixture: a transcript that DECLARES two attachments, one registered.
+    corpus_r = sweep_project(Path(tmp) / "rec", "rec")
+    for sid, text in (("CONV-001", SWEEP_CHAT_1), ("CONV-002", SWEEP_CHAT_2),
+                      ("CONV-003", SWEEP_CHAT_3.replace("1 bilaga inventerad", "2 bilagor inventerade"))):
+        capture(corpus_r, "rec", sid, text, tmp)
+    proj(["register-attachment", "--project", "rec", "--source", "CONV-003",
+          "--file", str(payload), "--materiality", "MATERIAL"], corpus_r)
+    mpath_r = corpus_r / "_projects" / "rec" / "sources" / "CONV-003" / "attachments-r1.json"
+    man = json.loads(mpath_r.read_text(encoding="utf-8"))
+    man["attachments"].append({"attachment_id": "ATT-003-002", "ordinal": 2,
+                               "capture_status": "UNAVAILABLE", "materiality": "MATERIAL",
+                               "semantic_accessibility": "UNAVAILABLE",
+                               "declared_kind": "uploaded_file"})
+    man["full_source_capture"] = "NO"     # what the rows now derive; a hand-written manifest says so
+    mpath_r.write_text(json.dumps(man, ensure_ascii=False, indent=1), encoding="utf-8")
+    rc_, out = proj(["validate", "--project", "rec"], corpus_r)
+    check("ATT7a the fixture with one UNAVAILABLE row validates (WARN only)", rc_ == 0, out)
+    later = Path(tmp) / "plausible.md"
+    later.write_text("a plausible file that fits the name\n", encoding="utf-8")
+    rc_, out = proj(["register-attachment", "--project", "rec", "--source", "CONV-003",
+                     "--file", str(later), "--attachment-id", "ATT-003-002"], corpus_r)
+    check("ATT7b bytes for a recorded UNAVAILABLE row are refused without recovery "
+          "provenance — a recorded state is never reclassified by plain registration",
+          rc_ == 2 and "RECOVERY" in out, out)
+    man2 = json.loads(mpath_r.read_text(encoding="utf-8"))
+    check("ATT7c the refused registration left the row UNAVAILABLE",
+          [a for a in man2["attachments"] if a["attachment_id"] == "ATT-003-002"][0]
+          ["capture_status"] == "UNAVAILABLE", json.dumps(man2)[:300])
+    rc_, out = proj(["register-attachment", "--project", "rec", "--source", "CONV-003",
+                     "--file", str(later), "--attachment-id", "ATT-003-002", "--recovered",
+                     "--recovery-provenance", "owner's original from the tool that produced "
+                     "it, matched on name+upload stamp"], corpus_r)
+    man3 = json.loads(mpath_r.read_text(encoding="utf-8"))
+    row2 = [a for a in man3["attachments"] if a["attachment_id"] == "ATT-003-002"][0]
+    check("ATT7d with --recovered and provenance the row becomes RECOVERED_EXACT and drops "
+          "the bytes-absent semantic state",
+          rc_ == 0 and row2["capture_status"] == "RECOVERED_EXACT"
+          and "semantic_accessibility" not in row2 and row2.get("recovery_provenance"), out)
+    rc_, out = proj(["validate", "--project", "rec"], corpus_r)
+    check("ATT7e the recovered row validates", rc_ == 0, out)
     # MUTANT: the artifact bytes change on disk → ATTACHMENT_ARTIFACT_MUTATED
     art.write_bytes(art.read_bytes() + b"\ntampered\n")
     rc_, out = proj(["validate", "--project", name], corpus)
@@ -234,7 +319,9 @@ def scenario_register_attachment(tmp):
         capture(corpus, name, sid, text, tmp, at="2026-08-30")
     rc_, out = proj(["cut", "--project", name, "--at", "2026-08-30"], corpus)
     data = read_project_manifest(corpus, name)
-    lines = data["source_cut"]["lines"]
+    lines = (data.get("source_cut") or {}).get("lines") or []
+    if not lines:
+        print("CUT OUTPUT:", out[:1500])
     check("ATT9 the cut binds the attachment manifest and the artifact bytes",
           rc_ == 0 and any(ln.startswith("ATT _projects") for ln in lines)
           and any(ln.startswith("ART _projects") for ln in lines), json.dumps(lines))
@@ -258,7 +345,13 @@ def scenario_register_document(tmp):
     rc_, out = proj(["register-document", "--project", name, "--file", str(doc),
                      "--role", "external_reference", "--title", "Spec",
                      "--used-in", "CONV-001:2-3", "--at", "2026-08-30"], corpus)
-    check("DOC2 an external_reference with evidenced use is registered as DOC-001",
+    check("DOC1b a use citation whose turns never name the document is refused "
+          "(SOURCE_USE_UNANCHORED)", rc_ == 1 and "SOURCE_USE_UNANCHORED" in out, out)
+    rc_, out = proj(["register-document", "--project", name, "--file", str(doc),
+                     "--role", "external_reference", "--title", "Spec",
+                     "--used-in", "CONV-001:2-3", "--use-anchor", "pipelinen",
+                     "--at", "2026-08-30"], corpus)
+    check("DOC2 an external_reference with evidenced, anchored use is registered as DOC-001",
           rc_ == 0 and "REGISTERED DOC-001 (external_reference)" in out
           and "LINES=4" in out, out)
     data = read_project_manifest(corpus, name)
@@ -331,8 +424,15 @@ def scenario_register_document(tmp):
     rc_, out = proj(["register-document", "--project", name, "--file", str(doc2),
                      "--role", "conversation_attachment",
                      "--attachment", "CONV-003:r1:ATT-003-001"], corpus)
-    check("DOC16 a conversation_attachment bound to a registered attachment is accepted",
-          rc_ == 0 and "REGISTERED DOC-002 (conversation_attachment)" in out, out)
+    check("DOC15b a conversation_attachment whose bytes differ from the registered "
+          "attachment is refused", rc_ == 1 and "DOCUMENT_ATTACHMENT_UNBOUND" in out, out)
+    same = Path(tmp) / "att-same.md"
+    same.write_bytes(att.read_bytes())
+    rc_, out = proj(["register-document", "--project", name, "--file", str(same),
+                     "--role", "conversation_attachment",
+                     "--attachment", "CONV-003:r1:ATT-003-001"], corpus)
+    check("DOC16 a conversation_attachment that IS the registered attachment's bytes is "
+          "accepted", rc_ == 0 and "REGISTERED DOC-002 (conversation_attachment)" in out, out)
     # a binary with a text derivative
     pdfish = Path(tmp) / "blob.pdf"
     pdfish.write_bytes(b"%PDF-1.4\x00\x01binary\x00")
@@ -342,6 +442,15 @@ def scenario_register_document(tmp):
                      "--role", "project_file", "--text-derivative", str(txt)], corpus)
     check("DOC17 a text derivative without its tool is refused", rc_ == 2 and "text-tool" in out,
           out)
+    rc_, out = proj(["register-document", "--project", name, "--file", str(pdfish),
+                     "--role", "project_file"], corpus)
+    check("DOC17b a binary with no text derivative registers with DOCUMENT_UNADDRESSABLE "
+          "(a WARN: nothing can cite it by line)",
+          rc_ == 0 and "DOCUMENT_UNADDRESSABLE" in out, out)
+    data = read_project_manifest(corpus, name)
+    data["sources"] = [d for d in data["sources"] if d["source_id"] != "DOC-003"]
+    write_project_manifest(corpus, name, data)
+    shutil.rmtree(corpus / "_projects" / name / "sources" / "DOC-003")
     rc_, out = proj(["register-document", "--project", name, "--file", str(pdfish),
                      "--role", "project_file", "--text-derivative", str(txt),
                      "--text-tool", "pdftotext -layout (poppler 26.08)"], corpus)
@@ -438,7 +547,10 @@ def scenario_chain(tmp):
     (corpus / "_rnd" / "chain-v4" / "compile-audit.md").write_text(
         "---\ntitle: audit\ntype: compile-audit\ncompile: chain-v4\nappend_only: true\n---\n\n"
         "## AUDIT-1\n- auditor: fresh reviewer\n- audited_at: 2026-08-30\n"
-        "- scope: ir_sha256=%s\n- verdict: PASS\n- atomicity_reviewed: yes\n" % ir_sha,
+        "- scope: ir_sha256=%s\n- verdict: PASS\n- atomicity_reviewed: yes\n"
+        "- compound_suspects_reviewed: none\n- owner_ledger_reviewed: %s\n"
+        % (ir_sha, ", ".join("CONV-002:%d" % n for n, r in sorted(roles.items())
+                             if r == rc.ROLE_OWNER)),
         encoding="utf-8")
     rc_, out = proj(["chain", "--project", name, "--compile", "chain-v4"], corpus)
     check("CH4 with the compile bound and audited, only the projection is missing",
@@ -488,6 +600,47 @@ def scenario_chain(tmp):
                      "--vault", str(vault)], corpus)
     check("CH10 an unverified enumeration cannot be typed away — the chain says NO",
           rc_ == 1 and "ENUMERATION_VERIFIED=NO" in out, out)
+    data["enumeration"]["verified"] = True
+    write_project_manifest(corpus, name, data)
+    # F-1: a compile that DROPS a captured source, or excludes it with a false reason
+    def with_ir(mut, label, code):
+        ir3 = json.loads(json.dumps(ir))
+        mut(ir3)
+        ir_path.write_text(json.dumps(ir3, ensure_ascii=False, indent=1) + "\n",
+                           encoding="utf-8")
+        rc_, out = F.run(SCRIPTS / "rnd_contract.py",
+                         ["validate", "--compile", "chain-v4", "--corpus", str(corpus)])
+        rc2, out2 = proj(["chain", "--project", name, "--compile", "chain-v4",
+                          "--vault", str(vault)], corpus)
+        check(label, code in out and rc2 == 1 and "CHAIN_COMPLETE=NO" in out2, out + out2)
+        ir_path.write_text(json.dumps(ir, ensure_ascii=False, indent=1) + "\n",
+                           encoding="utf-8")
+    with_ir(lambda i: i["source_set"].__setitem__(
+        "sources", [x for x in i["source_set"]["sources"] if x["source_id"] != "CONV-003"]),
+        "CH11 dropping a captured source from the IR is RND_SOURCE_SET_INCOMPLETE and the "
+        "chain says NO", "RND_SOURCE_SET_INCOMPLETE")
+    with_ir(lambda i: i["source_set"].__setitem__(
+        "sources", [x if x["source_id"] != "CONV-003" else
+                    {"source_id": "CONV-003", "excluded": "no captured revision — a gap, "
+                                                           "recorded rather than hidden"}
+                    for x in i["source_set"]["sources"]]),
+        "CH12 excluding a captured source with the tool's own gap text is "
+        "RND_SOURCE_SET_INCOMPLETE", "RND_SOURCE_SET_INCOMPLETE")
+    with_ir(lambda i: i["source_set"].__setitem__(
+        "sources", [x if x["source_id"] != "CONV-003" else
+                    {"source_id": "CONV-003", "excluded": "outside the compile's declared "
+                                                           "scope (--only) — not compiled"}
+                    for x in i["source_set"]["sources"]]),
+        "CH13 the scope phrase without a declared scope list is RND_SOURCE_SET_INCOMPLETE",
+        "RND_SOURCE_SET_INCOMPLETE")
+    # F-16: a vault inside the corpus is never accepted
+    inside_vault = corpus / "_projection-vault"
+    shutil.copytree(vault, inside_vault)
+    rc_, out = proj(["chain", "--project", name, "--compile", "chain-v4",
+                     "--vault", str(inside_vault)], corpus)
+    check("CH14 a vault inside the corpus fails the projection link",
+          rc_ == 1 and "PROJECTION_VERIFIED=NO" in out, out)
+    shutil.rmtree(inside_vault)
 
 
 def main():

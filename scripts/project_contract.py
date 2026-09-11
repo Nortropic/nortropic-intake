@@ -127,6 +127,30 @@ def today():
     return datetime.date.today().isoformat()
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def valid_date(value):
+    """YYYY-MM-DD and a real calendar date — a cut compares dates, and a string that
+    merely sorts after another is not a date."""
+    v = str(value or "").strip()
+    if not _DATE_RE.match(v):
+        return False
+    try:
+        datetime.date.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
+
+
+def at_or_today(args):
+    """The --at of a command, refused when it is not a date. Returns (value, error)."""
+    at = getattr(args, "at", None) or today()
+    if not valid_date(at):
+        return None, "REFUSED — --at %r is not a YYYY-MM-DD date" % at
+    return at, None
+
+
 # ------------------------------------------------------------------- layout --
 
 class Project(object):
@@ -857,6 +881,13 @@ def _validate_sources(proj, data, findings):
                         % (sid, r.get("revision"), declared_src[:16], rel,
                            actual_src[:16])))
 
+            for dkey in ("captured_at", "verified_unchanged_at"):
+                if r.get(dkey) is not None and not valid_date(r.get(dkey)):
+                    findings.append(Finding(
+                        proj.name, "SOURCE_DATE_INVALID",
+                        "%s revision %s: %s=%r is not a YYYY-MM-DD date — a cut compares "
+                        "dates, and a string is not one" % (sid, r.get("revision"), dkey,
+                                                            r.get(dkey))))
             actual_ok, actual_detail, _ = verify_transcript_format(raw)
             if bool(r.get("verified")) != actual_ok:
                 findings.append(Finding(
@@ -1098,6 +1129,30 @@ def _validate_document(proj, data, s, sid, findings, recorded_paths):
                 "%s: used_in %s msg %s does not resolve inside a %s-message capture"
                 % (sid, csid, u.get("messages"), count)))
             continue
+        # v4.4 (F-7): "used" is anchored on the words the cited turns actually use —
+        # the document's declared use_anchor (a phrase the owner or assistant wrote
+        # when using it), else its title, else its filename stem. A range that
+        # merely exists is not a use.
+        anchor = str(u.get("anchor", "") or s.get("use_anchor", "")).strip()
+        anchors = [a for a in (anchor, str(s.get("title", "")).strip(),
+                               Path(str((s.get("revisions") or [{}])[0].get("path", "")
+                                        ).strip()).stem) if a and a != "document"]
+        target = proj.corpus / str(rev.get("path", "")).strip()
+        cited_text = ""
+        if target.is_file():
+            region, _ = transcript_source_region(target.read_text(encoding="utf-8"))
+            parts = re.split(r"^## Meddelande (\d+) — [^\n]+$", region, flags=re.M)
+            texts = {int(parts[i]): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+            cited_text = "\n".join(texts.get(n, "") for n in range(lo, hi + 1)).lower()
+        if not any(a.lower() in cited_text for a in anchors):
+            findings.append(Finding(
+                proj.name, "SOURCE_USE_UNANCHORED",
+                "%s: used_in %s msg %s does not contain any of the document's use "
+                "anchors (%s) — a cited range is a use only when the turn's own words "
+                "name the document; declare the phrase with use_anchor"
+                % (sid, csid, u.get("messages"),
+                   ", ".join(repr(a) for a in anchors) or "none declared")))
+            continue
         resolved_uses += 1
     if role == "external_reference" and resolved_uses == 0:
         findings.append(Finding(
@@ -1121,14 +1176,21 @@ def _validate_document(proj, data, s, sid, findings, recorded_paths):
                     if number else None
                 if mpath is not None and mpath.is_file():
                     mdata, _ = att.load_manifest(mpath)
-                    ok = any(isinstance(a, dict)
-                             and str(a.get("attachment_id", "")).strip() == aid
-                             for a in ((mdata or {}).get("attachments") or []))
+                    doc_sha = str(((s.get("revisions") or [{}])[0] or {}).get("sha256", "")
+                                  ).strip().lower()
+                    for a in ((mdata or {}).get("attachments") or []):
+                        if isinstance(a, dict) and \
+                                str(a.get("attachment_id", "")).strip() == aid:
+                            # the document IS the attachment: same bytes, proven by
+                            # the attachment row's own content hash
+                            ok = bool(doc_sha) and \
+                                str(a.get("content_sha256", "")).strip().lower() == doc_sha
         if not ok:
             findings.append(Finding(
                 proj.name, "DOCUMENT_ATTACHMENT_UNBOUND",
                 "%s is a conversation_attachment but attachment_ref does not name an "
-                "attachment recorded in a bound revision's attachment manifest — the "
+                "attachment, recorded WITH BYTES in a bound revision's attachment "
+                "manifest, whose content_sha256 equals this document's sha256 — the "
                 "document must be THE attachment the conversation carried" % sid))
 
 
@@ -2137,10 +2199,23 @@ def cmd_capture(proj, args):
     if not src_file.is_file():
         print("CAPTURE_REFUSED — %s is not a readable file" % src_file)
         return 2
+    # v4.4 (F-4): a capture's input is what the PLATFORM produced. Re-feeding a
+    # file that already lives inside the corpus proves nothing about the platform
+    # and would stamp verified_unchanged_at on a self-read.
+    try:
+        src_file.resolve().relative_to(proj.corpus.resolve())
+        print("CAPTURE_REFUSED — %s is inside the corpus; a capture's input comes from "
+              "the platform (or the owner), never from the corpus's own files" % src_file)
+        return 2
+    except ValueError:
+        pass
     text = src_file.read_text(encoding="utf-8")
     digest = sha256_text(text)
     source_digest = transcript_source_sha256(text)
-    at = args.at or today()
+    at, err = at_or_today(args)
+    if err:
+        print(err)
+        return 2
 
     # A revision answers to the CONVERSATION, never to the header the builder wrote
     # about it. Compare on source identity, recomputed from the bytes on disk — the
@@ -2185,6 +2260,8 @@ def cmd_capture(proj, args):
             if r is source.get("revisions", [])[-1]:
                 r["verified_unchanged_at"] = at
                 r["verified_unchanged_source_sha256"] = source_digest
+                r["verified_unchanged_adapter"] = args.adapter or "data-layer"
+                r["verified_unchanged_input"] = src_file.name
                 save(proj, data)
                 print("VERIFIED_UNCHANGED_AT=%s (recorded on revision %s; the "
                       "inventory identity is unchanged)" % (at, r.get("revision")))
@@ -2669,6 +2746,12 @@ def _cut_lines(proj, data):
             for ap in sorted(adir.rglob("*")):
                 if ap.is_file():
                     lines.append(file_line("ART", proj.rel(ap)))
+    # the review queue carries owner answers a compile consumes as provenance;
+    # the sweep audit carries the falsification the finalize rests on — both are
+    # bound, so a post-cut edit to either voids the cut (an append is a recut)
+    for extra in (proj.queue, proj.audit):
+        if extra.is_file():
+            lines.append(file_line("RQ" if extra is proj.queue else "AUD", proj.rel(extra)))
     lines.append("INV %s %s" % (data.get("inventory_revision"),
                                 str(data.get("inventory_sha256", "")).strip()))
     lines.sort()
@@ -2676,7 +2759,7 @@ def _cut_lines(proj, data):
 
 
 _CUT_LINE_RE = re.compile(r"^(SRC|DOC) (\S+) r(\S+) (\S+) ([0-9a-f]{64}|MISSING)"
-                          r"|^(ATT|ART|TXT) (\S+) ([0-9a-f]{64}|MISSING)$")
+                          r"|^(ATT|ART|TXT|RQ|AUD) (\S+) ([0-9a-f]{64}|MISSING)$")
 
 
 def _cut_bound_files(lines):
@@ -2797,9 +2880,9 @@ def cmd_cut(proj, args):
         for f in findings:
             print(f)
         return 1
-    at = args.at or today()
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", at):
-        print("CUT_REFUSED — --at must be YYYY-MM-DD")
+    at, err = at_or_today(args)
+    if err:
+        print("CUT_REFUSED — --at must be a YYYY-MM-DD date")
         return 2
     hard = fails(findings)
     if hard:
@@ -2823,6 +2906,8 @@ def cmd_cut(proj, args):
         rev = latest_revision(s) or {}
         cap = str(rev.get("captured_at", "")).strip()
         ver = str(rev.get("verified_unchanged_at", "")).strip()
+        cap = cap if valid_date(cap) else ""
+        ver = ver if valid_date(ver) else ""
         if not ((cap and cap >= at) or (ver and ver >= at)):
             unverified.append((str(s.get("source_id")), cap or "-", ver or "-"))
     if unverified:
@@ -3004,6 +3089,18 @@ def cmd_register_attachment(proj, args):
         print("REGISTER_REFUSED — %s already holds different bytes; registered bytes "
               "are never replaced. A different file is a different attachment" % aid)
         return 2
+    if existing is not None and not args.recovered:
+        # v4.4 (F-3): a recorded bytes-absent state (UNAVAILABLE, UNKNOWN,
+        # CAPTURED_REFERENCE_ONLY, DUPLICATE) is a historical FACT about the
+        # capture. Bytes that arrive later are a RECOVERY and must prove they are
+        # THE attachment bound to this revision — never a plausible file that
+        # happens to fit the name.
+        print("REGISTER_REFUSED — %s is recorded as %s. Bytes arriving for a recorded "
+              "attachment are a RECOVERY: pass --recovered --recovery-provenance "
+              "\"<how these bytes are proven to be the attachment bound to r%d>\". "
+              "A recorded state is never reclassified by plain registration"
+              % (aid, existing.get("capture_status"), number))
+        return 2
     if args.recovered and not (args.recovery_provenance or "").strip():
         print("REGISTER_REFUSED — --recovered requires --recovery-provenance: a "
               "recovered attachment must prove it is THE attachment bound to this "
@@ -3021,7 +3118,10 @@ def cmd_register_attachment(proj, args):
         return 2
     if not dest.exists():
         dest.write_bytes(payload)
-    at = args.at or today()
+    at, err = at_or_today(args)
+    if err:
+        print(err)
+        return 2
     row = existing if existing is not None else {"attachment_id": aid,
                                                  "ordinal": len(rows) + 1}
     row.update({
@@ -3043,12 +3143,11 @@ def cmd_register_attachment(proj, args):
     if args.recovered:
         row["recovery_provenance"] = args.recovery_provenance.strip()
         row["byte_identity"] = "ESTABLISHED"
-    # a bytes-in-hand row must not carry a semantic-access state that claims the
-    # opposite; drop the readable-external label the row may have carried while
-    # its bytes were absent
-    if str(row.get("semantic_accessibility", "")).strip().upper() == \
-            "SOURCE_BOUND_READABLE_EXTERNAL":
-        row.pop("semantic_accessibility", None)
+    # a bytes-in-hand row does not carry a bytes-absent semantic-access state; the
+    # row's state is now the bytes and their provenance
+    row.pop("semantic_accessibility", None)
+    if not args.recovered:
+        row.pop("byte_identity", None)
     if existing is None:
         rows.append(row)
     data_m["attachments"] = rows
@@ -3150,8 +3249,11 @@ def cmd_register_document(proj, args):
         print("REGISTER_REFUSED — %s exists; a registered document is never "
               "overwritten" % proj.rel(dest))
         return 2
+    at, err = at_or_today(args)
+    if err:
+        print(err)
+        return 2
     dest.write_bytes(payload)
-    at = args.at or today()
     is_text = _looks_text(payload)
     rev = {
         "revision": 1, "path": proj.rel(dest), "sha256": digest,
@@ -3181,6 +3283,7 @@ def cmd_register_document(proj, args):
     record = {
         "source_id": sid, "kind": "document", "title": args.title or src.name,
         "evidence_role": args.role, "origin": args.origin or "",
+        "use_anchor": (args.use_anchor or "").strip(),
         "discovered_at": at, "state": "CAPTURED",
         "revisions": [rev], "used_in": used or [], "errors": [],
     }
@@ -3278,16 +3381,30 @@ def cmd_chain(proj, args):
                 turns = summary.get("turns_accounted", "-")
             src = (ir or {}).get("source_set") or {}
             bound_cut = str(src.get("cut_sha256", "")).strip()
+            # F-1: the cut's own SRC/DOC lines name (source, revision); the IR's
+            # bound, non-excluded set must cover exactly them (a declared scope is
+            # reported as PARTIAL and fails the chain on its own)
+            cut_pairs = set()
+            for ln in (cut.get("lines") or []):
+                mm = re.match(r"^(SRC|DOC) (\S+) r(\S+) ", str(ln))
+                if mm:
+                    cut_pairs.add((mm.group(2), str(mm.group(3))))
+            ir_pairs = {(str(x.get("source_id", "")).strip(), str(x.get("revision", "")))
+                        for x in (src.get("sources") or []) if isinstance(x, dict)
+                        and not x.get("excluded")}
             lines.append("RND_COMPILE=%s" % args.compile)
             lines.append("RND_COMPILE_VALID=%s" % ("YES" if rnd_ok else "NO"))
             lines.append("RND_COMPILE_AUDITED=%s" % ("YES" if meta.get("audited") else "NO"))
             lines.append("RND_SEMANTIC_RULES_APPLIED=%s" % sem)
             lines.append("RND_IR_VERSION=%s" % ver)
             lines.append("TURNS_ACCOUNTED=%s" % turns)
-            cut_bound = bool(bound_cut) and bound_cut == cut.get("cut_sha256")
+            cut_bound = bool(bound_cut) and bound_cut == cut.get("cut_sha256") \
+                and bool(cut_pairs) and ir_pairs == cut_pairs
             lines.append("RND_BOUND_TO_CUT=%s" % ("YES" if cut_bound else "NO"))
+            scope = (summary or {}).get("scope", "?") if isinstance(summary, dict) else "?"
+            lines.append("RND_SCOPE=%s" % scope)
             ok &= rnd_ok and bool(meta.get("audited")) and ver >= rc.IR_VERSION_ATOMIC \
-                and cut_bound and turns == "100%"
+                and cut_bound and turns == "100%" and scope == "FULL"
         except Exception as exc:                                 # noqa: BLE001
             lines.append("RND_COMPILE_VALID=NO (%s)" % exc)
             ok = False
@@ -3299,6 +3416,13 @@ def cmd_chain(proj, args):
     if args.vault:
         try:
             import obsidian_projection as op
+            try:
+                Path(args.vault).resolve().relative_to(proj.corpus.resolve())
+                raise ValueError("the vault lives inside the corpus — a projection is "
+                                 "a separate derivative, never a corpus file")
+            except ValueError as exc:
+                if "inside the corpus" in str(exc):
+                    raise
             pf, pmeta = op.verify_vault(proj.corpus, args.compile, Path(args.vault))
             pv = not fails(pf)
             lines.append("PROJECTION_VAULT=%s" % args.vault)
@@ -3490,6 +3614,9 @@ def main(argv=None):
     p.add_argument("--origin", help="platform file id, URL, or where the bytes came from")
     p.add_argument("--used-in", action="append",
                    help="CONV-NNN:a-b — the turns that used it (repeatable)")
+    p.add_argument("--use-anchor",
+                   help="the phrase the cited turns use for this document (defaults "
+                        "to the title, then the filename stem) — checked in the bytes")
     p.add_argument("--attachment", help="CONV-NNN:rN:ATT-NNN-NNN for a "
                                         "conversation_attachment")
     p.add_argument("--doc-id")

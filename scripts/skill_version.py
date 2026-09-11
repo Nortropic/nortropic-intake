@@ -77,8 +77,11 @@ def installed():
            "scripts_tree": git("rev-parse", "HEAD:scripts"),
            "dirty_scripts": None, "origin_main": None, "origin_scripts_tree": None}
     if out["head"]:
-        status = git("status", "--porcelain", "--", "scripts")
-        out["dirty_scripts"] = bool(status)
+        # read-only: diff-index compares the tree without refreshing the index, and
+        # ls-files --others lists untracked files — no write to .git on a check
+        changed = git("diff-index", "HEAD", "--", "scripts")
+        untracked = git("ls-files", "--others", "--exclude-standard", "--", "scripts")
+        out["dirty_scripts"] = bool(changed) or bool(untracked)
         if git("rev-parse", "--verify", "-q", "refs/remotes/origin/main"):
             out["origin_main"] = git("rev-parse", "refs/remotes/origin/main")
             out["origin_scripts_tree"] = git("rev-parse", "refs/remotes/origin/main:scripts")

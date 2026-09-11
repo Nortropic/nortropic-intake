@@ -216,6 +216,44 @@ def scenario_render_and_verify(tmp):
           code(out, "PROJECTION_PROVENANCE_UNRESOLVED"), out)
     src.write_bytes(keep)
 
+    # F-14: text between the end marker and the notes head is the reader's — preserved
+    v = fresh()
+    card = v / "kort" / "RND-002.md"
+    text = card.read_text(encoding="utf-8")
+    text = text.replace(op.GEN_END + "\n", op.GEN_END + "\nEn rad i mellanrummet.\n", 1)
+    card.write_text(text, encoding="utf-8")
+    run(corpus, "render", "--compile", "control-ok", "--vault", str(v), "--write")
+    check("F-14 prose between the generated region and the notes head survives a re-render",
+          "En rad i mellanrummet." in card.read_text(encoding="utf-8"), card.read_text())
+    rc_, out = run(corpus, "verify", "--compile", "control-ok", "--vault", str(v))
+    check("F-14 and the vault still verifies (it is annotation)", rc_ == 0, out)
+    # F-15: manual objects are recorded in the bound manifest, not only the state file
+    v = fresh()
+    canvas = v / "linser" / "truth-trust.canvas"
+    c = json.loads(canvas.read_text(encoding="utf-8"))
+    c["nodes"].append({"id": "manual-3", "type": "text", "x": 1, "y": 1, "width": 10,
+                       "height": 10, "text": "kept?"})
+    canvas.write_text(op.dump_canvas(c) + "\n", encoding="utf-8")
+    run(corpus, "render", "--compile", "control-ok", "--vault", str(v), "--write")
+    man = json.loads((v / op.MANIFEST_NAME).read_text())
+    check("F-15 the manifest records the manual object",
+          "manual-3" in (man.get("manual_objects") or {}).get("linser/truth-trust.canvas", {}),
+          json.dumps(man.get("manual_objects")))
+    c = json.loads(canvas.read_text(encoding="utf-8"))
+    c["nodes"] = [n for n in c["nodes"] if n["id"] != "manual-3"]
+    canvas.write_text(op.dump_canvas(c) + "\n", encoding="utf-8")
+    (v / op.STATE_NAME).unlink()
+    rc_, out = run(corpus, "verify", "--compile", "control-ok", "--vault", str(v))
+    check("F-15 deleting the manual node AND the state file is still PROJECTION_ANNOTATION_LOST",
+          code(out, "PROJECTION_ANNOTATION_LOST"), out)
+    # F-16: verify refuses a vault inside the corpus
+    inside = corpus / "_vault"
+    shutil.copytree(fresh(), inside)
+    rc_, out = run(corpus, "verify", "--compile", "control-ok", "--vault", str(inside))
+    check("F-16 verify refuses a vault inside the corpus", rc_ == 1 and "inside the corpus" in out,
+          out)
+    shutil.rmtree(inside)
+
     # nondeterminism is only reachable by a broken renderer — prove the detector
     # fires by making the renderer nondeterministic in-process
     v = fresh()

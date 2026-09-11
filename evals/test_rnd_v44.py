@@ -127,6 +127,60 @@ def scenario_control_and_seal(tmp):
     check("S init --only records the out-of-scope source as EXCLUDED, visibly",
           len(excl) == 1 and excl[0]["source_id"] == "CONV-002"
           and scoped["source_set"].get("scope") == ["CONV-001"], json.dumps(scoped["source_set"]))
+    # F-1: completeness against the manifest
+    v4_ir(corpus, "drop-source", mutate=lambda ir: ir["source_set"].__setitem__(
+        "sources", [x for x in ir["source_set"]["sources"] if x["source_id"] != "CONV-002"]))
+
+    def false_gap(ir):
+        for x in ir["source_set"]["sources"]:
+            if x["source_id"] == "CONV-002":
+                x.clear()
+                x.update({"source_id": "CONV-002", "excluded": "no captured revision — a gap, "
+                                                                "recorded rather than hidden"})
+    v4_ir(corpus, "false-gap", mutate=false_gap)
+
+    def scope_phrase_no_list(ir):
+        for x in ir["source_set"]["sources"]:
+            if x["source_id"] == "CONV-002":
+                x.clear()
+                x.update({"source_id": "CONV-002",
+                          "excluded": "outside the compile's declared scope (--only) — not "
+                                      "compiled, not absorbed"})
+    v4_ir(corpus, "scope-no-list", mutate=scope_phrase_no_list)
+
+    def scoped_ok(ir):
+        scope_phrase_no_list(ir)
+        ir["source_set"]["scope"] = ["CONV-001"]
+        ir["turn_ledger"] = [e for e in ir["turn_ledger"] if e["source_id"] != "CONV-002"]
+        ir["progression"] = [p for p in ir["progression"] if p["source_id"] != "CONV-002"]
+        ir["items"] = [i for i in ir["items"] if i["id"] != "RND-005"]
+        for row in ir["coverage"]:
+            row["basis"] = [b for b in row["basis"] if b != "RND-005"]
+    v4_ir(corpus, "scoped-ok", mutate=scoped_ok)
+
+    def v2_scope_phrase(ir):
+        scope_phrase_no_list(ir)
+        ir["source_set"]["scope"] = ["CONV-001"]
+    v2_ir(corpus, "v2-scope-list", mutate=v2_scope_phrase)
+    rc_, out = run(corpus, "validate")
+    check("F-1 dropping a captured source from the IR is RND_SOURCE_SET_INCOMPLETE",
+          expect_code(out, "RND_SOURCE_SET_INCOMPLETE", "drop-source"), out)
+    check("F-1 excluding a captured source as 'no captured revision' is INCOMPLETE",
+          expect_code(out, "RND_SOURCE_SET_INCOMPLETE", "false-gap"), out)
+    check("F-1 the scope phrase without a declared scope list is INCOMPLETE",
+          expect_code(out, "RND_SOURCE_SET_INCOMPLETE", "scope-no-list"), out)
+    check("F-1 a declared scope (init --only) validates and is reported SCOPED (WARN)",
+          not expect_code(out, "RND_SOURCE_SET_INCOMPLETE", "scoped-ok")
+          and expect_warn(out, "RND_SOURCE_SET_SCOPED", "scoped-ok"), out)
+    check("F-6 a version-2 compile cannot declare a scope — INVALID, and the exclusion is "
+          "still the pre-existing FAIL", expect_code(out, "RND_SOURCE_SET_INVALID", "v2-scope-list")
+          and expect_code(out, "RND_SOURCE_SET_INCOMPLETE", "v2-scope-list"), out)
+    f, summary = rc.validate_compile(corpus, "scoped-ok")
+    check("F-1 the summary reports a scoped compile as PARTIAL", summary.get("scope") == "PARTIAL",
+          str(summary))
+    f, summary = rc.validate_compile(corpus, "control-ok")
+    check("F-1 the summary reports a full compile as FULL", summary.get("scope") == "FULL",
+          str(summary))
 
 
 def scenario_a_atomicity(tmp):
@@ -200,6 +254,13 @@ def scenario_a_atomicity(tmp):
         refingerprint(ir)
     v4_ir(corpus, "composite-contra", mutate=composite_contradicts)
 
+    def composite_kind_mismatch(ir):
+        composite(ir)
+        item(ir, "RND-010")["kind"] = "OPTION"
+        item(ir, "RND-010")["authority_class"] = "derived"
+        refingerprint(ir)
+    v4_ir(corpus, "composite-kind", mutate=composite_kind_mismatch)
+
     def composed_but_atomic(ir):
         item(ir, "RND-002")["relations"].append({"rel": "composed_of", "target": "RND-003"})
         refingerprint(ir)
@@ -219,6 +280,9 @@ def scenario_a_atomicity(tmp):
           expect_code(out, "RND_COMPOSITE_CARRIES_STATE", "composite-contra"), out)
     check("A composed_of on a non-composite record is refused",
           expect_code(out, "RND_ATOMICITY_INVALID", "composed-atomic"), out)
+    check("A (F-11) an OPTION container of OBSERVATION parts is RND_COMPOSITE_KIND_MISMATCH "
+          "— standing cannot be dodged through a container of another kind",
+          expect_code(out, "RND_COMPOSITE_KIND_MISMATCH", "composite-kind"), out)
 
     # ATOM-4: the compound-suspect WARN points, never decides
     def compound(ir):
@@ -250,6 +314,12 @@ def scenario_t_total_turn_accountability(tmp):
           mutate=lambda ir: ir["turn_ledger"][0].__setitem__("messages", "2-9"))
     v4_ir(corpus, "unbound-source",
           mutate=lambda ir: ir["turn_ledger"][0].__setitem__("source_id", "CONV-099"))
+    v4_ir(corpus, "ledger-twice",
+          mutate=lambda ir: ir["turn_ledger"].append(
+              {"source_id": "CONV-001", "messages": "2", "reason": "tool-or-machine-output"}))
+    v4_ir(corpus, "ledger-cited",
+          mutate=lambda ir: ir["turn_ledger"].append(
+              {"source_id": "CONV-001", "messages": "4", "reason": "elaboration-no-new-claim"}))
     rc_, out = run(corpus, "validate")
     check("T control accounts for every turn of every role", control_clean(out), out)
     check("T no turn_ledger at all is refused",
@@ -267,6 +337,10 @@ def scenario_t_total_turn_accountability(tmp):
           expect_code(out, "RND_TURN_LEDGER_INVALID", "range-past-end"), out)
     check("T a ledger entry into an unbound source is refused",
           expect_code(out, "RND_TURN_LEDGER_INVALID", "unbound-source"), out)
+    check("T (F-17) the same turn ledgered twice is invalid",
+          expect_code(out, "RND_TURN_LEDGER_INVALID", "ledger-twice"), out)
+    check("T (F-17) a turn both cited and ledgered is invalid",
+          expect_code(out, "RND_TURN_LEDGER_INVALID", "ledger-cited"), out)
     # an entry that fails validation must not silently discharge the turn
     check("T a mis-roled entry does not account for its turn",
           expect_code(out, "RND_TURN_UNACCOUNTED", "role-mismatch"), out)
@@ -355,6 +429,27 @@ def scenario_r_contradictions(tmp):
                                          "state": "UNRESOLVED", "unknown": "RND-002"}]
         refingerprint(ir)          # RND-002 is a HYPOTHESIS, not UNKNOWN
 
+    def resolved_by_side(ir):
+        contradicting(ir)
+        item(ir, "RND-005")["relations"].append({"rel": "supersedes", "target": "RND-001"})
+        item(ir, "RND-001")["standing"] = "SUPERSEDED"
+        ir["contradiction_register"] = [{"pair": ["RND-001", "RND-005"],
+                                         "state": "RESOLVED", "resolved_by": "RND-005"}]
+        refingerprint(ir)
+
+    def resolved_by_dead(ir):
+        resolved_ok(ir)
+        item(ir, "RND-007")["standing"] = "REJECTED"
+        refingerprint(ir)
+
+    def resolved_by_unknown(ir):
+        contradicting(ir)
+        item(ir, "RND-006")["relations"] = [{"rel": "supersedes", "target": "RND-005"}]
+        item(ir, "RND-005")["standing"] = "SUPERSEDED"
+        ir["contradiction_register"] = [{"pair": ["RND-001", "RND-005"],
+                                         "state": "RESOLVED", "resolved_by": "RND-006"}]
+        refingerprint(ir)
+
     def bad_state(ir):
         contradicting(ir)
         ir["contradiction_register"] = [{"pair": ["RND-001", "RND-005"],
@@ -364,7 +459,9 @@ def scenario_r_contradictions(tmp):
     for cid, m in (("contra-unresolved-ok", unresolved_ok), ("contra-resolved-ok", resolved_ok),
                    ("contra-unregistered", unregistered), ("contra-no-register", no_register),
                    ("contra-bad-pair", bad_pair), ("contra-unbacked", unbacked),
-                   ("contra-no-unknown", unresolved_no_unknown), ("contra-bad-state", bad_state)):
+                   ("contra-no-unknown", unresolved_no_unknown), ("contra-bad-state", bad_state),
+                   ("contra-by-side", resolved_by_side), ("contra-by-dead", resolved_by_dead),
+                   ("contra-by-unknown", resolved_by_unknown)):
         v4_ir(corpus, cid, mutate=m)
     rc_, out = run(corpus, "validate")
     check("R control (no contradictions, empty register) passes", control_clean(out), out)
@@ -389,6 +486,12 @@ def scenario_r_contradictions(tmp):
           expect_code(out, "RND_CONTRADICTION_UNRECONCILED", "contra-no-unknown"), out)
     check("R a state outside RESOLVED/UNRESOLVED is refused",
           expect_code(out, "RND_CONTRADICTION_REGISTER_INVALID", "contra-bad-state"), out)
+    check("R (F-12) one side of the pair cannot resolve it",
+          expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-by-side"), out)
+    check("R (F-12) a REJECTED resolver is not live and cannot resolve",
+          expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-by-dead"), out)
+    check("R (F-12) an UNKNOWN record cannot resolve a contradiction",
+          expect_code(out, "RND_CONTRADICTION_RESOLUTION_UNBACKED", "contra-by-unknown"), out)
     check("R both sides of a resolved contradiction survive as records",
           all(iid in json.loads((corpus / "_rnd/contra-resolved-ok/rnd-ir.json").read_text())
               ["items"].__repr__() for iid in ("RND-001", "RND-005")), "")
@@ -458,6 +561,54 @@ def scenario_l_lineage(tmp):
                                                      "into RND-004 on re-reading"}]
     v4_ir(corpus, "lin-retired-ok", baseline="base", mutate=retired_declared)
 
+    def split_same(ir):
+        same_all(ir)
+        item(ir, "RND-002")["lineage"] = [{"id": "RND-002", "relation": "SPLIT_FROM"}]
+    v4_ir(corpus, "lin-split-same", baseline="base", mutate=split_same)
+
+    def split_new_source(ir):
+        same_all(ir)
+        it = item(ir, "RND-002")
+        it["claim"] = "A per-repo learning ledger may shorten the loop (first half)."
+        it["provenance"].append({"source_id": "CONV-002", "revision": 1, "messages": "2"})
+        it["lineage"] = [{"id": "RND-002", "relation": "SPLIT_FROM"}]
+        refingerprint(ir)
+    v4_ir(corpus, "lin-split-single", baseline="base", mutate=split_new_source)
+
+    def split_ok(ir):
+        same_all(ir)
+        it = item(ir, "RND-002")
+        it["claim"] = "A per-repo learning ledger may shorten the loop (first half)."
+        it["lineage"] = [{"id": "RND-002", "relation": "SPLIT_FROM"}]
+        ir["items"].append(dict(json.loads(json.dumps(it)), id="RND-011",
+                                claim="… and the loop it shortens is the trustworthy one "
+                                      "(second half).",
+                                lineage=[{"id": "RND-002", "relation": "SPLIT_FROM"}]))
+        ir["coverage"][1]["basis"].append("RND-011")
+        refingerprint(ir)
+    v4_ir(corpus, "lin-split-ok", baseline="base", mutate=split_ok)
+
+    def merged_single(ir):
+        same_all(ir)
+        it = item(ir, "RND-002")
+        it["claim"] = "Merged wording of the ledger hypothesis and the deferral option."
+        it["lineage"] = [{"id": "RND-002", "relation": "MERGED_FROM"}]
+        refingerprint(ir)
+    v4_ir(corpus, "lin-merged-single", baseline="base", mutate=merged_single)
+
+    def merged_ok(ir):
+        merged_single(ir)
+        item(ir, "RND-002")["lineage"].append({"id": "RND-004", "relation": "MERGED_FROM"})
+        ir["items"] = [i for i in ir["items"] if i["id"] != "RND-004"]
+        for row in ir["coverage"]:
+            row["basis"] = [b for b in row["basis"] if b != "RND-004"]
+        for i in ir["items"]:
+            i["relations"] = [r for r in i["relations"] if r["target"] != "RND-004"]
+        ir["turn_ledger"].append({"source_id": "CONV-001", "messages": "4",
+                                  "reason": "elaboration-no-new-claim"})
+        refingerprint(ir)
+    v4_ir(corpus, "lin-merged-ok", baseline="base", mutate=merged_ok)
+
     def bad_entry(ir):
         same_all(ir)
         item(ir, "RND-002")["lineage"] = [{"id": "RND-001", "relation": "COPIED"}]
@@ -489,6 +640,17 @@ def scenario_l_lineage(tmp):
           not expect_warn(out, "RND_LINEAGE_RETIRED_UNDECLARED", "lin-retired-ok"), out)
     check("L a lineage entry with an unknown relation is invalid",
           expect_code(out, "RND_LINEAGE_INVALID", "lin-bad-entry"), out)
+    check("L (F-13) SPLIT_FROM over an equal fingerprint is false — it is SAME",
+          expect_code(out, "RND_LINEAGE_RELATION_FALSE", "lin-split-same"), out)
+    check("L (F-13) a 'part' citing a source the whole never cited is false",
+          expect_code(out, "RND_LINEAGE_RELATION_FALSE", "lin-split-single"), out)
+    check("L (F-13) a split into two records passes",
+          not expect_code(out, "RND_LINEAGE_RELATION_FALSE", "lin-split-ok"), out)
+    check("L (F-13) MERGED_FROM naming one baseline record is false",
+          expect_code(out, "RND_LINEAGE_RELATION_FALSE", "lin-merged-single"), out)
+    check("L (F-13) a merge of two baseline records passes",
+          not expect_code(out, "RND_LINEAGE_RELATION_FALSE", "lin-merged-ok")
+          and not expect_warn(out, "RND_LINEAGE_RETIRED_UNDECLARED", "lin-merged-ok"), out)
     # fingerprint integrity
     v4_ir(corpus, "fp-missing", mutate=lambda ir: item(ir, "RND-002").pop("fingerprint"))
     v4_ir(corpus, "fp-stale", mutate=lambda ir: item(ir, "RND-002").__setitem__(
@@ -565,6 +727,9 @@ def scenario_d_document_sources(tmp):
         expect_code(out, c, "doc-ok") for c in ("RND_PROVENANCE_OUT_OF_RANGE",
                                                 "RND_PROVENANCE_UNBOUND",
                                                 "RND_SOURCE_HASH_MISMATCH")), out)
+    rc_, out_ok = run(corpus, "validate", "--compile", "doc-ok")
+    check("D the document-bound compile validates CLEAN (0 FAIL) — green for the right "
+          "reason", not re.search(r"^FAIL\s+\[doc-ok\]", out_ok, re.M), out_ok)
     check("D a line citation past the document is out of range",
           expect_code(out, "RND_PROVENANCE_OUT_OF_RANGE", "doc-beyond"), out)
     check("D a document can never back an OWNER_DECISION",
@@ -597,6 +762,56 @@ def scenario_s_audit_and_render(tmp):
     check("S with atomicity_reviewed: yes the v4 compile is audited",
           not expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "control-ok")
           and "RND_COMPILE_AUDITED=YES" in out, out)
+    # F-10 / F-8: a WARN is a question the audit answers BY ID
+    def suspect(ir):
+        it = item(ir, "RND-003")
+        it["claim"] = ("Three releases landed: (1) a permission gap was fixed; (2) workflow "
+                       "code could escape its sandbox; (3) a deny rule ignored a trailing "
+                       "slash; the assistant concludes that containment is measured, never "
+                       "assumed, and proposes challenger fixtures after the slice.")
+        refingerprint(ir)
+        ir["turn_ledger"].append({"source_id": "CONV-001", "messages": "5",
+                                  "reason": "no-material-content"})
+        ir["items"] = [i for i in ir["items"] if i["id"] not in ("RND-006", "RND-007")]
+        for row in ir["coverage"]:
+            row["basis"] = [b for b in row["basis"] if b not in ("RND-006", "RND-007")]
+            if row["state"] != "UNKNOWN" and not row["basis"]:
+                row["state"] = "UNKNOWN"
+    v4_ir(corpus, "suspect", mutate=suspect)
+    sdir = corpus / "_rnd/suspect"
+    s_sha = rc.sha256_file(sdir / "rnd-ir.json")
+    base_audit = ("---\ntitle: audit\ntype: compile-audit\ncompile: suspect\n"
+                  "append_only: true\n---\n\n## AUDIT-1\n- auditor: fresh reviewer\n"
+                  "- audited_at: 2026-09-11\n- scope: ir_sha256=%s\n- verdict: PASS\n"
+                  "- atomicity_reviewed: yes\n" % s_sha)
+    (sdir / "compile-audit.md").write_text(base_audit, encoding="utf-8")
+    rc_, out = run(corpus, "validate", "--compile", "suspect")
+    check("S (F-10) a compound-suspect record the audit does not name by id is "
+          "RND_AUDIT_ATOMICITY_UNREVIEWED", expect_warn(out, "RND_CLAIM_COMPOUND_SUSPECT", "suspect")
+          and expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "suspect")
+          and "RND_COMPILE_AUDITED=NO" in out, out)
+    check("S (F-8) an owner turn ledgered no-material-content the audit does not name is "
+          "RND_AUDIT_LEDGER_UNREVIEWED", expect_code(out, "RND_AUDIT_LEDGER_UNREVIEWED", "suspect"),
+          out)
+    (sdir / "compile-audit.md").write_text(
+        base_audit + "- compound_suspects_reviewed: RND-003 (judged compound — a FIND would "
+        "follow; here named for the obligation)\n- owner_ledger_reviewed: CONV-001:5\n",
+        encoding="utf-8")
+    rc_, out = run(corpus, "validate", "--compile", "suspect")
+    check("S (F-10/F-8) naming the suspect and the owner turn by id discharges both",
+          not expect_code(out, "RND_AUDIT_ATOMICITY_UNREVIEWED", "suspect")
+          and not expect_code(out, "RND_AUDIT_LEDGER_UNREVIEWED", "suspect")
+          and "RND_COMPILE_AUDITED=YES" in out, out)
+    check("S (F-10) the fused 'facts; the assistant concludes' shape is a suspect at 300 chars",
+          rc.compound_suspect("Three releases landed and were relayed with citation chips in "
+                              "the weekly watch report as the assistant read them; the "
+                              "assistant concludes that containment is measured externally "
+                              "and never assumed from a flag, and proposes fixtures.")
+          and rc.compound_suspect("(1) one thing was fixed; (2) another thing was fixed; (3) a "
+                                  "third thing was fixed in the very same release train that "
+                                  "week, which the report lists in order for the reader to see "
+                                  "and to weigh them one by one as separate facts.")
+          and not rc.compound_suspect("One claim, one sentence."), "")
     # render is deterministic and shows the v4 sections
     rc_, out = run(corpus, "render", "--compile", "control-ok", "--write")
     first = (cdir / "RND-COVERAGE.md").read_text(encoding="utf-8")

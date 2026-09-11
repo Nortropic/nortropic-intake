@@ -134,10 +134,14 @@ def split_card(text):
         gen = ""
     # the notes head is a LINE, searched after the generated region — the start
     # marker itself mentions the head in prose, and matching that would fold the
-    # generated region into the "notes" and double it on every render
+    # generated region into the "notes" and double it on every render. Everything
+    # after the generated region is the READER'S region and is carried whole
+    # (independent review F-14: text between the end marker and the head used to
+    # be neither verified nor preserved); the head must still be present in it.
     m = _NOTES_HEAD_RE.search(text, start)
     if m:
-        return gen, text[m.start():]
+        rest = text[start:]
+        return gen, rest.lstrip("\n") if rest.strip() else rest
     return gen, None
 
 
@@ -522,8 +526,25 @@ def render_files(corpus, compile_id, vault, write=False):
     files["INDEX.md"] = "\n".join(lines) + "\n"
 
     src = ir.get("source_set") if isinstance(ir.get("source_set"), dict) else {}
+    manual_objects = {}
+    for rel in files:
+        if not rel.endswith(".canvas"):
+            continue
+        try:
+            c = json.loads(files[rel])
+        except ValueError:
+            continue
+        objs = {}
+        for kind in ("nodes", "edges"):
+            for o in c.get(kind, []):
+                if isinstance(o, dict) and not str(o.get("id", "")).startswith(NODE_PREFIX):
+                    objs[str(o.get("id"))] = sha256_text(
+                        json.dumps(o, sort_keys=True, ensure_ascii=False))
+        if objs:
+            manual_objects[rel] = objs
     manifest = {
         "projection_version": PROJECTION_VERSION,
+        "manual_objects": manual_objects,   # canvas -> {id: sha256 of the object}
         "compile": compile_id,
         "ir_sha256": ir_sha(corpus, compile_id),
         "cut_sha256": str(src.get("cut_sha256", "")).strip() or None,
@@ -581,6 +602,15 @@ def verify_vault(corpus, compile_id, vault):
     vault = Path(vault)
     findings = []
     meta = {"cards": 0}
+    try:
+        vault.resolve().relative_to(Path(corpus).resolve())
+        findings.append(Finding(compile_id, "PROJECTION_MANIFEST_MISSING",
+                                "%s lives inside the corpus — a projection is a separate "
+                                "derivative, never a corpus file; nothing inside the "
+                                "corpus is accepted as a vault" % vault))
+        return findings, meta
+    except ValueError:
+        pass
     mpath = vault / MANIFEST_NAME
     if not mpath.is_file():
         findings.append(Finding(compile_id, "PROJECTION_MANIFEST_MISSING",
@@ -743,6 +773,15 @@ def verify_vault(corpus, compile_id, vault):
                     findings.append(Finding(compile_id, "PROJECTION_ANNOTATION_LOST",
                                             "%s: manual node %s recorded at last render "
                                             "is gone" % (f.name, mid)))
+            # the manifest's record of manual objects (bound at render, not a
+            # deletable side file): every id recorded must still be present
+            present = {str(o.get("id")) for kind in ("nodes", "edges")
+                       for o in c.get(kind, []) if isinstance(o, dict)}
+            for mid in ((manifest.get("manual_objects") or {}).get(rel) or {}):
+                if mid not in present:
+                    findings.append(Finding(compile_id, "PROJECTION_ANNOTATION_LOST",
+                                            "%s: manual object %s recorded in the "
+                                            "projection manifest is gone" % (f.name, mid)))
     return findings, meta
 
 
