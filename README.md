@@ -49,7 +49,7 @@ Sedan v4.0 har skillen **tre uttryckliga lägen** — aldrig gissade, alltid beg
 - **v4.4.2 — avgränsad kompatibilitetsrättelse, lokal kandidat**: projektionen vägrar
   tvetydig recordidentitet före skrivning; historisk manifesttillväxt kan committas
   genom ordinarie hook med tidigare källor och review-kö skyddade. Ny allmän
-  migreringsfunktion ingår inte. Publicering väntar på separat ägarbeslut.
+  migreringsfunktion ingår inte. Publicering är separat ägarauktoriserad; verifiera aktuell origin/main-identitet.
 - **RND_COMPILE** ("kör rnd compile", "kompilera R&D-korpusen"): redan infångat och
   verifierat material — ett svept projektkorpus eller en uttrycklig källmängd — →
   en **typad, härledd, återuppbyggbar** förståelse av vad materialet faktiskt

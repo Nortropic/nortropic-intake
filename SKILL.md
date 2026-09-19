@@ -2206,8 +2206,8 @@ inside a sweep):
 
 The owner authorized correction of the measured projection identity defect and a
 valid reproduction of the ordinary-hook transition; a reproduced hook defect is
-within that narrow correction. This candidate is locally registered and reviewed; publication is a separate owner
-decision. Until origin/main matches, skill_version.py reports UNPUBLISHED.
+within that narrow correction. This candidate is locally registered and reviewed; publication was separately owner-authorized on 2026-09-19. Until origin/main matches,
+skill_version.py reports UNPUBLISHED; current publication identity must be checked.
 
 Projection rendering now preflights the previous manifest, bound IR and record
 headers before any write. A reused local ID with a different fingerprint is refused
@@ -2220,8 +2220,10 @@ is unchanged.
 
 A historical compile may coexist with a project-valid appended manifest before its
 ordinary commit only if its committed inventory anchor, prior source identities,
-revision records and inventory history still hold. The new manifest is reported
-PARTIAL/unwitnessed until committed. Mutated raw bytes, changed old anchors and
+revision records and inventory history still hold. Byte-identical recapture may update only its four verified_unchanged receipt fields
+on the previously latest revision; its digest is checked against HEAD source bytes.
+Without an inventory event, every other manifest field must remain identical.
+The new manifest is reported PARTIAL/unwitnessed until committed. Mutated raw bytes, changed old anchors and
 review-queue changes retain their existing refusal. No hook bypass is introduced.
 
 ## Architecture freeze — read this before changing the skill
@@ -2296,21 +2298,21 @@ and the change was proven against the real *Improvements* corpus (typed understa
 visible negative space, owner-vs-assistant provenance held, rebuildable derived output,
 zero corpus mutations). The reopen was authority, not drift.
 
-Current local release registration (publication pending):
+Current release registration (verify publication against origin/main):
 
 ```
 NORTROPIC_INTAKE_VERSION=v4.4.2
 ARCHITECTURE_STATE=FROZEN
 FREEZE_DATE=2026-09-19
-SKILL_MAIN=0fd2b529c4478396efbc9a0c12c9477efe0e449f
-SKILL_TREE=3d0318bcbebcdbe20c28b15593e2cb0915644efb
-SKILL_SCRIPTS_TREE=a8ad38ddff5ef8bb6c2513e04ce69690fb4e338f
+SKILL_MAIN=c7e1e31730e8789deccdf2eb3e401bae68f0f227
+SKILL_TREE=6bc5fe91f6b8d7dee07ce34ce11d9b2650135dde
+SKILL_SCRIPTS_TREE=6ac9c2498471de55daa26fe6216353efd1543fcd
 ```
 
 Reopened from v4.4.1 under the owner's bounded observed-defect correction:
 projection identity collisions and valid capture growth rejected by the ordinary
 hook. A targeted review also closed deletion of a committed review queue. The
-reviewed implementation is 0fd2b529; a normal hook commit and before/staged/after
+reviewed implementation is c7e1e317; a normal hook commit and before/staged/after
 validators passed in an isolated synthetic corpus. No internal source content is
 part of this skill release. No general hardening, new mode or product authority.
 The previous release registration and its historical claims are retained verbatim:
@@ -2368,8 +2370,8 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v4.4.2 implementation head (0fd2b529,
-publication pending owner authorization), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
+commit: `SKILL_MAIN` is the v4.4.2 implementation head (c7e1e317,
+publication separately authorized, verify origin/main), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
 tree of `scripts/` — the runtime surface `skill_version.py check` compares against —
 and recording the freeze moves the local candidate past them by a metadata-only
 commit that changes no runtime behaviour (so `scripts/` is byte-identical

@@ -422,9 +422,9 @@ CHECKS = [
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
         "NORTROPIC_INTAKE_VERSION=v4.4.2",
         "FREEZE_DATE=2026-09-19",
-        "SKILL_MAIN=0fd2b529c4478396efbc9a0c12c9477efe0e449f",
-        "SKILL_TREE=3d0318bcbebcdbe20c28b15593e2cb0915644efb",
-        "SKILL_SCRIPTS_TREE=a8ad38ddff5ef8bb6c2513e04ce69690fb4e338f",
+        "SKILL_MAIN=c7e1e31730e8789deccdf2eb3e401bae68f0f227",
+        "SKILL_TREE=6bc5fe91f6b8d7dee07ce34ce11d9b2650135dde",
+        "SKILL_SCRIPTS_TREE=6ac9c2498471de55daa26fe6216353efd1543fcd",
         "NORTROPIC_INTAKE_VERSION=v4.4.1",
         "ARCHITECTURE_STATE=FROZEN",
         "FREEZE_DATE=2026-09-11",
