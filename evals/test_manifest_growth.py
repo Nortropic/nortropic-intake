@@ -23,6 +23,9 @@ def main():
     ap.add_argument('--fixture', required=True, type=Path)
     ap.add_argument('--queue-only', action='store_true',
                     help='Only qualify preserved/changed/deleted HEAD review queue during growth')
+    ap.add_argument('--recapture-only', action='store_true')
+    ap.add_argument('--committed-fixture', type=Path)
+    ap.add_argument('--external-capture', type=Path)
     ap.add_argument('--scratch', required=True, type=Path)
     ap.add_argument('--evidence', required=True, type=Path)
     args = ap.parse_args()
@@ -72,6 +75,62 @@ def main():
             (args.evidence/'checks.json').write_text(json.dumps(results, indent=2)+'\n')
             assert okay, out
         return corpus
+
+    if args.recapture_only:
+        assert not args.queue_only
+        assert args.committed_fixture and args.external_capture
+        sys.path.insert(0, str(ROOT/'scripts'))
+        from intake_common import transcript_source_sha256
+        seeds = {}
+        for label, base in [('no-growth', args.committed_fixture), ('mixed-growth', args.fixture)]:
+            seed = args.scratch/(label+'-seed')
+            shutil.copytree(base, seed, symlinks=True)
+            manifest = seed/'_projects/demo/project-manifest.json'
+            before = json.loads(manifest.read_text())
+            code, out = run(label+'-capture', [sys.executable, '-B', ROOT/'scripts/project_contract.py',
+                            '--corpus', seed, 'capture', '--project', 'demo', '--source', 'CONV-002',
+                            '--file', args.external_capture, '--adapter', 'data-layer', '--at', '2026-09-19'], seed)
+            assert code == 0 and 'VERIFIED_UNCHANGED_AT=2026-09-19' in out, out
+            after = json.loads(manifest.read_text())
+            assert after['inventory_history'] == before['inventory_history']
+            assert after['inventory_revision'] == before['inventory_revision']
+            assert after['inventory_sha256'] == before['inventory_sha256']
+            for validator in ['project', 'plan', 'context']:
+                code, out = run(label+'-'+validator, [sys.executable, '-B',
+                                ROOT/('scripts/'+validator+'_contract.py'), '--corpus', seed, 'validate'], seed)
+                assert code == 0, out
+            seeds[label] = seed
+        case('recapture-no-growth', fixture=seeds['no-growth'])
+        case('recapture-mixed-growth', fixture=seeds['mixed-growth'])
+        def false_measurement(c,m,i):
+            alter_json(m, lambda x: x['sources'][1]['revisions'][-1].update(verified_unchanged_source_sha256='0'*64))
+        case('recapture-false-hash', false_measurement, 'RND_EVIDENCE_MUTATED', fixture=seeds['no-growth'])
+        def raw_and_hash(c,m,i):
+            path=c/'_projects/demo/sources/CONV-002/conversation.md'
+            path.write_text(path.read_text().replace('Vi bygger ingen egen kö.', 'Vi bygger en egen kö.'))
+            whole=hashlib.sha256(path.read_bytes()).hexdigest()
+            source=transcript_source_sha256(path.read_text())
+            alter_json(m, lambda x: x['sources'][1]['revisions'][-1].update(
+                sha256=whole, source_sha256=source, verified_unchanged_source_sha256=source))
+        case('recapture-raw-plus-coordinated-hashes', raw_and_hash, 'RND_EVIDENCE_MUTATED', fixture=seeds['no-growth'])
+        def old_revision_measurement(c,m,i):
+            data=json.loads(m.read_text())
+            assert len(data['sources'][0]['revisions'])==2
+            measurement={k:v for k,v in data['sources'][1]['revisions'][-1].items() if k.startswith('verified_unchanged_')}
+            measurement['verified_unchanged_source_sha256']=transcript_source_sha256(
+                (c/'_projects/demo/sources/CONV-001/conversation.md').read_text())
+            data['sources'][0]['revisions'][0].update(measurement)
+            m.write_text(json.dumps(data, ensure_ascii=False, indent=2)+'\n')
+        case('recapture-nonlatest-revision', old_revision_measurement, 'RND_EVIDENCE_MUTATED', fixture=seeds['no-growth'])
+        case('recapture-extra-manifest-change',
+             lambda c,m,i: alter_json(m, lambda x: x.update(title='Unauthorized no-growth title change')),
+             'RND_EVIDENCE_MUTATED', fixture=seeds['no-growth'])
+        summary=dict(checks=len(results), passed=sum(x['pass_'] for x in results),
+                     candidate_rnd_sha256=hashlib.sha256((ROOT/'scripts/rnd_contract.py').read_bytes()).hexdigest(),
+                     scope='recapture-only direct candidate validators; external synthetic input; no new normal-hook candidate commit claimed')
+        (args.evidence/'result.json').write_text(json.dumps(summary, indent=2)+'\n')
+        print(json.dumps(summary, indent=2))
+        return
 
     if args.queue_only:
         seed = args.scratch/'queue-seed'

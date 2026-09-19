@@ -1066,19 +1066,53 @@ def _historical_manifest_append(corpus, rel, src, sources):
             return False
         history = old.get("inventory_history") or []
         grown = new.get("inventory_history") or []
-        if not history or len(grown) <= len(history) or grown[:len(history)] != history:
+        if not history or len(grown) < len(history) or grown[:len(history)] != history:
             return False
         if _history_anchor(old, src.get("inventory_revision"),
                            src.get("inventory_sha256")) is None:
             return False
         indexed = {s["source_id"]: s for s in new.get("sources", [])}
+        measurement_keys = {"verified_unchanged_at", "verified_unchanged_source_sha256",
+                            "verified_unchanged_adapter", "verified_unchanged_input"}
         for source in old.get("sources", []):
             after = indexed.get(source["source_id"])
             if after is None or any(source.get(k) != after.get(k) for k in
                                     ("source_id", "kind", "conversation_key", "url")):
                 return False
             revisions = source.get("revisions") or []
-            if (after.get("revisions") or [])[:len(revisions)] != revisions:
+            after_revisions = after.get("revisions") or []
+            if len(after_revisions) < len(revisions):
+                return False
+            for i, before in enumerate(revisions):
+                measured = after_revisions[i]
+                if measured == before:
+                    continue
+                # capture's byte-identical reread changes only these four fields
+                # on the then-latest revision, without minting inventory history.
+                if i != len(revisions) - 1 or any(
+                        before.get(k) != measured.get(k)
+                        for k in (before.keys() | measured.keys()) - measurement_keys):
+                    return False
+                raw = git_head_blob(corpus, before.get("path", ""))
+                if (raw is None or measured.get("verified_unchanged_source_sha256") !=
+                        transcript_source_sha256(raw)):
+                    return False
+                if any(not isinstance(measured.get(k), str) or not measured[k].strip()
+                       for k in measurement_keys):
+                    return False
+                if measured["verified_unchanged_at"] < before.get(
+                        "verified_unchanged_at", before.get("captured_at", "")):
+                    return False
+        if len(grown) == len(history):
+            # With no new inventory event, no other manifest change is allowed.
+            def without_measurements(manifest):
+                copy = json.loads(json.dumps(manifest))
+                for source in copy.get("sources", []):
+                    for revision in source.get("revisions", []):
+                        for key in measurement_keys:
+                            revision.pop(key, None)
+                return copy
+            if without_measurements(old) != without_measurements(new):
                 return False
         before_witness = _manifest_witness(old)
         after_witness = _manifest_witness(new)
