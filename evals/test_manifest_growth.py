@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--fixture', required=True, type=Path)
+    ap.add_argument('--queue-only', action='store_true',
+                    help='Only qualify preserved/changed/deleted HEAD review queue during growth')
     ap.add_argument('--scratch', required=True, type=Path)
     ap.add_argument('--evidence', required=True, type=Path)
     args = ap.parse_args()
@@ -44,9 +46,9 @@ def main():
         mutate(data)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2)+'\n')
 
-    def case(name, mutate=None, expected_code=None):
+    def case(name, mutate=None, expected_code=None, fixture=None):
         corpus = args.scratch/name
-        shutil.copytree(args.fixture, corpus, symlinks=True)
+        shutil.copytree(fixture or args.fixture, corpus, symlinks=True)
         m = corpus/'_projects/demo/project-manifest.json'
         ir = corpus/'_rnd/historical/rnd-ir.json'
         if mutate:
@@ -70,6 +72,50 @@ def main():
             (args.evidence/'checks.json').write_text(json.dumps(results, indent=2)+'\n')
             assert okay, out
         return corpus
+
+    if args.queue_only:
+        seed = args.scratch/'queue-seed'
+        shutil.copytree(args.fixture, seed, symlinks=True)
+        manifest = seed/'_projects/demo/project-manifest.json'
+        growth_manifest = manifest.read_bytes()
+        r2 = seed/'_projects/demo/sources/CONV-001/conversation-r2.md'
+        growth_raw = r2.read_bytes()
+        code, old_manifest = run('queue-baseline-manifest',
+                                 ['git', 'show', 'HEAD:_projects/demo/project-manifest.json'], seed)
+        assert code == 0
+        manifest.write_text(old_manifest)
+        r2.unlink()  # only this new isolated copy, returning it to genuine baseline
+        queue = seed/'_projects/demo/review-queue.md'
+        assert not queue.exists(), 'expected original qualified fixture without queue'
+        queue.write_text("---\ntitle: Synthetic queue\ntype: review-queue\nproject: demo\n"
+                         "append_only: true\n---\n\n## RQ-001\n\n"
+                         "- date: 2026-09-19\n- issue: Synthetic original issue\n"
+                         "- affects: CONV-001\n- recommendation: Preserve for later consideration\n"
+                         "- owner_judgment_required: no\n")
+        code, out = run('queue-baseline-stage', ['git', 'add', '.'], seed)
+        assert code == 0, out
+        code, out = run('queue-baseline-normal-commit',
+                         ['git', 'commit', '-m', 'Synthetic review queue baseline through active ordinary hook'], seed)
+        assert code == 0, out
+        code, original = run('queue-committed-blob',
+                              ['git', 'show', 'HEAD:_projects/demo/review-queue.md'], seed)
+        assert code == 0 and original == queue.read_text(), original
+        manifest.write_bytes(growth_manifest)
+        r2.write_bytes(growth_raw)
+        case('queue-preserved-growth', fixture=seed)
+        def change_queue(c,m,i):
+            path=c/'_projects/demo/review-queue.md'
+            path.write_text(path.read_text().replace('Synthetic original issue', 'Rewritten old issue'))
+        def delete_queue(c,m,i):
+            (c/'_projects/demo/review-queue.md').unlink()
+        case('queue-rewritten-growth', change_queue, 'RND_EVIDENCE_MUTATED', fixture=seed)
+        case('queue-deleted-growth', delete_queue, 'RND_EVIDENCE_MUTATED', fixture=seed)
+        summary = dict(checks=len(results), passed=sum(x['pass_'] for x in results),
+                       candidate_rnd_sha256=hashlib.sha256((ROOT/'scripts/rnd_contract.py').read_bytes()).hexdigest(),
+                       scope='queue-only direct candidate validators; genuine baseline commit via installed ordinary hook; no candidate normal-hook growth commit claimed')
+        (args.evidence/'result.json').write_text(json.dumps(summary, indent=2)+'\n')
+        print(json.dumps(summary, indent=2))
+        return
 
     good = case('valid-growth')
     for validator in ['project', 'plan', 'context']:

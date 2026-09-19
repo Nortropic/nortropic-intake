@@ -1116,7 +1116,9 @@ def _report_git_witness(corpus, src, sources, findings, cid):
     if src.get("kind") == "project" and PROJECT_RE.match(project or ""):
         rels.append("_projects/%s/project-manifest.json" % project)
         rq = corpus / "_projects" / project / "review-queue.md"
-        if rq.exists():
+        # A deleted committed queue remains part of the evidence base. Otherwise
+        # removing the file would also remove the immutability check itself.
+        if rq.exists() or git_head_blob(corpus, "_projects/%s/review-queue.md" % project) is not None:
             rels.append("_projects/%s/review-queue.md" % project)
     committed = tracked = 0
     for rel in rels:
