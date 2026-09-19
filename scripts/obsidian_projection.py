@@ -36,6 +36,7 @@ Codes:
                                   would be turning into a backlog
     PROJECTION_ANNOTATION_LOST    a note or manual canvas object the manifest recorded
                                   is gone after render
+    PROJECTION_IDENTITY_CONFLICT  old annotation identity cannot safely carry to new IR
     PROJECTION_NONDETERMINISTIC   two renders of the same IR differ
     PROJECTION_CANVAS_INVALID     a canvas is unparsable or an edge dangles
 """
@@ -408,6 +409,82 @@ def plan(corpus, compile_id):
             "items_by_source": items_by_source}, findings
 
 
+def identity_preflight(corpus, compile_id, vault, current):
+    """Refuse ambiguous reuse before touching cards, canvas state or the manifest.
+
+    Legacy v1 manifests already bind the old IR. Use that witness and each card's
+    header; a bare filename is never an identity. A different compile can carry
+    an unchanged local ID only through a validated SAME lineage to that exact IR.
+    Renumbering, split/revised records and retired-ID reuse need an explicit
+    migration; this renderer deliberately does not guess where annotations belong.
+    """
+    def refuse(detail):
+        return [Finding(compile_id, "PROJECTION_IDENTITY_CONFLICT", detail)]
+
+    path = vault / MANIFEST_NAME
+    managed = ((vault / STATE_NAME).exists() or
+               any((vault / CARDS_DIR).glob("*.md")) or
+               any((vault / LENSES_DIR).glob("*.canvas")))
+    if not path.exists():
+        return refuse("existing projection has no identity manifest; preserve it and "
+                      "restore its binding before rendering") if managed else []
+    old, err = read_json(path)
+    if err or not isinstance(old, dict):
+        return refuse("previous projection manifest is unreadable")
+    previous = old.get("compile")
+    if not isinstance(previous, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", previous):
+        return refuse("previous compile identity is missing or invalid")
+    ir_path = rc.compile_dir(corpus, previous) / rc.IR_NAME
+    if not ir_path.is_file() or sha256_file(ir_path) != old.get("ir_sha256"):
+        return refuse("previous IR is missing or changed; cannot prove annotation identity")
+    before, err = read_json(ir_path)
+    if err or not isinstance(before, dict):
+        return refuse("previous IR cannot be read")
+    if (before.get("source_set") or {}).get("project") != \
+            (current["ir"].get("source_set") or {}).get("project"):
+        return refuse("projection belongs to a different source project")
+    by_id = {i["id"]: i for i in before.get("items", [])}
+    for iid in by_id:
+        if not (vault / CARDS_DIR / (iid + ".md")).is_file():
+            return refuse("%s: previous card missing; cannot prove preserved manual data" % iid)
+    changing = previous != compile_id
+    baseline = current["ir"].get("lineage_baseline") or {}
+    for card in sorted((vault / CARDS_DIR).glob("RND-*.md")):
+        text = _read(card)
+        header = text.split(GEN_START, 1)[0]
+        def field(name):
+            match = re.search(r"^" + name + r": ([^\n]+)$", header, re.M)
+            return match.group(1) if match else None
+        item = by_id.get(card.stem)
+        target = current["by_id"].get(card.stem)
+        if item is None:
+            if target is not None or field("retired") != "true":
+                return refuse("%s: unbound or retired local ID cannot be reused" % card.name)
+            continue
+        fingerprint = rc.record_fingerprint(item)
+        gen, _notes = split_card(text)
+        if (field("id") != item["id"] or field("compile") != previous or
+                field("fingerprint") != fingerprint or
+                (item.get("fingerprint") and item["fingerprint"] != fingerprint)):
+            return refuse("%s: old card does not match its bound record" % card.name)
+        if sha256_text(gen) != (old.get("generated") or {}).get(
+                "%s/%s" % (CARDS_DIR, card.name)):
+            return [Finding(compile_id, "PROJECTION_STALE",
+                            "%s: previous generated region changed" % card.name)]
+        if target is not None:
+            if (rc.record_fingerprint(target) != fingerprint or
+                    (target.get("fingerprint") and target["fingerprint"] != fingerprint)):
+                return refuse("%s: changed record behind a reused local ID; preserve "
+                              "the old projection and resolve identity explicitly" % card.name)
+            if changing and (baseline.get("compile") != previous or
+                             baseline.get("ir_sha256") != old.get("ir_sha256") or
+                             {"id": item["id"], "relation": "SAME"} not in
+                             (target.get("lineage") or [])):
+                return refuse("%s: compile change needs SAME lineage to the exact "
+                              "previous IR" % card.name)
+    return []
+
+
 def render_files(corpus, compile_id, vault, write=False):
     """{relpath: bytes} of every generated file, merged with what the vault holds.
     Returns (files, manifest, log, findings)."""
@@ -415,6 +492,9 @@ def render_files(corpus, compile_id, vault, write=False):
     if p is None:
         return {}, None, [], findings
     vault = Path(vault)
+    identity_findings = identity_preflight(corpus, compile_id, vault, p)
+    if identity_findings:
+        return {}, None, [], findings + identity_findings
     state_path = vault / STATE_NAME
     state, _ = read_json(state_path) if state_path.exists() else ({}, None)
     state = state if isinstance(state, dict) else {}

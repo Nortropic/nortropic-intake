@@ -81,6 +81,9 @@ jobs:
       - name: v4.4 projection suite (deterministic vault, annotation survival)
         run: python3 evals/test_projection_v44.py
 
+      - name: Projection identity across compile changes
+        run: python3 evals/test_projection_identity.py
+
       - name: v4.4.1 suite (the three R39 blockers, reproduced and guarded)
         run: python3 evals/test_v441.py
 

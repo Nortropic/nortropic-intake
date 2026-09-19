@@ -2202,6 +2202,28 @@ inside a sweep):
   only activation conditions, and mode separation from SINGLE/PROJECT_SWEEP) — run
   them after any change to this skill; see `evals/README.md`.
 
+### Scoped compatibility correction — preparation 2026-09-19 (candidate)
+
+The owner authorized correction of the measured projection identity defect and a
+valid reproduction of the ordinary-hook transition; a reproduced hook defect is
+within that narrow correction. This candidate is not a published release or a
+claim that the installed v4.4.1 freeze changed.
+
+Projection rendering now preflights the previous manifest, bound IR and record
+headers before any write. A reused local ID with a different fingerprint is refused
+as `PROJECTION_IDENTITY_CONFLICT`; the vault stays unchanged. Carrying unchanged
+IDs across compilations requires explicit SAME lineage to the exact previous IR.
+Changed, split, merged or renumbered records need an explicitly resolved migration;
+this renderer does not guess annotation ownership. Missing old binding is a refusal,
+not permission to regenerate over manual data. The research/plan authority boundary
+is unchanged.
+
+A historical compile may coexist with a project-valid appended manifest before its
+ordinary commit only if its committed inventory anchor, prior source identities,
+revision records and inventory history still hold. The new manifest is reported
+PARTIAL/unwitnessed until committed. Mutated raw bytes, changed old anchors and
+review-queue changes retain their existing refusal. No hook bypass is introduced.
+
 ## Architecture freeze — read this before changing the skill
 
 The architecture is owner-authorized and **frozen** at v4.0. Nice ideas are not a
