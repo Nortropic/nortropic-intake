@@ -31,6 +31,7 @@ Structural guarantees, deliberate and load-bearing:
     evidence, because evidence never lives here.
 """
 import argparse
+import json
 import hashlib
 import re
 import sys
@@ -1047,6 +1048,86 @@ def _quote_in_foreign_assistant_turn(qn, sources, owner_turns):
     return ""
 
 
+def _historical_manifest_append(corpus, rel, src, sources):
+    """A live manifest may grow while a compile still witnesses committed history.
+
+    This is not a generic exemption for changed manifests: require a valid project,
+    an unchanged committed history prefix, unchanged old source identities and
+    revision records, and the compile's exact anchor in the committed manifest.
+    New manifest bytes remain UNWITNESSED until the ordinary commit succeeds.
+    """
+    try:
+        old = json.loads(git_head_blob(corpus, rel) or "null")
+        new, err = read_json(Path(corpus) / rel)
+        if err or not isinstance(old, dict) or not isinstance(new, dict):
+            return False
+        if any(old.get(k) != new.get(k) for k in
+               ("project_manifest_version", "project", "platform", "origin", "created")):
+            return False
+        history = old.get("inventory_history") or []
+        grown = new.get("inventory_history") or []
+        if not history or len(grown) < len(history) or grown[:len(history)] != history:
+            return False
+        if _history_anchor(old, src.get("inventory_revision"),
+                           src.get("inventory_sha256")) is None:
+            return False
+        indexed = {s["source_id"]: s for s in new.get("sources", [])}
+        measurement_keys = {"verified_unchanged_at", "verified_unchanged_source_sha256",
+                            "verified_unchanged_adapter", "verified_unchanged_input"}
+        for source in old.get("sources", []):
+            after = indexed.get(source["source_id"])
+            if after is None or any(source.get(k) != after.get(k) for k in
+                                    ("source_id", "kind", "conversation_key", "url")):
+                return False
+            revisions = source.get("revisions") or []
+            after_revisions = after.get("revisions") or []
+            if len(after_revisions) < len(revisions):
+                return False
+            for i, before in enumerate(revisions):
+                measured = after_revisions[i]
+                if measured == before:
+                    continue
+                # capture's byte-identical reread changes only these four fields
+                # on the then-latest revision, without minting inventory history.
+                if i != len(revisions) - 1 or any(
+                        before.get(k) != measured.get(k)
+                        for k in (before.keys() | measured.keys()) - measurement_keys):
+                    return False
+                raw = git_head_blob(corpus, before.get("path", ""))
+                if (raw is None or measured.get("verified_unchanged_source_sha256") !=
+                        transcript_source_sha256(raw)):
+                    return False
+                if any(not isinstance(measured.get(k), str) or not measured[k].strip()
+                       for k in measurement_keys):
+                    return False
+                if measured["verified_unchanged_at"] < before.get(
+                        "verified_unchanged_at", before.get("captured_at", "")):
+                    return False
+        if len(grown) == len(history):
+            # With no new inventory event, no other manifest change is allowed.
+            def without_measurements(manifest):
+                copy = json.loads(json.dumps(manifest))
+                for source in copy.get("sources", []):
+                    for revision in source.get("revisions", []):
+                        for key in measurement_keys:
+                            revision.pop(key, None)
+                return copy
+            if without_measurements(old) != without_measurements(new):
+                return False
+        before_witness = _manifest_witness(old)
+        after_witness = _manifest_witness(new)
+        for bound in sources.values():
+            if not bound.excluded and (_witness_for(before_witness, bound)[0] is None or
+                                      _witness_for(before_witness, bound) !=
+                                      _witness_for(after_witness, bound)):
+                return False
+        import project_contract as pc
+        checks, _ = pc.validate_project(pc.Project(corpus, src["project"]))
+        return not fails(checks)
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
+        return False
+
+
 def _report_git_witness(corpus, src, sources, findings, cid):
     """Anchor the compile's evidence base to git — the one witness an editing agent
     does not control — and return ABSENT | PARTIAL | PRESENT.
@@ -1069,11 +1150,18 @@ def _report_git_witness(corpus, src, sources, findings, cid):
     if src.get("kind") == "project" and PROJECT_RE.match(project or ""):
         rels.append("_projects/%s/project-manifest.json" % project)
         rq = corpus / "_projects" / project / "review-queue.md"
-        if rq.exists():
+        # A deleted committed queue remains part of the evidence base. Otherwise
+        # removing the file would also remove the immutability check itself.
+        if rq.exists() or git_head_blob(corpus, "_projects/%s/review-queue.md" % project) is not None:
             rels.append("_projects/%s/review-queue.md" % project)
     committed = tracked = 0
     for rel in rels:
         state, detail = git_immutability(corpus, rel, corpus / rel)
+        if (state == "MUTATED" and rel == "_projects/%s/project-manifest.json" % project
+                and _historical_manifest_append(corpus, rel, src, sources)):
+            # The historical portion is committed; appended manifest bytes are not.
+            tracked += 1
+            continue
         if state == "MUTATED":
             findings.append(Finding(
                 cid, "RND_EVIDENCE_MUTATED",
