@@ -2202,12 +2202,12 @@ inside a sweep):
   only activation conditions, and mode separation from SINGLE/PROJECT_SWEEP) — run
   them after any change to this skill; see `evals/README.md`.
 
-### Scoped compatibility correction — preparation 2026-09-19 (candidate)
+### Scoped compatibility correction — v4.4.2 (local release candidate)
 
 The owner authorized correction of the measured projection identity defect and a
 valid reproduction of the ordinary-hook transition; a reproduced hook defect is
-within that narrow correction. This candidate is not a published release or a
-claim that the installed v4.4.1 freeze changed.
+within that narrow correction. This candidate is locally registered and reviewed; publication is a separate owner
+decision. Until origin/main matches, skill_version.py reports UNPUBLISHED.
 
 Projection rendering now preflights the previous manifest, bound IR and record
 headers before any write. A reused local ID with a different fingerprint is refused
@@ -2296,6 +2296,25 @@ and the change was proven against the real *Improvements* corpus (typed understa
 visible negative space, owner-vs-assistant provenance held, rebuildable derived output,
 zero corpus mutations). The reopen was authority, not drift.
 
+Current local release registration (publication pending):
+
+```
+NORTROPIC_INTAKE_VERSION=v4.4.2
+ARCHITECTURE_STATE=FROZEN
+FREEZE_DATE=2026-09-19
+SKILL_MAIN=0fd2b529c4478396efbc9a0c12c9477efe0e449f
+SKILL_TREE=3d0318bcbebcdbe20c28b15593e2cb0915644efb
+SKILL_SCRIPTS_TREE=a8ad38ddff5ef8bb6c2513e04ce69690fb4e338f
+```
+
+Reopened from v4.4.1 under the owner's bounded observed-defect correction:
+projection identity collisions and valid capture growth rejected by the ordinary
+hook. A targeted review also closed deletion of a committed review queue. The
+reviewed implementation is 0fd2b529; a normal hook commit and before/staged/after
+validators passed in an isolated synthetic corpus. No internal source content is
+part of this skill release. No general hardening, new mode or product authority.
+The previous release registration and its historical claims are retained verbatim:
+
 ```
 NORTROPIC_INTAKE_VERSION=v4.4.1
 ARCHITECTURE_STATE=FROZEN
@@ -2349,11 +2368,11 @@ CHATGPT_REQUIRED_AFTER_HANDOFF=NO
 ```
 
 The current SKILL identities are the **frozen architecture**, not this file's current
-commit: `SKILL_MAIN` is the v4.4.1 implementation head (branch `v441-r39-blockers`,
-merged to `main` by PR), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
+commit: `SKILL_MAIN` is the v4.4.2 implementation head (0fd2b529,
+publication pending owner authorization), `SKILL_TREE` its tree and `SKILL_SCRIPTS_TREE` the
 tree of `scripts/` — the runtime surface `skill_version.py check` compares against —
-and recording the freeze necessarily moves `main` past them by one documentation-only
-commit — this one — that changes no runtime behaviour (so `scripts/` is byte-identical
+and recording the freeze moves the local candidate past them by a metadata-only
+commit that changes no runtime behaviour (so `scripts/` is byte-identical
 to the registered tree and the guard reports `SKILL_DRIFT=NONE`, or `UNPUBLISHED`
 until the owner pushes). The v4.0 wording below is kept as written for that freeze:
 `SKILL_MAIN` was the v4.0 implementation merge on `main` (PR #7). Recording

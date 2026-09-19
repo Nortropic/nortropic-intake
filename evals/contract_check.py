@@ -420,6 +420,11 @@ CHECKS = [
     #    deliberately — it cannot drift away by accident.
     # ---------------------------------------------------------------------
     ("SKILL.md", "Z1 the freeze record is present and complete, with honest lineage", [
+        "NORTROPIC_INTAKE_VERSION=v4.4.2",
+        "FREEZE_DATE=2026-09-19",
+        "SKILL_MAIN=0fd2b529c4478396efbc9a0c12c9477efe0e449f",
+        "SKILL_TREE=3d0318bcbebcdbe20c28b15593e2cb0915644efb",
+        "SKILL_SCRIPTS_TREE=a8ad38ddff5ef8bb6c2513e04ce69690fb4e338f",
         "NORTROPIC_INTAKE_VERSION=v4.4.1",
         "ARCHITECTURE_STATE=FROZEN",
         "FREEZE_DATE=2026-09-11",
@@ -482,7 +487,7 @@ CHECKS = [
     ("SKILL.md", "Z5 the freeze names the tree, not the moving branch head", [
         "The current SKILL identities are the **frozen architecture**, not this "
         "file's current\ncommit",
-        "`SKILL_MAIN` is the v4.4.1 implementation head",
+        "`SKILL_MAIN` is the v4.4.2 implementation head",
         "`SKILL_SCRIPTS_TREE` the\ntree of `scripts/`",
         "Recording\ninvented SHAs would have been a forged freeze",
         "v4 mutated no corpus content",
